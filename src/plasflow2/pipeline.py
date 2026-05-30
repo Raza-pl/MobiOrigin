@@ -36,6 +36,7 @@ from plasflow2.annotate.mobility import (
     parse_mob_results,
     run_mob_typer,
 )
+from plasflow2.annotate.pathogens import PathogenResult, detect_pathogens
 from plasflow2.annotate.taxonomy import TaxResult, assign_taxonomy
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.predict import Prediction, predict
@@ -89,6 +90,8 @@ class PipelineResult:
     non_plasmid_results: list[NonPlasmidContigResult] = field(default_factory=list)
     # Taxonomy results for ALL contigs (keyed by contig_id); empty if skipped
     taxonomy: dict[str, TaxResult] = field(default_factory=dict)
+    # Pathogen detection results (subset of taxonomy — only pathogenic contigs)
+    pathogens: dict[str, PathogenResult] = field(default_factory=dict)
     # Convenience counts
     class_counts: dict[str, int] = field(default_factory=dict)
     total_sequences: int = 0
@@ -423,19 +426,38 @@ def run_pipeline(
                 )
             )
 
+    # ── Pathogen detection (from taxonomy) ───────────────────────────────────
+    pathogens_by_contig: dict[str, PathogenResult] = {}
+    if taxonomy_by_contig:
+        pathogens_by_contig = detect_pathogens(taxonomy_by_contig)
+        if pathogens_by_contig:
+            from collections import Counter
+            by_level: Counter[str] = Counter(
+                p.threat_level for p in pathogens_by_contig.values()
+            )
+            logger.info(
+                "Pathogen detection: %d pathogenic contigs "
+                "(critical=%d, high=%d, medium=%d)",
+                len(pathogens_by_contig),
+                by_level.get("critical", 0),
+                by_level.get("high", 0),
+                by_level.get("medium", 0),
+            )
+
     result = PipelineResult(
         input_fasta=fasta_path,
         all_predictions=predictions,
         plasmid_results=plasmid_results,
         non_plasmid_results=non_plasmid_results,
         taxonomy=taxonomy_by_contig,
+        pathogens=pathogens_by_contig,
     )
     tax_classified = sum(1 for r in taxonomy_by_contig.values() if r.rank != "unclassified")
     total_vf = sum(len(cr.vf_hits) for cr in plasmid_results)
     total_mge = sum(len(cr.mge_hits) for cr in plasmid_results)
     logger.info(
         "Pipeline complete — %d total | %d plasmid | %d ARGs | %d VFs | %d MGEs | "
-        "%d/%d taxonomy-classified | risk scores %s",
+        "%d/%d taxonomy-classified | %d pathogenic | risk scores %s",
         result.total_sequences,
         result.total_plasmids,
         result.total_args,
@@ -443,6 +465,7 @@ def run_pipeline(
         total_mge,
         tax_classified,
         len(taxonomy_by_contig),
+        len(pathogens_by_contig),
         sorted({cr.risk.score for cr in plasmid_results}),
     )
     return result

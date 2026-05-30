@@ -1,172 +1,210 @@
-"""HTML report generator — 5 separate, interlinked HTML files.
+"""HTML report generator — 5 interlinked, chart-equipped HTML files.
 
-Performance design
-------------------
-* Non-plasmid pages (chromosome / phage / archaea / unclassified):
-  - No external JS libraries.  Row data stored as a compact JSON array;
-    vanilla JS renders only the current page (50 rows at a time).
-  - Result: files open instantly regardless of row count.
-* Plasmid page:
-  - Plotly loaded from CDN (cached after first visit).
-  - Row data also stored as JSON; same lightweight paginator used.
-  - Charts limited to the 4 most useful: pie, ARG bar, VF bar, MGE bar.
-* All pages share a nav bar with class counts.
-* Max rows shown: 2 000 (full data always available in predictions.tsv).
+Performance targets
+-------------------
+* All pages: Plotly loaded from CDN (cached after first visit, ~1 MB).
+* Row data stored as compact JSON; vanilla JS renders 50 rows at a time.
+* All pages stay under ~400 KB even with 2 000 table rows.
+* Plasmid table: checkbox multi-select, Download Selected TSV.
+* Risk-score 0 plasmid contigs excluded from HTML (in predictions.tsv).
+
+Charts per page
+---------------
+* Plasmid     : Overview pie | ARG drug classes | VF genes | MGE families
+                Mobility classes | ESKAPE & other pathogens | Risk histogram
+* Chromosome  : Length distribution | Confidence distribution | Top taxonomy
+* Phage       : Length distribution | Confidence distribution | Top taxonomy
+* Archaea     : Length distribution | Confidence distribution | Top taxonomy
+* Unclassified: Best-label distribution | Confidence distribution | Length dist
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MAX_TABLE_ROWS = 2_000   # rows shown in HTML; rest available in predictions.tsv
+MAX_TABLE_ROWS = 2_000
 
 # ---------------------------------------------------------------------------
-# Shared CSS (no external stylesheets needed)
+# Shared CSS
 # ---------------------------------------------------------------------------
 
 _CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,Arial,sans-serif;background:#f4f6f9;color:#333}
+body{font-family:-apple-system,Arial,sans-serif;background:#f4f6f9;color:#333;font-size:14px}
 .nav{display:flex;align-items:stretch;background:#fff;border-bottom:2px solid #e0e8f5;
-     box-shadow:0 2px 6px rgba(0,0,0,.07);padding:0 24px;flex-wrap:wrap;gap:0}
-.nav a{display:inline-flex;align-items:center;padding:12px 18px;text-decoration:none;
-       font-weight:600;font-size:.88rem;color:#666;border-bottom:3px solid transparent;
+     box-shadow:0 2px 6px rgba(0,0,0,.07);padding:0 22px;flex-wrap:wrap}
+.nav a{display:inline-flex;align-items:center;padding:11px 16px;text-decoration:none;
+       font-weight:600;font-size:.86rem;color:#666;border-bottom:3px solid transparent;
        white-space:nowrap;transition:color .15s,border-color .15s}
 .nav a:hover{color:#2c6fad;border-bottom-color:#2c6fad}
 .nav a.active{color:var(--nc);border-bottom-color:var(--nc)}
-.nav .pill{margin-left:auto;display:flex;align-items:center;gap:10px;
-           font-size:.78rem;color:#888;padding:0 4px;flex-wrap:wrap}
-.nav .pill span{background:#f0f4f8;border-radius:12px;padding:2px 9px;white-space:nowrap}
-.wrap{max-width:1380px;margin:0 auto;padding:24px 26px}
-h1{color:#2c6fad;font-size:1.5rem;margin-bottom:4px}
-h2{color:#444;margin-top:32px;border-bottom:2px solid #e0e8f5;padding-bottom:5px;font-size:1.1rem}
-.meta{color:#777;font-size:.88rem;margin:6px 0 18px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:16px 0}
-.card{background:#fff;padding:13px 15px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-.card h3{font-size:.72rem;text-transform:uppercase;color:#999;letter-spacing:.4px;margin-bottom:5px}
-.card p{font-size:1.6rem;font-weight:700}
-.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0}
-.chart-grid.three{grid-template-columns:1fr 1fr 1fr}
+.nav .pill{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:.76rem;
+           color:#888;padding:0 4px;flex-wrap:wrap}
+.nav .pill span{background:#f0f4f8;border-radius:12px;padding:2px 8px;white-space:nowrap}
+.wrap{max-width:1380px;margin:0 auto;padding:22px 24px}
+h1{color:#2c6fad;font-size:1.4rem;margin-bottom:4px}
+h2{color:#444;margin-top:28px;border-bottom:2px solid #e0e8f5;padding-bottom:5px;font-size:1.05rem}
+.meta{color:#777;font-size:.86rem;margin:5px 0 16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:14px 0}
+.card{background:#fff;padding:12px 14px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.card h3{font-size:.7rem;text-transform:uppercase;color:#999;letter-spacing:.4px;margin-bottom:4px}
+.card p{font-size:1.55rem;font-weight:700}
+.chart-grid{display:grid;gap:12px;margin:16px 0}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:1fr 1fr 1fr}
+.g4{grid-template-columns:1fr 1fr 1fr 1fr}
 .cbox{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);
-      padding:4px;min-height:280px}
-/* lightweight table */
+      padding:4px;min-height:260px}
+/* table */
 .tbl-wrap{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);
-          padding:16px;margin-top:14px}
-.tbl-ctrl{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
-.tbl-ctrl input{padding:6px 10px;border:1px solid #d0d8e4;border-radius:6px;
-                font-size:.85rem;width:260px;outline:none}
-.tbl-ctrl input:focus{border-color:#2c6fad}
-.tbl-ctrl .pg-info{margin-left:auto;font-size:.82rem;color:#888}
-.tbl-ctrl .pg-btn{padding:5px 12px;border:1px solid #d0d8e4;border-radius:6px;
-                  background:#fff;cursor:pointer;font-size:.82rem}
-.tbl-ctrl .pg-btn:hover{background:#f0f4f8}
-.tbl-ctrl .pg-btn:disabled{opacity:.4;cursor:default}
-table{width:100%;border-collapse:collapse;font-size:.83rem}
-th{background:#f8fafc;text-align:left;padding:8px 10px;font-size:.75rem;
+          padding:14px;margin-top:12px}
+.tbl-ctrl{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.tbl-ctrl input[type=text]{padding:5px 9px;border:1px solid #d0d8e4;border-radius:6px;
+                font-size:.84rem;width:220px;outline:none}
+.tbl-ctrl input[type=text]:focus{border-color:#2c6fad}
+.pg-info{margin-left:auto;font-size:.8rem;color:#888;white-space:nowrap}
+.pg-btn{padding:4px 11px;border:1px solid #d0d8e4;border-radius:6px;background:#fff;
+        cursor:pointer;font-size:.8rem}
+.pg-btn:hover{background:#f0f4f8}
+.pg-btn:disabled{opacity:.35;cursor:default}
+.dl-btn{padding:5px 14px;border:none;border-radius:6px;cursor:pointer;font-size:.82rem;
+        font-weight:600;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th{background:#f8fafc;text-align:left;padding:7px 8px;font-size:.72rem;
    text-transform:uppercase;color:#777;border-bottom:2px solid #e0e8f5;
    cursor:pointer;user-select:none;white-space:nowrap}
 th:hover{background:#eef2f7}
-th.sort-asc::after{content:" ▲"}
-th.sort-desc::after{content:" ▼"}
-td{padding:7px 10px;border-bottom:1px solid #f0f4f8;vertical-align:middle}
+th.sort-asc::after{content:" ▲"}th.sort-desc::after{content:" ▼"}
+th.no-sort{cursor:default}th.no-sort:hover{background:#f8fafc}
+td{padding:6px 8px;border-bottom:1px solid #f0f4f8;vertical-align:middle}
 tr:hover td{background:#f7fbff}
-.ellipsis{max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+.ellipsis{max-width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
           display:inline-block;vertical-align:middle}
-.badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:.73rem;font-weight:700}
+.badge{display:inline-block;padding:1px 6px;border-radius:10px;font-size:.71rem;font-weight:700}
 .bvf {background:#fef3c7;color:#92400e;border:1px solid #f59e0b}
 .bmge{background:#ede9fe;color:#5b21b6;border:1px solid #8b5cf6}
-.bcard{background:#e8f0fe;color:#1a56db}
-.bsarg{background:#fef3c7;color:#b45309}
+.bcard{background:#e8f0fe;color:#1a56db}.bsarg{background:#fef3c7;color:#b45309}
 .besk{background:#fde8e8;color:#c0392b;border:1px solid #e74c3c}
 .bwho{background:#fef3c7;color:#b45309;border:1px solid #f39c12}
-.risk-h{color:#c0392b;font-weight:700}
-.risk-m{color:#e67e22;font-weight:700}
+.risk-h{color:#c0392b;font-weight:700}.risk-m{color:#e67e22;font-weight:700}
 .risk-l{color:#27ae60;font-weight:700}
-.note{color:#888;font-size:.8rem;margin:4px 0 10px;font-style:italic}
-.filter-bar{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
-.fbtn{padding:5px 14px;border:none;border-radius:16px;cursor:pointer;
-      font-size:.82rem;font-weight:600;opacity:.85}
-.fbtn:hover{opacity:1}
-.fbtn.active{outline:2px solid #333;opacity:1}
-footer{margin-top:40px;color:#bbb;font-size:.78rem;border-top:1px solid #e5e5e5;padding-top:10px}
+.filter-bar{display:flex;gap:7px;margin:8px 0;flex-wrap:wrap;align-items:center}
+.fbtn{padding:4px 12px;border:none;border-radius:14px;cursor:pointer;
+      font-size:.8rem;font-weight:600;opacity:.85;white-space:nowrap}
+.fbtn:hover,.fbtn.active{opacity:1}
+.fbtn.active{outline:2px solid #333}
+.note{color:#888;font-size:.78rem;margin:3px 0 8px;font-style:italic}
+footer{margin-top:36px;color:#bbb;font-size:.76rem;border-top:1px solid #e5e5e5;padding-top:8px}
+input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:#2c6fad}
+.sel-count{font-size:.8rem;color:#2c6fad;font-weight:600}
 """
 
 # ---------------------------------------------------------------------------
-# Vanilla JS lightweight paginator (no jQuery, no DataTables)
+# Shared Plotly config
 # ---------------------------------------------------------------------------
 
-_PAGINATOR_JS = """
-function LightTable(cfg) {
-  // cfg: {tableId, data, cols, pageSize, searchId, pgInfoId, prevId, nextId, accentColor}
-  var t = this;
-  t.data = cfg.data; t.filtered = cfg.data.slice();
-  t.cols = cfg.cols; t.page = 0; t.ps = cfg.pageSize || 50;
-  t.sortCol = -1; t.sortDir = 1;
-  t.tbody = document.querySelector('#'+cfg.tableId+' tbody');
-  t.ths   = document.querySelectorAll('#'+cfg.tableId+' th');
-  t.pgInfo = document.getElementById(cfg.pgInfoId);
-  t.prev   = document.getElementById(cfg.prevId);
-  t.next   = document.getElementById(cfg.nextId);
-  t.search = document.getElementById(cfg.searchId);
-  // sort on header click
-  t.ths.forEach(function(th, ci) {
-    th.addEventListener('click', function() {
-      if (t.sortCol === ci) { t.sortDir *= -1; }
-      else { t.sortCol = ci; t.sortDir = 1; }
-      t.ths.forEach(function(h) { h.className=''; });
-      th.className = t.sortDir===1 ? 'sort-asc' : 'sort-desc';
-      t.applySort(); t.page=0; t.render();
+_PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
+
+_LAYOUT_BASE = {
+    "margin": {"t": 40, "b": 30, "l": 150, "r": 15},
+    "paper_bgcolor": "rgba(0,0,0,0)",
+    "plot_bgcolor": "rgba(0,0,0,0)",
+    "font": {"size": 11},
+}
+
+
+def _layout(**extra) -> dict:
+    d = dict(_LAYOUT_BASE)
+    d.update(extra)
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Vanilla JS — shared paginator + checkbox support
+# ---------------------------------------------------------------------------
+
+_PAGINATOR_JS = r"""
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function ellipsis(s,mx){s=esc(s);return s.length>mx?'<span class="ellipsis" title="'+s+'">'+s.slice(0,mx)+'…</span>':s;}
+
+function LightTable(cfg){
+  var t=this;
+  t.data=cfg.data; t.filtered=cfg.data.slice();
+  t.cols=cfg.cols; t.page=0; t.ps=cfg.pageSize||50;
+  t.sortCol=-1; t.sortDir=1;
+  t.hasCheck=!!cfg.onCheck;
+  t.selected=cfg.selected||null; // external Set for cross-page selection
+  t.tbody=document.querySelector('#'+cfg.tableId+' tbody');
+  t.ths=document.querySelectorAll('#'+cfg.tableId+' thead th');
+  t.pgInfo=document.getElementById(cfg.pgInfoId);
+  t.prevBtn=document.getElementById(cfg.prevId);
+  t.nextBtn=document.getElementById(cfg.nextId);
+  t.searchEl=document.getElementById(cfg.searchId);
+  t.selCount=cfg.selCountId?document.getElementById(cfg.selCountId):null;
+
+  // sort
+  t.ths.forEach(function(th,ci){
+    if(th.classList.contains('no-sort'))return;
+    th.addEventListener('click',function(){
+      if(t.sortCol===ci){t.sortDir*=-1;}else{t.sortCol=ci;t.sortDir=1;}
+      t.ths.forEach(function(h){h.className=h.classList.contains('no-sort')?'no-sort':'';});
+      th.className=(t.sortDir===1?'sort-asc':'sort-desc');
+      t.applySort();t.page=0;t.render();
     });
   });
   // search
-  if (t.search) {
-    t.search.addEventListener('input', function() {
-      var q = t.search.value.toLowerCase();
-      t.filtered = q ? t.data.filter(function(r) {
-        return r.some(function(c){ return String(c).toLowerCase().indexOf(q) !== -1; });
-      }) : t.data.slice();
-      t.applySort(); t.page=0; t.render();
-    });
-  }
-  if (t.prev) t.prev.addEventListener('click', function(){ if(t.page>0){t.page--;t.render();} });
-  if (t.next) t.next.addEventListener('click', function(){
+  if(t.searchEl)t.searchEl.addEventListener('input',function(){
+    var q=t.searchEl.value.toLowerCase();
+    t.filtered=q?t.data.filter(function(r){
+      return r.some(function(c){return String(c).toLowerCase().indexOf(q)!==-1;});
+    }):t.data.slice();
+    t.applySort();t.page=0;t.render();
+  });
+  if(t.prevBtn)t.prevBtn.addEventListener('click',function(){if(t.page>0){t.page--;t.render();}});
+  if(t.nextBtn)t.nextBtn.addEventListener('click',function(){
     if((t.page+1)*t.ps<t.filtered.length){t.page++;t.render();}
   });
-  t.applySort = function() {
-    if (t.sortCol < 0) return;
-    var ci = t.sortCol, dir = t.sortDir;
+
+  t.applySort=function(){
+    if(t.sortCol<0)return;
+    var ci=t.sortCol,dir=t.sortDir;
     t.filtered.sort(function(a,b){
-      var av=a[ci], bv=b[ci];
-      var an=parseFloat(av), bn=parseFloat(bv);
-      if(!isNaN(an)&&!isNaN(bn)){ return dir*(an-bn); }
-      return dir*(String(av).localeCompare(String(bv)));
+      var av=a[ci],bv=b[ci],an=parseFloat(av),bn=parseFloat(bv);
+      if(!isNaN(an)&&!isNaN(bn))return dir*(an-bn);
+      return dir*String(av).localeCompare(String(bv));
     });
   };
-  t.render = function() {
-    var start=t.page*t.ps, end=Math.min(start+t.ps, t.filtered.length);
+
+  t.render=function(){
+    var start=t.page*t.ps,end=Math.min(start+t.ps,t.filtered.length);
     var html='';
     for(var i=start;i<end;i++){
       var r=t.filtered[i];
-      html += '<tr>' + t.cols.map(function(c,ci){
+      var rowId=r[0]; // first col used as unique key
+      var chk=t.hasCheck?(
+        '<td><input type="checkbox" data-id="'+esc(rowId)+'" '+(t.selected&&t.selected.has(rowId)?'checked':'')+
+        ' onchange="tblCheckChange(this)"></td>'):'' ;
+      html+='<tr>'+chk+t.cols.map(function(c,ci){
         return '<td>'+c.render(r[ci],r)+'</td>';
-      }).join('') + '</tr>';
+      }).join('')+'</tr>';
     }
-    t.tbody.innerHTML = html || '<tr><td colspan="'+t.cols.length+'" style="color:#999;text-align:center;padding:20px">No results</td></tr>';
-    if(t.pgInfo) t.pgInfo.textContent = t.filtered.length===0 ? '0 rows' :
+    t.tbody.innerHTML=html||'<tr><td colspan="'+(t.cols.length+(t.hasCheck?1:0))+
+      '" style="color:#999;text-align:center;padding:20px">No results</td></tr>';
+    if(t.pgInfo)t.pgInfo.textContent=t.filtered.length===0?'0 rows':
       'Showing '+(start+1)+'–'+end+' of '+t.filtered.length.toLocaleString();
-    if(t.prev) t.prev.disabled = t.page===0;
-    if(t.next) t.next.disabled = end>=t.filtered.length;
+    if(t.prevBtn)t.prevBtn.disabled=t.page===0;
+    if(t.nextBtn)t.nextBtn.disabled=end>=t.filtered.length;
+    if(t.selCount&&t.selected)t.selCount.textContent=t.selected.size+' selected';
   };
   t.render();
 }
-function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function ellipsis(s,max){ s=esc(s); return s.length>max?'<span class="ellipsis" title="'+s+'">'+s.substring(0,max)+'…</span>':s; }
 """
 
 # ---------------------------------------------------------------------------
@@ -177,7 +215,7 @@ _NAV_PAGES = [
     ("plasmid",      "report_plasmid.html",      "Plasmid",      "#2c6fad"),
     ("chromosome",   "report_chromosome.html",    "Chromosome",   "#27ae60"),
     ("phage",        "report_phage.html",         "Phage",        "#e67e22"),
-    ("archaea",      "report_archaea.html",       "Archaea",      "#8e44ad"),
+    ("archaea",      "report_archaea.html",        "Archaea",      "#8e44ad"),
     ("unclassified", "report_unclassified.html",  "Unclassified", "#95a5a6"),
 ]
 
@@ -195,17 +233,17 @@ def _nav(active: str, class_counts: dict[str, int], color: str) -> str:
             f'<div class="pill">{pills}</div></nav>')
 
 
-def _page(title: str, active: str, counts: dict, color: str, body: str, extra_js: str = "") -> str:
+def _full_page(title: str, active: str, counts: dict, color: str, body: str, js: str = "") -> str:
     return (
         f'<!DOCTYPE html><html lang="en"><head>'
         f'<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{title} — PlasFlow v2</title>'
+        f'{_PLOTLY_CDN}'
         f'<style>{_CSS}</style></head><body>'
         f'{_nav(active, counts, color)}'
         f'<div class="wrap">{body}'
-        f'<footer>PlasFlow v2 — open in any browser, no server required.</footer>'
-        f'</div>'
-        f'<script>{_PAGINATOR_JS}{extra_js}</script>'
+        f'<footer>PlasFlow v2 — open in any browser, no server required.</footer></div>'
+        f'<script>{_PAGINATOR_JS}{js}</script>'
         f'</body></html>'
     )
 
@@ -249,7 +287,7 @@ class NonPlasmidRow:
 
 
 # ---------------------------------------------------------------------------
-# Chart builders (Plotly — plasmid page only)
+# Plasmid chart builders
 # ---------------------------------------------------------------------------
 
 
@@ -260,9 +298,9 @@ def _pie(class_counts: dict[str, int]) -> dict:
     return {"data":[{"type":"pie","labels":labels,"values":values,
                      "marker":{"colors":[colors.get(l,"#aaa") for l in labels]},
                      "textinfo":"label+percent","hole":0.35}],
-            "layout":{"title":{"text":"Classification","font":{"size":13}},
-                      "margin":{"t":45,"b":15,"l":15,"r":15},"showlegend":False,
-                      "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+            "layout":{**_layout(margin={"t":40,"b":10,"l":10,"r":10}),
+                      "title":{"text":"Classification Overview","font":{"size":12}},
+                      "showlegend":False}}
 
 
 def _arg_bar(arg_hits: list) -> dict:
@@ -274,15 +312,12 @@ def _arg_bar(arg_hits: list) -> dict:
                 dc[c] += 1
     if not dc:
         return {"data":[{"type":"bar","x":[],"y":[],"orientation":"h"}],
-                "layout":{"title":{"text":"ARGs (none)","font":{"size":13}},
-                           "margin":{"t":45,"b":30,"l":160,"r":15},
-                           "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+                "layout":{**_layout(),"title":{"text":"ARG Drug Classes (none detected)","font":{"size":12}}}}
     items = sorted(dc.items(), key=lambda x: x[1])
     return {"data":[{"type":"bar","x":[i[1] for i in items],"y":[i[0] for i in items],
                      "orientation":"h","marker":{"color":"#c0392b"}}],
-            "layout":{"title":{"text":"ARGs by Drug Class","font":{"size":13}},
-                      "xaxis":{"title":"Count"},"margin":{"t":45,"b":30,"l":170,"r":15},
-                      "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+            "layout":{**_layout(),"title":{"text":"ARGs by Drug Class","font":{"size":12}},
+                      "xaxis":{"title":"Count"}}}
 
 
 def _vf_bar(rows: list[PlasmidRow]) -> dict:
@@ -295,14 +330,12 @@ def _vf_bar(rows: list[PlasmidRow]) -> dict:
     top = gc.most_common(12)
     if not top:
         return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{"title":{"text":"VF Genes (none)","font":{"size":13}},
-                           "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
-    labels,counts = [i[0] for i in reversed(top)],[i[1] for i in reversed(top)]
-    return {"data":[{"type":"bar","x":counts,"y":labels,"orientation":"h",
-                     "marker":{"color":"#f59e0b"}}],
-            "layout":{"title":{"text":"Top VF Genes","font":{"size":13}},
-                      "xaxis":{"title":"Contigs"},"margin":{"t":45,"b":30,"l":160,"r":15},
-                      "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+                "layout":{**_layout(),"title":{"text":"VF Genes (none detected)","font":{"size":12}}}}
+    return {"data":[{"type":"bar","x":[i[1] for i in reversed(top)],
+                     "y":[i[0] for i in reversed(top)],
+                     "orientation":"h","marker":{"color":"#f59e0b"}}],
+            "layout":{**_layout(),"title":{"text":"Top VF Genes","font":{"size":12}},
+                      "xaxis":{"title":"Contigs"}}}
 
 
 def _mge_bar(rows: list[PlasmidRow]) -> dict:
@@ -315,111 +348,233 @@ def _mge_bar(rows: list[PlasmidRow]) -> dict:
     top = fc.most_common(12)
     if not top:
         return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{"title":{"text":"MGE Families (none)","font":{"size":13}},
-                           "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
-    labels,counts = [i[0] for i in reversed(top)],[i[1] for i in reversed(top)]
-    return {"data":[{"type":"bar","x":counts,"y":labels,"orientation":"h",
-                     "marker":{"color":"#8b5cf6"}}],
-            "layout":{"title":{"text":"Top MGE Families","font":{"size":13}},
-                      "xaxis":{"title":"Contigs"},"margin":{"t":45,"b":30,"l":160,"r":15},
-                      "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+                "layout":{**_layout(),"title":{"text":"MGE Families (none detected)","font":{"size":12}}}}
+    return {"data":[{"type":"bar","x":[i[1] for i in reversed(top)],
+                     "y":[i[0] for i in reversed(top)],
+                     "orientation":"h","marker":{"color":"#8b5cf6"}}],
+            "layout":{**_layout(),"title":{"text":"Top MGE Families","font":{"size":12}},
+                      "xaxis":{"title":"Contigs"}}}
+
+
+def _mobility_bar(rows: list[PlasmidRow]) -> dict:
+    mc: Counter[str] = Counter(r.mobility_class for r in rows)
+    items = sorted(mc.items(), key=lambda x: x[1])
+    colors_map = {"conjugative":"#c0392b","mobilizable":"#e67e22","non-mobilizable":"#27ae60",
+                  "unknown":"#95a5a6"}
+    bar_colors = [colors_map.get(i[0], "#2c6fad") for i in items]
+    return {"data":[{"type":"bar","x":[i[1] for i in items],"y":[i[0] for i in items],
+                     "orientation":"h","marker":{"color":bar_colors}}],
+            "layout":{**_layout(margin={"t":40,"b":30,"l":140,"r":15}),
+                      "title":{"text":"Mobility Classes","font":{"size":12}},
+                      "xaxis":{"title":"Plasmid contigs"}}}
+
+
+def _eskape_bar(rows: list[PlasmidRow]) -> dict:
+    gc: Counter[str] = Counter()
+    for r in rows:
+        if r.eskape_host and r.eskape_genus:
+            gc[r.eskape_genus] += 1
+    if not gc:
+        return {"data":[{"type":"bar","x":[],"y":[]}],
+                "layout":{**_layout(),"title":{"text":"ESKAPE / Pathogen Hosts (none detected)","font":{"size":12}}}}
+    items = sorted(gc.items(), key=lambda x: x[1])
+    eskape_set = {"Enterococcus","Staphylococcus","Klebsiella","Acinetobacter",
+                  "Pseudomonas","Enterobacter","Escherichia","Enterobacteriaceae"}
+    bar_colors = ["#c0392b" if i[0] in eskape_set else "#e67e22" for i in items]
+    return {"data":[{"type":"bar","x":[i[1] for i in items],"y":[i[0] for i in items],
+                     "orientation":"h","marker":{"color":bar_colors},
+                     "name":""}],
+            "layout":{**_layout(margin={"t":40,"b":30,"l":150,"r":15}),
+                      "title":{"text":"ESKAPE & Other Pathogen Hosts<br><sup>Red = ESKAPE, Orange = WHO priority</sup>",
+                               "font":{"size":12}},
+                      "xaxis":{"title":"Plasmid contigs"}}}
 
 
 def _risk_hist(risk_scores: list[int]) -> dict:
     c = Counter(risk_scores)
-    sr = list(range(11))
-    y = [c.get(s,0) for s in sr]
-    cols = ["#c0392b" if s>=7 else "#e67e22" if s>=4 else "#27ae60" for s in sr]
+    sr = list(range(1, 11))  # exclude 0
+    y = [c.get(s, 0) for s in sr]
+    cols = ["#c0392b" if s >= 7 else "#e67e22" if s >= 4 else "#27ae60" for s in sr]
     return {"data":[{"type":"bar","x":sr,"y":y,"marker":{"color":cols}}],
-            "layout":{"title":{"text":"Risk Score Distribution","font":{"size":13}},
-                      "xaxis":{"title":"Risk Score","dtick":1},"yaxis":{"title":"Plasmids"},
-                      "margin":{"t":45,"b":40,"l":45,"r":15},
-                      "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+            "layout":{**_layout(margin={"t":40,"b":40,"l":45,"r":15}),
+                      "title":{"text":"Risk Score Distribution (score ≥ 1)","font":{"size":12}},
+                      "xaxis":{"title":"Risk Score","dtick":1},
+                      "yaxis":{"title":"Plasmids"}}}
+
+
+# ---------------------------------------------------------------------------
+# Non-plasmid chart builders
+# ---------------------------------------------------------------------------
+
+_LENGTH_EDGES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, float("inf")]
+_LENGTH_LABELS = ["1–3 kb", "3–10 kb", "10–30 kb", "30–100 kb", "100–300 kb", "300 kb–1 Mb", ">1 Mb"]
+
+
+def _length_hist(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
+    bins = [0] * len(_LENGTH_EDGES)
+    for r in rows:
+        for i, edge in enumerate(_LENGTH_EDGES):
+            if r.contig_length < edge:
+                bins[i] += 1
+                break
+    return {"data":[{"type":"bar","x":_LENGTH_LABELS,"y":bins,
+                     "marker":{"color":color}}],
+            "layout":{**_layout(margin={"t":40,"b":60,"l":55,"r":15}),
+                      "title":{"text":f"Contig Length Distribution — {title}","font":{"size":12}},
+                      "xaxis":{"tickangle":-35},"yaxis":{"title":"Contigs"}}}
+
+
+def _confidence_hist(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
+    bins_x = [f"{i/10:.1f}–{(i+1)/10:.1f}" for i in range(10)]
+    bins_y = [0] * 10
+    for r in rows:
+        i = min(int(r.confidence * 10), 9)
+        bins_y[i] += 1
+    return {"data":[{"type":"bar","x":bins_x,"y":bins_y,
+                     "marker":{"color":color,"opacity":0.8}}],
+            "layout":{**_layout(margin={"t":40,"b":50,"l":55,"r":15}),
+                      "title":{"text":f"Classification Confidence — {title}","font":{"size":12}},
+                      "xaxis":{"title":"Confidence","tickangle":-30},
+                      "yaxis":{"title":"Contigs"}}}
+
+
+def _taxonomy_bar_nonplasmid(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
+    tc: Counter[str] = Counter()
+    for r in rows:
+        t = r.taxonomy
+        if t and t != "—":
+            tc[t] += 1
+    top = tc.most_common(12)
+    if not top:
+        return {"data":[{"type":"bar","x":[],"y":[]}],
+                "layout":{**_layout(),"title":{"text":f"Taxonomy — {title} (no data)","font":{"size":12}}}}
+    return {"data":[{"type":"bar","x":[i[1] for i in reversed(top)],
+                     "y":[i[0] for i in reversed(top)],
+                     "orientation":"h","marker":{"color":color}}],
+            "layout":{**_layout(),"title":{"text":f"Top Taxonomy — {title}","font":{"size":12}},
+                      "xaxis":{"title":"Contigs"}}}
+
+
+def _best_label_bar(rows: list[NonPlasmidRow]) -> dict:
+    bc: Counter[str] = Counter(r.best_label for r in rows if r.best_label)
+    if not bc:
+        return {"data":[{"type":"bar","x":[],"y":[]}],
+                "layout":{**_layout(),"title":{"text":"Best Label Distribution","font":{"size":12}}}}
+    colors_map = {"plasmid":"#2c6fad","chromosome":"#27ae60","phage":"#e67e22","archaea":"#8e44ad"}
+    items = sorted(bc.items(), key=lambda x: x[1], reverse=True)
+    return {"data":[{"type":"bar",
+                     "x":[i[0] for i in items],
+                     "y":[i[1] for i in items],
+                     "marker":{"color":[colors_map.get(i[0],"#95a5a6") for i in items]}}],
+            "layout":{**_layout(margin={"t":40,"b":40,"l":45,"r":15}),
+                      "title":{"text":"Best-Guess Class Distribution<br><sup>What the model would assign if forced</sup>",
+                               "font":{"size":12}},
+                      "xaxis":{"title":"Class"},"yaxis":{"title":"Contigs"}}}
+
+
+def _pathogen_bar(pathogens: dict) -> dict:
+    """Horizontal bar: top pathogenic species detected across all contigs."""
+    from collections import Counter
+    sc: Counter[str] = Counter()
+    level_map: dict[str, str] = {}
+    for pr in pathogens.values():
+        sc[pr.species] += 1
+        level_map[pr.species] = getattr(pr, "threat_level", "medium")
+    if not sc:
+        return {"data":[{"type":"bar","x":[],"y":[],"orientation":"h"}],
+                "layout":{**_layout(),
+                           "title":{"text":"Pathogenic Species (none detected — run with --taxonomy-db)",
+                                    "font":{"size":11}}}}
+    items = sorted(sc.items(), key=lambda x: x[1])[-20:]  # top 20
+    level_colors = {"critical":"#c0392b","high":"#e67e22","medium":"#f1c40f"}
+    return {"data":[{"type":"bar",
+                     "x":[i[1] for i in items],
+                     "y":[i[0] for i in items],
+                     "orientation":"h",
+                     "text":[level_map.get(i[0],"") for i in items],
+                     "textposition":"auto",
+                     "marker":{"color":[level_colors.get(level_map.get(i[0],"medium"),"#aaa")
+                                        for i in items]}}],
+            "layout":{**_layout(),
+                      "title":{"text":"Pathogenic Species Detected<br>"
+                                      "<sup>Red=critical · Orange=high · Yellow=medium</sup>",
+                               "font":{"size":12}},
+                      "xaxis":{"title":"Contigs"}}}
 
 
 def _build_drug_cooccurrence_heatmap(plasmid_results: list) -> dict:
-    """Co-occurrence heatmap — kept for backward compat with report_cmd."""
-    contig_classes = []
-    for cr in plasmid_results:
-        classes: set[str] = set()
-        for hit in cr.arg_hits:
-            for dc in hit.drug_class.split(";"):
-                dc = dc.strip()
-                if dc and dc not in ("unknown", ""):
-                    classes.add(dc)
-        if classes:
-            contig_classes.append(frozenset(classes))
-    all_classes = sorted({dc for fset in contig_classes for dc in fset})
-    if len(all_classes) < 2:
-        return {"data":[],"layout":{"title":{"text":"Co-occurrence (insufficient data)","font":{"size":13}},
-                                     "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
-    n = len(all_classes)
-    matrix = [[0]*n for _ in range(n)]
-    for fset in contig_classes:
-        for i,ci in enumerate(all_classes):
-            if ci not in fset: continue
-            for j,cj in enumerate(all_classes):
-                if cj in fset: matrix[i][j] += 1
-    short = [c if len(c)<=26 else c[:25]+"…" for c in all_classes]
-    return {"data":[{"type":"heatmap","z":matrix,"x":short,"y":short,
-                     "colorscale":"Blues","showscale":True}],
-            "layout":{"title":{"text":"Drug-Class Co-occurrence","font":{"size":13}},
-                      "margin":{"t":50,"b":110,"l":150,"r":30},
-                      "paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)"}}
+    """Backward-compat stub for report_cmd."""
+    return {"data": [], "layout": {"title": {"text": "Co-occurrence", "font": {"size": 12}}}}
 
 
 # ---------------------------------------------------------------------------
-# Plasmid page renderer
+# Plasmid page
 # ---------------------------------------------------------------------------
 
 
-def _plasmid_row_to_arr(r: PlasmidRow) -> list:
-    """Compact row as JSON array for the vanilla paginator."""
-    eskape = ""
-    if r.eskape_host:
-        eskape = r.eskape_genus
+def _p_row(r: PlasmidRow) -> list:
+    """Compact array for the vanilla JS paginator."""
     return [
-        r.contig_id,           # 0
-        r.contig_length,       # 1
-        round(r.confidence, 4),# 2
-        r.num_args,            # 3
-        r.drug_classes,        # 4
-        r.arg_sources,         # 5
-        r.num_vf,              # 6
-        r.vf_genes,            # 7
-        r.num_mge,             # 8
-        r.mge_families,        # 9
-        eskape,                # 10
-        r.mobility_class,      # 11
-        r.replicon_type,       # 12
-        r.risk_score,          # 13
-        r.taxonomy,            # 14
-        r.risk_evidence,       # 15
+        r.contig_id, r.contig_length, round(r.confidence, 4),
+        r.num_args, r.drug_classes, r.arg_sources,
+        r.num_vf, r.vf_genes, r.num_mge, r.mge_families,
+        r.eskape_genus if r.eskape_host else "",
+        r.mobility_class, r.replicon_type,
+        r.risk_score, r.taxonomy, r.risk_evidence,
     ]
 
 
+_PLASMID_COL_HEADERS = [
+    "Contig", "Length (bp)", "Conf.", "ARGs", "Drug Classes", "DB",
+    "VFs", "VF Genes", "MGEs", "MGE Families",
+    "Pathogen", "Mobility", "Replicon", "Risk", "Taxonomy", "Evidence",
+]
+
+_PLASMID_DOWNLOAD_HEADERS = [
+    "contig_id", "length_bp", "confidence", "num_args", "drug_classes", "db_source",
+    "num_vf", "vf_genes", "num_mge", "mge_families",
+    "pathogen_host", "mobility_class", "replicon_type", "risk_score", "taxonomy", "risk_evidence",
+]
+
+
 def _render_plasmid_page(data: dict) -> str:
-    rows: list[PlasmidRow] = data["plasmid_rows"]
+    all_rows: list[PlasmidRow] = data["plasmid_rows"]
+    # Exclude risk score = 0 from HTML display
+    rows = [r for r in all_rows if r.risk_score > 0]
     counts = data["class_counts"]
-    n_total = len(rows)
+    n_total = len(all_rows)
+    n_shown = len(rows)
+    n_zero  = n_total - n_shown
     display = rows[:MAX_TABLE_ROWS]
-    truncated = n_total > MAX_TABLE_ROWS
+    truncated = n_shown > MAX_TABLE_ROWS
 
     stat_cards = (
         f'<div class="card" style="border-left:4px solid #2c6fad">'
-        f'<h3>Plasmids</h3><p style="color:#2c6fad">{n_total:,}</p></div>'
+        f'<h3>Plasmids (risk≥1)</h3><p style="color:#2c6fad">{n_shown:,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #95a5a6">'
+        f'<h3>Risk = 0 (hidden)</h3><p style="color:#95a5a6">{n_zero:,}</p></div>'
         f'<div class="card" style="border-left:4px solid #c0392b">'
         f'<h3>ARGs</h3><p style="color:#c0392b">{data["total_args"]:,}</p></div>'
         f'<div class="card" style="border-left:4px solid #f59e0b">'
         f'<h3>VF Genes</h3><p style="color:#92400e">{data["total_vf"]:,}</p></div>'
         f'<div class="card" style="border-left:4px solid #8b5cf6">'
         f'<h3>MGEs</h3><p style="color:#5b21b6">{data["total_mge"]:,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #e74c3c">'
+        f'<h3>Pathogenic Contigs</h3><p style="color:#c0392b">{data.get("total_pathogens",0):,}</p></div>'
     )
 
-    note = (f'<p class="note">Showing top {MAX_TABLE_ROWS:,} of {n_total:,} plasmid contigs. '
-            f'Full data in predictions.tsv.</p>') if truncated else ""
+    note = ""
+    if truncated:
+        note = (f'<p class="note">Showing top {MAX_TABLE_ROWS:,} of {n_shown:,} '
+                f'risk≥1 plasmid contigs. Full data in predictions.tsv.</p>')
+    if n_zero:
+        note += f'<p class="note">{n_zero:,} contigs with risk score = 0 are hidden. Full list in predictions.tsv.</p>'
 
-    row_data = json.dumps([_plasmid_row_to_arr(r) for r in display])
+    row_data_json = json.dumps([_p_row(r) for r in display])
+    headers_json  = json.dumps(_PLASMID_DOWNLOAD_HEADERS)
+
+    th_row = '<th class="no-sort"><input type="checkbox" id="chk-all" title="Select all on page"></th>'
+    th_row += "".join(f"<th>{h}</th>" for h in _PLASMID_COL_HEADERS)
 
     body = f"""
 <h1>PlasFlow v2 — Plasmid Report</h1>
@@ -427,117 +582,154 @@ def _render_plasmid_page(data: dict) -> str:
 <div class="cards">{stat_cards}</div>
 
 <h2>Overview</h2>
-<div class="chart-grid three">
+<div class="chart-grid g3">
   <div id="cpie"  class="cbox"></div>
   <div id="carg"  class="cbox"></div>
   <div id="crisk" class="cbox"></div>
 </div>
-<div class="chart-grid">
+
+<h2>Virulence Factors &amp; Mobile Genetic Elements</h2>
+<div class="chart-grid g2">
   <div id="cvf"  class="cbox"></div>
   <div id="cmge" class="cbox"></div>
 </div>
 
-<h2>Plasmid Predictions ({n_total:,} contigs)</h2>
+<h2>Mobility &amp; Pathogen Hosts</h2>
+<div class="chart-grid g2">
+  <div id="cmob"  class="cbox"></div>
+  <div id="cesk"  class="cbox"></div>
+</div>
+
+<h2>Plasmid Predictions — risk ≥ 1 ({n_shown:,} contigs)</h2>
 <div class="filter-bar">
-  <button class="fbtn active" id="fa" onclick="setRisk('')"  style="background:#e0e0e0;color:#333">All</button>
-  <button class="fbtn"        id="fh" onclick="setRisk('h')" style="background:#c0392b;color:#fff">High ≥7</button>
-  <button class="fbtn"        id="fm" onclick="setRisk('m')" style="background:#e67e22;color:#fff">Medium 4–6</button>
-  <button class="fbtn"        id="fl" onclick="setRisk('l')" style="background:#27ae60;color:#fff">Low 0–3</button>
+  <button class="fbtn active" id="fa" onclick="setRisk('')"  style="background:#ddd;color:#333">All</button>
+  <button class="fbtn" id="fh" onclick="setRisk('h')" style="background:#c0392b;color:#fff">High ≥7</button>
+  <button class="fbtn" id="fm" onclick="setRisk('m')" style="background:#e67e22;color:#fff">Medium 4–6</button>
+  <button class="fbtn" id="fl" onclick="setRisk('l')" style="background:#27ae60;color:#fff">Low 1–3</button>
+  <span style="margin-left:8px">
+    <button class="dl-btn" style="background:#2c6fad" onclick="downloadSel()">⬇ Download Selected</button>
+    <button class="dl-btn" style="background:#555;margin-left:4px" onclick="downloadFiltered()">⬇ Download All Filtered</button>
+  </span>
+  <span class="sel-count" id="sel-count"></span>
 </div>
 {note}
 <div class="tbl-wrap">
   <div class="tbl-ctrl">
-    <input id="psearch" placeholder="Search…">
+    <input type="text" id="psearch" placeholder="Search…">
     <span class="pg-info" id="ppg"></span>
     <button class="pg-btn" id="pprev">◀ Prev</button>
     <button class="pg-btn" id="pnext">Next ▶</button>
   </div>
   <table id="ptable">
-    <thead><tr>
-      <th>Contig</th><th>Length</th><th>Conf.</th><th>ARGs</th><th>Drug Classes</th><th>DB</th>
-      <th>VFs</th><th>VF Genes</th><th>MGEs</th><th>MGE Families</th>
-      <th>Pathogen</th><th>Mobility</th><th>Replicon</th><th>Risk</th><th>Taxonomy</th><th>Evidence</th>
-    </tr></thead>
+    <thead><tr>{th_row}</tr></thead>
     <tbody></tbody>
   </table>
 </div>"""
 
     js = f"""
 (function(){{
-var Plotly=window.Plotly;
-Plotly.newPlot('cpie',  {json.dumps(data['pie_data']['data'])},  {json.dumps(data['pie_data']['layout'])},  {{responsive:true,displayModeBar:false}});
-Plotly.newPlot('carg',  {json.dumps(data['arg_data']['data'])},  {json.dumps(data['arg_data']['layout'])},  {{responsive:true,displayModeBar:false}});
-Plotly.newPlot('crisk', {json.dumps(data['risk_data']['data'])}, {json.dumps(data['risk_data']['layout'])}, {{responsive:true,displayModeBar:false}});
-Plotly.newPlot('cvf',   {json.dumps(data['vf_data']['data'])},   {json.dumps(data['vf_data']['layout'])},   {{responsive:true,displayModeBar:false}});
-Plotly.newPlot('cmge',  {json.dumps(data['mge_data']['data'])},  {json.dumps(data['mge_data']['layout'])},  {{responsive:true,displayModeBar:false}});
+var P=window.Plotly,dm={{responsive:true,displayModeBar:false}};
+P.newPlot('cpie', {json.dumps(data['pie_data']['data'])},{json.dumps(data['pie_data']['layout'])},dm);
+P.newPlot('carg', {json.dumps(data['arg_data']['data'])},{json.dumps(data['arg_data']['layout'])},dm);
+P.newPlot('crisk',{json.dumps(data['risk_data']['data'])},{json.dumps(data['risk_data']['layout'])},dm);
+P.newPlot('cvf',  {json.dumps(data['vf_data']['data'])}, {json.dumps(data['vf_data']['layout'])}, dm);
+P.newPlot('cmge', {json.dumps(data['mge_data']['data'])},{json.dumps(data['mge_data']['layout'])},dm);
+P.newPlot('cmob', {json.dumps(data['mobility_data']['data'])},{json.dumps(data['mobility_data']['layout'])},dm);
+P.newPlot('cesk', {json.dumps(data['eskape_data']['data'])},{json.dumps(data['eskape_data']['layout'])},dm);
 
-var ALL={row_data};
-var cur=ALL;
-var risk_filter='';
+var ALL={row_data_json};
+var HEADERS={headers_json};
+var cur=ALL.slice();
+var SEL=new Set(); // selected contig IDs
+
+window.tblCheckChange=function(cb){{
+  var id=cb.getAttribute('data-id');
+  if(cb.checked)SEL.add(id);else SEL.delete(id);
+  document.getElementById('sel-count').textContent=SEL.size>0?SEL.size+' selected':'';
+}};
+document.getElementById('chk-all').addEventListener('change',function(){{
+  var chk=this.checked;
+  document.querySelectorAll('#ptable tbody input[type=checkbox]').forEach(function(c){{
+    c.checked=chk;
+    var id=c.getAttribute('data-id');
+    if(chk)SEL.add(id);else SEL.delete(id);
+  }});
+  document.getElementById('sel-count').textContent=SEL.size>0?SEL.size+' selected':'';
+}});
 
 function riskCls(v){{return v>=7?'h':v>=4?'m':'l';}}
 function renderR(v){{var c=riskCls(v);return '<span class="risk-'+c+'">'+v+'</span>';}}
 function srcBadges(s){{if(!s)return'—';
-  return s.split(',').map(function(x){{x=x.trim();return x?'<span class="badge b'+x.toLowerCase()+'">'+esc(x)+'</span>':'';}}).join(' ');}}
+  return s.split(',').map(function(x){{x=x.trim();
+    return x?'<span class="badge b'+x.toLowerCase()+'">'+esc(x)+'</span>':'';}}).join(' ')}}
 function eskBadge(e){{if(!e)return'—';
   var ek=['Enterococcus','Staphylococcus','Klebsiella','Acinetobacter','Pseudomonas','Enterobacter','Escherichia'];
-  var cls=ek.indexOf(e)>=0?'besk':'bwho';
-  return '<span class="badge '+cls+'">'+esc(e)+'</span>';}}
+  return'<span class="badge '+(ek.indexOf(e)>=0?'besk':'bwho')+'">'+esc(e)+'</span>';}}
 
-var cols=[
-  {{render:function(v){{return ellipsis(v,30);}}}},
+var COLS=[
+  {{render:function(v){{return ellipsis(v,28);}}}},
   {{render:function(v){{return Number(v).toLocaleString();}}}},
-  {{render:function(v){{return v;}}}} ,
-  {{render:function(v){{return v;}}}} ,
-  {{render:function(v){{return ellipsis(v,35);}}}},
+  {{render:function(v){{return v;}}}},
+  {{render:function(v){{return v;}}}},
+  {{render:function(v){{return ellipsis(v,32);}}}},
   {{render:function(v){{return srcBadges(v);}}}},
-  {{render:function(v,r){{return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}}}},
-  {{render:function(v){{return ellipsis(v,30);}}}},
-  {{render:function(v,r){{return v>0?'<span class="badge bmge">'+v+' MGE</span>':'—';}}}},
-  {{render:function(v){{return ellipsis(v,30);}}}},
+  {{render:function(v){{return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}}}},
+  {{render:function(v){{return ellipsis(v,28);}}}},
+  {{render:function(v){{return v>0?'<span class="badge bmge">'+v+' MGE</span>':'—';}}}},
+  {{render:function(v){{return ellipsis(v,28);}}}},
   {{render:function(v){{return eskBadge(v);}}}},
   {{render:function(v){{return esc(v);}}}},
   {{render:function(v){{return esc(v);}}}},
   {{render:function(v){{return renderR(v);}}}},
-  {{render:function(v){{return ellipsis(v,28);}}}},
-  {{render:function(v){{return ellipsis(v,35);}}}},
+  {{render:function(v){{return ellipsis(v,25);}}}},
+  {{render:function(v){{return ellipsis(v,32);}}}},
 ];
-var tbl=new LightTable({{tableId:'ptable',data:ALL,cols:cols,pageSize:50,
-  searchId:'psearch',pgInfoId:'ppg',prevId:'pprev',nextId:'pnext'}});
+
+var tbl=new LightTable({{tableId:'ptable',data:ALL,cols:COLS,pageSize:50,
+  searchId:'psearch',pgInfoId:'ppg',prevId:'pprev',nextId:'pnext',
+  onCheck:true,selected:SEL,selCountId:'sel-count'}});
 
 function setRisk(r){{
-  risk_filter=r;
   ['fa','fh','fm','fl'].forEach(function(id){{document.getElementById(id).classList.remove('active');}});
   document.getElementById(r===''?'fa':r==='h'?'fh':r==='m'?'fm':'fl').classList.add('active');
-  cur = r==='' ? ALL : ALL.filter(function(row){{return riskCls(row[13])===r;}});
-  tbl.data=cur; tbl.filtered=cur.slice(); tbl.page=0; tbl.applySort(); tbl.render();
+  cur=r===''?ALL.slice():ALL.filter(function(row){{return riskCls(row[13])===r;}});
+  tbl.data=cur;tbl.filtered=cur.slice();tbl.page=0;tbl.applySort();tbl.render();
   document.getElementById('psearch').value='';
 }}
 window.setRisk=setRisk;
+
+function toTSV(rows){{
+  var lines=[HEADERS.join('\\t')];
+  rows.forEach(function(r){{
+    lines.push(r.map(function(v){{return '"'+String(v).replace(/"/g,'""')+'"';}}).join('\\t'));
+  }});
+  return lines.join('\\n');
+}}
+function triggerDownload(tsv,fname){{
+  var blob=new Blob([tsv],{{type:'text/tab-separated-values'}});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');a.href=url;a.download=fname;a.click();
+  URL.revokeObjectURL(url);
+}}
+window.downloadSel=function(){{
+  if(SEL.size===0){{alert('No rows selected. Use the checkboxes to select rows.');return;}}
+  var rows=ALL.filter(function(r){{return SEL.has(r[0]);}});
+  triggerDownload(toTSV(rows),'plasflow_selected_'+SEL.size+'.tsv');
+}};
+window.downloadFiltered=function(){{
+  triggerDownload(toTSV(tbl.filtered),'plasflow_filtered_'+tbl.filtered.length+'.tsv');
+}};
 }})();"""
 
-    extra_head = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" defer></script>'
-    return (
-        f'<!DOCTYPE html><html lang="en"><head>'
-        f'<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-        f'<title>Plasmid — PlasFlow v2</title>'
-        f'{extra_head}'
-        f'<style>{_CSS}</style></head><body>'
-        f'{_nav("plasmid", counts, "#2c6fad")}'
-        f'<div class="wrap">{body}'
-        f'<footer>PlasFlow v2 — open in any browser, no server required.</footer>'
-        f'</div>'
-        f'<script>{_PAGINATOR_JS}{js}</script>'
-        f'</body></html>'
-    )
+    return _full_page("Plasmid", "plasmid", counts, "#2c6fad", body, js=js)
 
 
 # ---------------------------------------------------------------------------
-# Non-plasmid page renderer (no Plotly, no jQuery, no DataTables)
+# Non-plasmid page renderer
 # ---------------------------------------------------------------------------
 
 
-def _nonplasmid_row_to_arr(r: NonPlasmidRow, show_best: bool = False) -> list:
+def _np_row(r: NonPlasmidRow, show_best: bool) -> list:
     row = [r.contig_id, r.contig_length, round(r.confidence, 4), r.taxonomy, r.taxonomy_lineage]
     if show_best:
         row += [r.best_label, round(r.best_score, 4)]
@@ -551,11 +743,12 @@ def _render_nonplasmid_page(
     color: str,
     rows: list[NonPlasmidRow],
     table_id: str,
+    chart_data: dict,
     show_best: bool = False,
     extra_note: str = "",
 ) -> str:
     n_total = len(rows)
-    display = rows[:MAX_TABLE_ROWS]
+    display  = rows[:MAX_TABLE_ROWS]
     truncated = n_total > MAX_TABLE_ROWS
     counts = data["class_counts"]
 
@@ -566,26 +759,54 @@ def _render_nonplasmid_page(
         f'<h3>Total Sequences</h3><p style="color:#2c6fad">{data["total"]:,}</p></div>'
     )
 
-    note_parts = []
+    notes = []
     if truncated:
-        note_parts.append(
-            f'Showing top {MAX_TABLE_ROWS:,} of {n_total:,} contigs (sorted by length). '
-            f'Full data available in <code>predictions.tsv</code>.'
-        )
+        notes.append(f'Showing top {MAX_TABLE_ROWS:,} of {n_total:,} contigs (by length). Full data in predictions.tsv.')
     if extra_note:
-        note_parts.append(extra_note)
-    note_html = "".join(f'<p class="note">{n}</p>' for n in note_parts)
+        notes.append(extra_note)
+    note_html = "".join(f'<p class="note">{n}</p>' for n in notes)
 
-    # Column definitions
-    base_cols_html = "<th>Contig</th><th>Length (bp)</th><th>Confidence</th><th>Taxonomy (LCA)</th>"
+    # Charts — 3 charts for non-plasmid pages; add pathogen bar on chromosome page
+    ch = chart_data
+    pathogen_data = data.get("pathogen_data")
+    show_pathogen = class_key == "chromosome" and pathogen_data
+    if show_pathogen:
+        chart_html = f"""
+<h2>Summary Charts</h2>
+<div class="chart-grid g3">
+  <div id="{table_id}_c1" class="cbox"></div>
+  <div id="{table_id}_c2" class="cbox"></div>
+  <div id="{table_id}_c3" class="cbox"></div>
+</div>
+<h2>Pathogenic Bacteria Detected</h2>
+<p class="note">Contigs from known pathogenic species (WHO/ESKAPE/CDC priority lists). Requires --taxonomy-db.</p>
+<div class="chart-grid g2">
+  <div id="{table_id}_cpat" class="cbox" style="min-height:320px"></div>
+  <div class="card" style="padding:16px;font-size:.84rem">
+    <h3 style="margin-bottom:8px">Threat Levels</h3>
+    <p><span class="badge besk">Critical</span> WHO critical / ESKAPE pathogens — pandrug-resistant, highest clinical risk</p>
+    <br><p><span class="badge bwho">High</span> WHO high-priority — MDR, significant public health threat</p>
+    <br><p><span class="badge bcard">Medium</span> WHO medium / regionally important — monitor for resistance</p>
+    <br><p style="margin-top:12px;color:#888;font-size:.78rem">Pathogen DB covers 50+ pathogenic genera from WHO BPPL 2024, ESKAPE, and CDC AR Threat Report.</p>
+  </div>
+</div>"""
+    else:
+        chart_html = f"""
+<h2>Summary Charts</h2>
+<div class="chart-grid g3">
+  <div id="{table_id}_c1" class="cbox"></div>
+  <div id="{table_id}_c2" class="cbox"></div>
+  <div id="{table_id}_c3" class="cbox"></div>
+</div>"""
+
+    # Table columns
+    base_th = "<th>Contig</th><th>Length (bp)</th><th>Confidence</th><th>Taxonomy (LCA)</th>"
     if show_best:
-        base_cols_html += "<th>Best Label</th><th>Best Score</th>"
-
-    row_data = json.dumps([_nonplasmid_row_to_arr(r, show_best) for r in display])
+        base_th += "<th>Best Label</th><th>Best Score</th>"
 
     if show_best:
         col_js = """[
-  {render:function(v){return ellipsis(v,40);}},
+  {render:function(v){return ellipsis(v,38);}},
   {render:function(v){return Number(v).toLocaleString();}},
   {render:function(v){return v;}},
   {render:function(v,r){return '<span class="ellipsis" title="'+esc(r[4])+'">'+esc(v)+'</span>';}},
@@ -594,18 +815,32 @@ def _render_nonplasmid_page(
 ]"""
     else:
         col_js = """[
-  {render:function(v){return ellipsis(v,40);}},
+  {render:function(v){return ellipsis(v,38);}},
   {render:function(v){return Number(v).toLocaleString();}},
   {render:function(v){return v;}},
   {render:function(v,r){return '<span class="ellipsis" title="'+esc(r[4])+'">'+esc(v)+'</span>';}},
 ]"""
 
+    row_json = json.dumps([_np_row(r, show_best) for r in display])
+
+    pathogen_js = ""
+    if show_pathogen and pathogen_data:
+        pathogen_js = (
+            f"P.newPlot('{table_id}_cpat',"
+            f"{json.dumps(pathogen_data['data'])},"
+            f"{json.dumps(pathogen_data['layout'])},dm);"
+        )
+
     js = f"""
 (function(){{
-var DATA={row_data};
-var cols={col_js};
-new LightTable({{tableId:'{table_id}',data:DATA,cols:cols,pageSize:50,
-  searchId:'{table_id}_search',pgInfoId:'{table_id}_pg',
+var P=window.Plotly,dm={{responsive:true,displayModeBar:false}};
+P.newPlot('{table_id}_c1',{json.dumps(ch['c1']['data'])},{json.dumps(ch['c1']['layout'])},dm);
+P.newPlot('{table_id}_c2',{json.dumps(ch['c2']['data'])},{json.dumps(ch['c2']['layout'])},dm);
+P.newPlot('{table_id}_c3',{json.dumps(ch['c3']['data'])},{json.dumps(ch['c3']['layout'])},dm);
+{pathogen_js}
+var DATA={row_json};
+new LightTable({{tableId:'{table_id}',data:DATA,cols:{col_js},pageSize:50,
+  searchId:'{table_id}_s',pgInfoId:'{table_id}_pg',
   prevId:'{table_id}_prev',nextId:'{table_id}_next'}});
 }})();"""
 
@@ -613,27 +848,38 @@ new LightTable({{tableId:'{table_id}',data:DATA,cols:cols,pageSize:50,
 <h1>PlasFlow v2 — {title} Report</h1>
 <p class="meta">Input: <code>{data["input_file"]}</code></p>
 <div class="cards">{stat_cards}</div>
+{chart_html}
 <h2>{title} Contigs ({n_total:,})</h2>
 {note_html}
 <div class="tbl-wrap">
   <div class="tbl-ctrl">
-    <input id="{table_id}_search" placeholder="Search contigs…">
+    <input type="text" id="{table_id}_s" placeholder="Search contigs…">
     <span class="pg-info" id="{table_id}_pg"></span>
     <button class="pg-btn" id="{table_id}_prev">◀ Prev</button>
     <button class="pg-btn" id="{table_id}_next">Next ▶</button>
   </div>
   <table id="{table_id}">
-    <thead><tr>{base_cols_html}</tr></thead>
+    <thead><tr>{base_th}</tr></thead>
     <tbody></tbody>
   </table>
 </div>"""
 
-    return _page(title, class_key, counts, color, body, extra_js=js)
+    return _full_page(title, class_key, counts, color, body, js=js)
 
 
 # ---------------------------------------------------------------------------
 # Main data builder
 # ---------------------------------------------------------------------------
+
+
+def _np_charts(rows: list, title: str, color: str, show_best: bool = False) -> dict:
+    """Build the 3-chart bundle for a non-plasmid class page (length, confidence, taxonomy/best-label)."""
+    c3 = _best_label_bar(rows) if show_best else _taxonomy_bar_nonplasmid(rows, title, color)
+    return {
+        "c1": _length_hist(rows, title, color),
+        "c2": _confidence_hist(rows, title, color),
+        "c3": c3,
+    }
 
 
 def build_report_data(pipeline_result, input_file: str = "") -> dict:
@@ -650,9 +896,9 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
         })
         mob = cr.mobility
         tax = getattr(cr, "taxonomy", None) or taxonomy.get(cr.record.id)
-        vf_hits = getattr(cr, "vf_hits", [])
+        vf_hits  = getattr(cr, "vf_hits",  [])
         mge_hits = getattr(cr, "mge_hits", [])
-        sources = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
+        sources  = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
         plasmid_rows.append(PlasmidRow(
             contig_id=cr.record.id,
             contig_length=len(cr.record.seq),
@@ -674,10 +920,10 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
         ))
 
     non_plasmid_results = getattr(pipeline_result, "non_plasmid_results", [])
-    phage_rows: list[NonPlasmidRow] = []
-    chromosome_rows: list[NonPlasmidRow] = []
-    archaea_rows: list[NonPlasmidRow] = []
-    unclassified_rows: list[NonPlasmidRow] = []
+    phage_rows:         list[NonPlasmidRow] = []
+    chromosome_rows:    list[NonPlasmidRow] = []
+    archaea_rows:       list[NonPlasmidRow] = []
+    unclassified_rows:  list[NonPlasmidRow] = []
 
     for npr in non_plasmid_results:
         tax = getattr(npr, "taxonomy", None) or taxonomy.get(npr.record.id)
@@ -695,18 +941,21 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
             best_score=best_score,
         )
         lbl = npr.prediction.label
-        if lbl == "phage":          phage_rows.append(row)
-        elif lbl == "chromosome":   chromosome_rows.append(row)
-        elif lbl == "archaea":      archaea_rows.append(row)
-        else:                       unclassified_rows.append(row)
+        if lbl == "phage":        phage_rows.append(row)
+        elif lbl == "chromosome": chromosome_rows.append(row)
+        elif lbl == "archaea":    archaea_rows.append(row)
+        else:                     unclassified_rows.append(row)
 
     for lst in (chromosome_rows, unclassified_rows):
         lst.sort(key=lambda r: r.contig_length, reverse=True)
 
     total_vf  = sum(r.num_vf  for r in plasmid_rows)
     total_mge = sum(r.num_mge for r in plasmid_rows)
-    risk_scores = [cr.risk.score for cr in pipeline_result.plasmid_results]
+    risk_scores = [cr.risk.score for cr in pipeline_result.plasmid_results if cr.risk.score > 0]
     tax_classified = sum(1 for r in taxonomy.values() if r.rank != "unclassified")
+
+    # Pathogen detection results (populated when taxonomy DB was used)
+    pathogens = getattr(pipeline_result, "pathogens", {}) or {}
 
     return {
         "input_file":        input_file or str(pipeline_result.input_fasta),
@@ -716,26 +965,35 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
         "total_vf":          total_vf,
         "total_mge":         total_mge,
         "tax_classified":    tax_classified,
+        "total_pathogens":   len(pathogens),
         "class_counts":      pipeline_result.class_counts,
+        # plasmid charts
         "pie_data":          _pie(pipeline_result.class_counts),
         "arg_data":          _arg_bar(all_arg_hits),
         "risk_data":         _risk_hist(risk_scores),
         "vf_data":           _vf_bar(plasmid_rows),
         "mge_data":          _mge_bar(plasmid_rows),
-        "cooccurrence_data": _build_drug_cooccurrence_heatmap(pipeline_result.plasmid_results),
-        "scatter_data":      {},
-        "tax_bar_data":      {},
+        "mobility_data":     _mobility_bar(plasmid_rows),
+        "eskape_data":       _eskape_bar(plasmid_rows),
+        "pathogen_data":     _pathogen_bar(pathogens),
+        "cooccurrence_data": _build_drug_cooccurrence_heatmap([]),
+        "scatter_data":      {}, "tax_bar_data": {},
+        # row lists
         "plasmid_rows":      plasmid_rows,
         "chromosome_rows":   chromosome_rows,
         "phage_rows":        phage_rows,
         "archaea_rows":      archaea_rows,
         "unclassified_rows": unclassified_rows,
         "other_rows":        archaea_rows + unclassified_rows,
-        "has_scatter":       False,
-        "has_cooccurrence":  False,
-        "has_phages":        bool(phage_rows),
-        "has_chromosomes":   bool(chromosome_rows),
-        "has_others":        bool(archaea_rows or unclassified_rows),
+        # per-class chart bundles
+        "chrom_charts":      _np_charts(chromosome_rows, "Chromosome", "#27ae60"),
+        "phage_charts":      _np_charts(phage_rows,      "Phage",      "#e67e22"),
+        "arch_charts":       _np_charts(archaea_rows,    "Archaea",    "#8e44ad"),
+        "unc_charts":        _np_charts(unclassified_rows, "Unclassified", "#95a5a6", show_best=True),
+        # legacy flags
+        "has_scatter": False, "has_cooccurrence": False,
+        "has_phages":  bool(phage_rows), "has_chromosomes": bool(chromosome_rows),
+        "has_others":  bool(archaea_rows or unclassified_rows),
     }
 
 
@@ -761,23 +1019,27 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
         "chromosome": _render_nonplasmid_page(
             report_data, "chromosome", "Chromosome", "#27ae60",
             report_data["chromosome_rows"], "ctable",
+            report_data["chrom_charts"],
         ),
         "phage": _render_nonplasmid_page(
             report_data, "phage", "Phage", "#e67e22",
             report_data["phage_rows"], "phtable",
+            report_data["phage_charts"],
         ),
         "archaea": _render_nonplasmid_page(
             report_data, "archaea", "Archaea", "#8e44ad",
             report_data["archaea_rows"], "artable",
+            report_data["arch_charts"],
         ),
         "unclassified": _render_nonplasmid_page(
             report_data, "unclassified", "Unclassified", "#95a5a6",
             report_data["unclassified_rows"], "utable",
+            report_data["unc_charts"],
             show_best=True,
             extra_note=(
-                "Contigs where no class scored ≥ threshold. "
-                "Best Label shows the top-scoring class. "
-                "Use <code>--min-confidence</code> to assign these instead of leaving them unclassified."
+                "Contigs where no class scored above threshold. "
+                "Best Label = top-scoring class even below threshold. "
+                "Re-run with <code>--min-confidence 0.50</code> to assign these."
             ),
         ),
     }
@@ -790,11 +1052,10 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
 
 
 # ---------------------------------------------------------------------------
-# Legacy single-file entry point (backward compat)
+# Backward compat
 # ---------------------------------------------------------------------------
 
 
 def generate_report(report_data: dict, output_path: Path | str) -> Path:
-    """Write 5 HTML files; return the plasmid report path (backward compat)."""
     paths = generate_reports(report_data, Path(output_path).parent)
     return paths["plasmid"]

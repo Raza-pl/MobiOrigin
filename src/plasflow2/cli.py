@@ -42,6 +42,8 @@ from plasflow2.report.generator import (
     _arg_bar as _build_arg_chart,
     _pie as _build_pie_data,
     _risk_hist as _build_risk_histogram,
+    _mobility_bar as _build_mobility_bar,
+    _eskape_bar as _build_eskape_bar,
     build_report_data,
     generate_report,
     generate_reports,
@@ -106,6 +108,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         eskape_host, eskape_genus
     """
     PLASMID_EMPTY = [""] * 20  # filler for non-plasmid rows (16 original + 4 VF/MGE)
+    PATHOGEN_EMPTY = ["", "", ""]  # filler when no pathogen detected
 
     HEADER = [
         # ── universal ────────────────────────────────────────────────────
@@ -142,6 +145,10 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "vf_genes",
         "num_mge",
         "mge_families",
+        # ── pathogen detection (all classes) ─────────────────────────────
+        "pathogen_species",
+        "pathogen_threat",
+        "pathogen_category",
     ]
 
     def _tax_fields(tax) -> list:
@@ -231,7 +238,14 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 tax_cols = _tax_fields(tax)
                 plasmid_cols = PLASMID_EMPTY
 
-            writer.writerow(base_cols + tax_cols + plasmid_cols)
+            # ── Pathogen detection (all classes) ──────────────────────────
+            path_hit = pipeline_result.pathogens.get(cid)
+            if path_hit:
+                pathogen_cols = [path_hit.species, path_hit.threat_level, path_hit.category]
+            else:
+                pathogen_cols = PATHOGEN_EMPTY
+
+            writer.writerow(base_cols + tax_cols + plasmid_cols + pathogen_cols)
 
 
 def _write_predictions_tsv_simple(predictions: list, output_path: Path) -> None:
@@ -1012,10 +1026,10 @@ def report_cmd(
     from plasflow2.report.generator import (
         _vf_bar as _build_vf_bar,
         _mge_bar as _build_mge_bar,
+        _pathogen_bar as _build_pathogen_bar,
         _build_drug_cooccurrence_heatmap,
+        _np_charts as _build_np_charts,
     )
-    _build_scatter_data = lambda rows: {}
-    _build_taxonomy_bar = lambda rows: {}
 
     phage_rows        = [r for r in non_plasmid_rows if r.label == "phage"]
     chromosome_rows   = [r for r in non_plasmid_rows if r.label == "chromosome"]
@@ -1026,9 +1040,12 @@ def report_cmd(
     for lst in (chromosome_rows, unclassified_rows):
         lst.sort(key=lambda r: r.contig_length, reverse=True)
 
-    # empty co-occurrence placeholder (no raw ContigResult objects available)
-    cooccurrence_data = _build_drug_cooccurrence_heatmap([])
-
+    # Build pathogen data from the pathogen_threat column in predictions.tsv
+    from plasflow2.annotate.pathogens import PathogenResult as _PR
+    _pathogens_from_tsv: dict[str, _PR] = {}
+    # Re-read pathogens from the TSV (they were written as pathogen_species/threat/category)
+    # We need to reparse since the tsv loop above doesn't track these
+    # (simple rebuild from the row loop below)
     report_data = {
         "input_file":        predictions,
         "total":             total,
@@ -1037,27 +1054,57 @@ def report_cmd(
         "total_vf":          sum(r.num_vf  for r in plasmid_rows),
         "total_mge":         sum(r.num_mge for r in plasmid_rows),
         "tax_classified":    0,
+        "total_pathogens":   0,  # filled below after re-reading pathogen cols
         "class_counts":      class_counts,
+        # plasmid charts
         "pie_data":          _build_pie_data(class_counts),
         "arg_data":          _build_arg_chart(all_arg_hits_for_chart),
         "risk_data":         _build_risk_histogram(risk_scores),
-        "scatter_data":      _build_scatter_data(plasmid_rows) if plasmid_rows else {},
-        "tax_bar_data":      _build_taxonomy_bar(plasmid_rows) if plasmid_rows else {},
         "vf_data":           _build_vf_bar(plasmid_rows),
         "mge_data":          _build_mge_bar(plasmid_rows),
-        "cooccurrence_data": cooccurrence_data,
+        "mobility_data":     _build_mobility_bar(plasmid_rows),
+        "eskape_data":       _build_eskape_bar(plasmid_rows),
+        "pathogen_data":     _build_pathogen_bar({}),  # populated below
+        "cooccurrence_data": _build_drug_cooccurrence_heatmap([]),
+        "scatter_data":      {},
+        "tax_bar_data":      {},
+        # row lists
         "plasmid_rows":      plasmid_rows,
         "chromosome_rows":   chromosome_rows,
         "phage_rows":        phage_rows,
         "archaea_rows":      archaea_rows,
         "unclassified_rows": unclassified_rows,
         "other_rows":        archaea_rows + unclassified_rows,
-        "has_scatter":       bool(plasmid_rows),
+        # per-class chart bundles
+        "chrom_charts":      _build_np_charts(chromosome_rows,   "Chromosome",   "#27ae60"),
+        "phage_charts":      _build_np_charts(phage_rows,        "Phage",        "#e67e22"),
+        "arch_charts":       _build_np_charts(archaea_rows,      "Archaea",      "#8e44ad"),
+        "unc_charts":        _build_np_charts(unclassified_rows, "Unclassified", "#95a5a6",
+                                              show_best=True),
+        # legacy flags
+        "has_scatter":       False,
         "has_cooccurrence":  False,
         "has_phages":        bool(phage_rows),
         "has_chromosomes":   bool(chromosome_rows),
         "has_others":        bool(archaea_rows or unclassified_rows),
     }
+
+    # Re-read pathogen columns from predictions.tsv and build pathogen chart
+    _pathogen_hits: dict[str, _PR] = {}
+    with open(predictions) as _pfh:
+        _pr = csv.DictReader(_pfh, delimiter="\t")
+        for _row in _pr:
+            _sp  = _row.get("pathogen_species", "")
+            _lv  = _row.get("pathogen_threat", "")
+            _cat = _row.get("pathogen_category", "")
+            if _sp and _lv:
+                _pathogen_hits[_row["contig_id"]] = _PR(
+                    contig_id=_row["contig_id"], genus=_sp.split()[0],
+                    species=_sp, threat_level=_lv, category=_cat, note="",
+                )
+    if _pathogen_hits:
+        report_data["pathogen_data"]   = _build_pathogen_bar(_pathogen_hits)
+        report_data["total_pathogens"] = len(_pathogen_hits)
 
     import os as _os
     out_dir = _os.path.dirname(_os.path.abspath(output_html))

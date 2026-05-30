@@ -293,8 +293,8 @@ def main() -> None:
     parser.add_argument(
         "--genomes",
         type=int,
-        default=300,
-        help="Number of genomes to use for protein prediction (default: 300). "
+        default=500,
+        help="Number of bacterial genomes to use for protein prediction (default: 500). "
              "More genomes → better coverage but slower build.",
     )
     parser.add_argument(
@@ -302,6 +302,12 @@ def main() -> None:
         type=int,
         default=8,
         help="Threads for DIAMOND makedb (default: 8)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Rebuild even if the DIAMOND database already exists.",
     )
     args = parser.parse_args()
 
@@ -311,10 +317,20 @@ def main() -> None:
     taxdump_dir.mkdir(exist_ok=True)
 
     dmnd_out = out_dir / "refseq_taxonomy.dmnd"
-    if dmnd_out.exists():
-        logger.info("DIAMOND database already exists: %s", dmnd_out)
-        logger.info("Delete it to rebuild. Exiting.")
-        sys.exit(0)
+
+    # Check if an existing DB is valid (> 1 MB) and not forced rebuild
+    if dmnd_out.exists() and not args.force:
+        size_mb = dmnd_out.stat().st_size / 1e6
+        if size_mb > 1.0:
+            logger.info("DIAMOND database already exists (%.1f MB): %s", size_mb, dmnd_out)
+            logger.info("Use --force to rebuild. Exiting.")
+            sys.exit(0)
+        else:
+            logger.warning(
+                "Existing DB is too small (%.0f KB) — likely from an interrupted build. "
+                "Rebuilding …", dmnd_out.stat().st_size / 1024
+            )
+            dmnd_out.unlink()
 
     # ── Step 1: Download taxdump ─────────────────────────────────────────────
     logger.info("=" * 60)
@@ -346,7 +362,15 @@ def main() -> None:
 
     combined_faa = out_dir / "taxonomy_proteins.faa"
     if combined_faa.exists():
-        combined_faa.unlink()
+        # Remove stale / incomplete protein file (also removed on --force)
+        existing_size = combined_faa.stat().st_size
+        if args.force or existing_size < 1_000_000:  # < 1 MB = almost certainly incomplete
+            logger.info("Removing incomplete taxonomy_proteins.faa (%.0f KB) …",
+                        existing_size / 1024)
+            combined_faa.unlink()
+        else:
+            logger.info("Reusing existing taxonomy_proteins.faa (%.1f MB).",
+                        existing_size / 1e6)
 
     sources: list[tuple[Path, str]] = []
 
