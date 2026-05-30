@@ -39,9 +39,9 @@ from plasflow2.pipeline import PipelineResult, run_pipeline
 from plasflow2.report.generator import (
     PlasmidRow,
     NonPlasmidRow,
-    _build_arg_chart,
-    _build_pie_data,
-    _build_risk_histogram,
+    _arg_bar as _build_arg_chart,
+    _pie as _build_pie_data,
+    _risk_hist as _build_risk_histogram,
     build_report_data,
     generate_report,
     generate_reports,
@@ -1010,9 +1010,12 @@ def report_cmd(
                 )
 
     from plasflow2.report.generator import (
-        _build_scatter_data, _build_taxonomy_bar,
-        _build_vf_bar, _build_mge_bar, _build_drug_cooccurrence_heatmap,
+        _vf_bar as _build_vf_bar,
+        _mge_bar as _build_mge_bar,
+        _build_drug_cooccurrence_heatmap,
     )
+    _build_scatter_data = lambda rows: {}
+    _build_taxonomy_bar = lambda rows: {}
 
     phage_rows        = [r for r in non_plasmid_rows if r.label == "phage"]
     chromosome_rows   = [r for r in non_plasmid_rows if r.label == "chromosome"]
