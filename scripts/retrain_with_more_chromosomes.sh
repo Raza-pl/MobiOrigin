@@ -69,6 +69,18 @@ fi
 
 cd "$PROJECT_DIR"
 
+# ── Fix for macOS ARM BLAS thread-race segfault ──────────────────────────────
+# PyTorch + numpy share the same BLAS/OpenMP threading runtime.  Without this
+# cap they race during initialisation → SIGABRT.  setdefault behaviour: only
+# set if not already set in the calling shell.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
+echo "[env] BLAS thread caps set to 1 (macOS ARM segfault fix)"
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── 1. Backup existing model ──────────────────────────────────────────────────
 if [[ -f "$MODEL_OUT" ]]; then
     echo "[backup] Saving existing model → $MODEL_BAK"

@@ -4,6 +4,20 @@ Usage:
     python scripts/train_model.py --data data/features.npy --labels data/labels.npy --mlp
     python scripts/train_model.py --data data/features.npy --labels data/labels.npy --rf
 
+Segfault fix for macOS ARM (Apple Silicon)
+-------------------------------------------
+On macOS ARM, PyTorch + numpy share the same BLAS/Accelerate/OpenBLAS
+threading runtime.  When both try to spin up threads simultaneously
+(default: one thread per CPU core), the initialisation races → SIGABRT /
+segfault.  Setting the thread caps to 1 **before any import** of numpy or
+torch is the canonical fix:
+
+    OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+    VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+
+These are set programmatically at the top of this file so you don't need
+to set them in your shell.
+
 Memory design for MLP on macOS ARM
 ------------------------------------
 With 400k × 1281 features the full array is ~2 GB.  Copying it into RAM
@@ -20,6 +34,18 @@ Peak RAM during training:
 """
 
 from __future__ import annotations
+
+# ── MUST be set before numpy / torch are imported ───────────────────────────
+# Root cause of the segfault on macOS ARM: PyTorch and numpy both try to spin
+# up one thread per CPU core via the same BLAS runtime (Accelerate / OpenBLAS
+# / OpenMP).  The initialisation races → SIGABRT.  Capping all thread pools
+# to 1 before importing anything resolves it.  setdefault() leaves any value
+# the user explicitly pre-set in their shell intact.
+import os as _os
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    _os.environ.setdefault(_v, "1")
+# ────────────────────────────────────────────────────────────────────────────
 
 import argparse
 import gc
