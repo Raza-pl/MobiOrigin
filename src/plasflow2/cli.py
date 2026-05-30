@@ -38,11 +38,13 @@ from plasflow2.classify.predict import predict
 from plasflow2.pipeline import PipelineResult, run_pipeline
 from plasflow2.report.generator import (
     PlasmidRow,
+    NonPlasmidRow,
     _build_arg_chart,
     _build_pie_data,
     _build_risk_histogram,
     build_report_data,
     generate_report,
+    generate_reports,
 )
 from plasflow2.risk.scorer import score_plasmid
 from plasflow2.utils.fasta import load_fasta, split_by_label, write_fasta
@@ -103,7 +105,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         context_score, host_score, risk_evidence,
         eskape_host, eskape_genus
     """
-    PLASMID_EMPTY = [""] * 16  # filler for non-plasmid rows
+    PLASMID_EMPTY = [""] * 20  # filler for non-plasmid rows (16 original + 4 VF/MGE)
 
     HEADER = [
         # ── universal ────────────────────────────────────────────────────
@@ -135,6 +137,11 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "risk_evidence",
         "eskape_host",
         "eskape_genus",
+        # ── virulence factors & MGEs ──────────────────────────────────────
+        "num_vf",
+        "vf_genes",
+        "num_mge",
+        "mge_families",
     ]
 
     def _tax_fields(tax) -> list:
@@ -190,6 +197,11 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 mob = cr.mobility
                 risk = cr.risk
 
+                vf_hits  = getattr(cr, "vf_hits",  [])
+                mge_hits = getattr(cr, "mge_hits", [])
+                vf_genes     = "; ".join(sorted({h.gene_name  for h in vf_hits}))  if vf_hits  else ""
+                mge_families = "; ".join(sorted({h.is_family  for h in mge_hits})) if mge_hits else ""
+
                 plasmid_cols = [
                     len(cr.arg_hits),
                     "; ".join(unique_classes) if unique_classes else "",
@@ -207,6 +219,11 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     "; ".join(risk.evidence) if risk.evidence else "",
                     risk.eskape_host,
                     risk.eskape_genus,
+                    # VF / MGE
+                    len(vf_hits),
+                    vf_genes,
+                    len(mge_hits),
+                    mge_families,
                 ]
             else:
                 # Non-plasmid: taxonomy from non_plasmid_results
@@ -401,6 +418,21 @@ def main(ctx: click.Context, verbose: bool) -> None:
 @click.option("--threads", default=8, show_default=True, help="CPU threads for DIAMOND/MOB-suite.")
 @click.option("--min-length", default=1000, show_default=True, help="Minimum contig length (bp).")
 @click.option(
+    "--min-confidence",
+    "min_confidence",
+    default=None,
+    type=float,
+    help=(
+        "When set, contigs whose best class scores below this value receive the argmax "
+        "label (best-guess) instead of 'unclassified'. "
+        "Useful for reducing the unclassified rate without retraining. "
+        "Example: --min-confidence 0.50 assigns every contig to its most-likely class "
+        "regardless of confidence. "
+        "Overrides --threshold / --plasmid-threshold for the fallback decision only; "
+        "high-confidence calls are unaffected."
+    ),
+)
+@click.option(
     "--skip-mobility",
     is_flag=True,
     default=False,
@@ -491,15 +523,20 @@ def run(
     min_identity: float,
     vfdb: str | None,
     mge_db: str | None,
+    min_confidence: float | None,
 ) -> None:
     """Run the full PlasFlow v2 pipeline: classify → annotate → risk → report.
 
     \b
     Outputs written to OUTPUT_DIR:
-        predictions.tsv      — per-sequence classification (all contigs)
-        plasmids.fasta       — classified plasmid sequences
-        annotations.json     — ARG + mobility + risk per plasmid contig
-        report.html          — interactive HTML report
+        predictions.tsv           — per-sequence classification (all contigs)
+        plasmids.fasta            — classified plasmid sequences
+        annotations.json          — ARG + mobility + risk per plasmid contig
+        report_plasmid.html       — plasmid detail report (ARG/VF/MGE/risk)
+        report_chromosome.html    — chromosome contig report
+        report_phage.html         — phage contig report
+        report_archaea.html       — archaea contig report
+        report_unclassified.html  — unclassified contig report
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -515,6 +552,21 @@ def run(
 
     click.echo(f"[PlasFlow v2 v{__version__}] Running pipeline on {input_fasta}")
 
+    # --min-confidence: when set, use argmax fallback below this threshold.
+    # The lower of (min_confidence, threshold / plasmid_threshold) becomes the
+    # effective floor; anything above the class-specific threshold is still a
+    # normal high-confidence call.
+    argmax_fallback = min_confidence is not None
+    effective_threshold = min(threshold, min_confidence) if argmax_fallback else threshold
+    effective_plasmid_threshold = (
+        min(plasmid_threshold, min_confidence) if argmax_fallback else plasmid_threshold
+    )
+    if argmax_fallback:
+        click.echo(
+            f"[info] --min-confidence={min_confidence}: contigs below threshold will receive "
+            f"argmax label instead of 'unclassified'"
+        )
+
     pipeline_result = run_pipeline(
         fasta_path=input_fasta,
         model_path=resolved_model,
@@ -522,8 +574,9 @@ def run(
         aro_index=aro_index_path,
         work_dir=out / "work",
         source_context=context,
-        confidence_threshold=threshold,
-        plasmid_threshold=plasmid_threshold,
+        confidence_threshold=effective_threshold,
+        plasmid_threshold=effective_plasmid_threshold,
+        argmax_fallback=argmax_fallback,
         min_contig_length=min_length,
         threads=threads,
         skip_mobility=skip_mobility,
@@ -556,11 +609,15 @@ def run(
     _write_annotations_json(pipeline_result.plasmid_results, ann_json)
     click.echo(f"  Annotations → {ann_json}")
 
-    # --- Write HTML report ---
+    # --- Write 5 separate HTML reports (one per class) ---
     report_data = build_report_data(pipeline_result, input_file=str(input_fasta))
-    report_html = out / "report.html"
-    generate_report(report_data, report_html)
-    click.echo(f"  Report      → {report_html}")
+    report_paths = generate_reports(report_data, out)
+    click.echo("  HTML reports:")
+    labels_order = ["plasmid", "chromosome", "phage", "archaea", "unclassified"]
+    for key in labels_order:
+        p = report_paths.get(key)
+        if p:
+            click.echo(f"    {key:<14} → {p}")
 
     click.echo(
         f"\nDone. {pipeline_result.total_sequences} sequences | "
@@ -905,6 +962,12 @@ def report_cmd(
                     e.strip() for e in row.get("risk_evidence", "").split(";") if e.strip()
                 ]
 
+                # VF / MGE — read from TSV (new columns; gracefully absent in old files)
+                num_vf       = int(row.get("num_vf",  0) or 0)
+                vf_genes_str = row.get("vf_genes",     "") or ""
+                num_mge      = int(row.get("num_mge", 0) or 0)
+                mge_fam_str  = row.get("mge_families", "") or ""
+
                 plasmid_rows.append(
                     PlasmidRow(
                         contig_id=cid,
@@ -920,9 +983,19 @@ def report_cmd(
                         arg_sources=arg_sources_str,
                         eskape_host=risk.eskape_host,
                         eskape_genus=risk.eskape_genus,
+                        num_vf=num_vf,
+                        vf_genes=vf_genes_str,
+                        num_mge=num_mge,
+                        mge_families=mge_fam_str,
                     )
                 )
             else:
+                scores = {
+                    k: float(row.get(f"{k}_score", 0) or 0)
+                    for k in ("plasmid", "chromosome", "phage", "archaea")
+                }
+                best_label = max(scores, key=scores.get) if scores else ""
+                best_score = scores.get(best_label, 0.0) if best_label else 0.0
                 non_plasmid_rows.append(
                     NonPlasmidRow(
                         contig_id=cid,
@@ -931,33 +1004,66 @@ def report_cmd(
                         confidence=confidence,
                         taxonomy=tax_display,
                         taxonomy_lineage=tax_lineage,
+                        best_label=best_label,
+                        best_score=best_score,
                     )
                 )
 
-    phage_rows = [r for r in non_plasmid_rows if r.label == "phage"]
-    chromosome_rows = [r for r in non_plasmid_rows if r.label == "chromosome"]
-    other_rows = [r for r in non_plasmid_rows if r.label not in ("phage", "chromosome")]
+    from plasflow2.report.generator import (
+        _build_scatter_data, _build_taxonomy_bar,
+        _build_vf_bar, _build_mge_bar, _build_drug_cooccurrence_heatmap,
+    )
+
+    phage_rows        = [r for r in non_plasmid_rows if r.label == "phage"]
+    chromosome_rows   = [r for r in non_plasmid_rows if r.label == "chromosome"]
+    archaea_rows      = [r for r in non_plasmid_rows if r.label == "archaea"]
+    unclassified_rows = [r for r in non_plasmid_rows
+                         if r.label not in ("phage", "chromosome", "archaea")]
+    # sort large lists by length so top-N truncation keeps longest contigs
+    for lst in (chromosome_rows, unclassified_rows):
+        lst.sort(key=lambda r: r.contig_length, reverse=True)
+
+    # empty co-occurrence placeholder (no raw ContigResult objects available)
+    cooccurrence_data = _build_drug_cooccurrence_heatmap([])
 
     report_data = {
-        "input_file": predictions,
-        "total": total,
-        "num_plasmids": len(plasmid_rows),
-        "total_args": sum(1 for h in all_arg_hits_for_chart),
-        "class_counts": class_counts,
-        "pie_data": _build_pie_data(class_counts),
-        "arg_data": _build_arg_chart(all_arg_hits_for_chart),
-        "risk_data": _build_risk_histogram(risk_scores),
-        "plasmid_rows": plasmid_rows,
-        "phage_rows": phage_rows,
-        "chromosome_rows": chromosome_rows,
-        "other_rows": other_rows,
-        "has_phages": len(phage_rows) > 0,
-        "has_chromosomes": len(chromosome_rows) > 0,
-        "has_others": len(other_rows) > 0,
+        "input_file":        predictions,
+        "total":             total,
+        "num_plasmids":      len(plasmid_rows),
+        "total_args":        len(all_arg_hits_for_chart),
+        "total_vf":          sum(r.num_vf  for r in plasmid_rows),
+        "total_mge":         sum(r.num_mge for r in plasmid_rows),
+        "tax_classified":    0,
+        "class_counts":      class_counts,
+        "pie_data":          _build_pie_data(class_counts),
+        "arg_data":          _build_arg_chart(all_arg_hits_for_chart),
+        "risk_data":         _build_risk_histogram(risk_scores),
+        "scatter_data":      _build_scatter_data(plasmid_rows) if plasmid_rows else {},
+        "tax_bar_data":      _build_taxonomy_bar(plasmid_rows) if plasmid_rows else {},
+        "vf_data":           _build_vf_bar(plasmid_rows),
+        "mge_data":          _build_mge_bar(plasmid_rows),
+        "cooccurrence_data": cooccurrence_data,
+        "plasmid_rows":      plasmid_rows,
+        "chromosome_rows":   chromosome_rows,
+        "phage_rows":        phage_rows,
+        "archaea_rows":      archaea_rows,
+        "unclassified_rows": unclassified_rows,
+        "other_rows":        archaea_rows + unclassified_rows,
+        "has_scatter":       bool(plasmid_rows),
+        "has_cooccurrence":  False,
+        "has_phages":        bool(phage_rows),
+        "has_chromosomes":   bool(chromosome_rows),
+        "has_others":        bool(archaea_rows or unclassified_rows),
     }
 
-    out_path = generate_report(report_data, output_html)
-    click.echo(f"Report → {out_path}")
+    import os as _os
+    out_dir = _os.path.dirname(_os.path.abspath(output_html))
+    report_paths = generate_reports(report_data, out_dir)
+    click.echo("Reports written:")
+    for key in ("plasmid", "chromosome", "phage", "archaea", "unclassified"):
+        p = report_paths.get(key)
+        if p:
+            click.echo(f"  {key:<14} → {p}")
 
 
 # ---------------------------------------------------------------------------

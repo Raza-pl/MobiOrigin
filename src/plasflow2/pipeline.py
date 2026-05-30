@@ -121,6 +121,7 @@ def run_pipeline(
     source_context: str = "unspecified",
     confidence_threshold: float = 0.70,
     plasmid_threshold: float = 0.95,
+    argmax_fallback: bool = False,
     min_contig_length: int = 1000,
     threads: int = 8,
     skip_mobility: bool = False,
@@ -239,6 +240,7 @@ def run_pipeline(
         model_path,
         threshold=confidence_threshold,
         plasmid_threshold=plasmid_threshold,
+        argmax_fallback=argmax_fallback,
     )
     pred_by_id = {p.sequence_id: p for p in predictions}
 
