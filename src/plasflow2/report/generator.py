@@ -101,6 +101,9 @@ tr:hover td{background:#f7fbff}
 .fbtn:hover,.fbtn.active{opacity:1}
 .fbtn.active{outline:2px solid #333}
 .note{color:#888;font-size:.78rem;margin:3px 0 8px;font-style:italic}
+.narrative{background:linear-gradient(135deg,#eef6ff,#f0fff4);border-left:4px solid #2c6fad;
+           border-radius:0 8px 8px 0;padding:14px 18px;margin:12px 0 20px;font-size:.93rem;
+           line-height:1.6;color:#2d3748}
 footer{margin-top:36px;color:#bbb;font-size:.76rem;border-top:1px solid #e5e5e5;padding-top:8px}
 input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:#2c6fad}
 .sel-count{font-size:.8rem;color:#2c6fad;font-weight:600}
@@ -266,12 +269,16 @@ class PlasmidRow:
     taxonomy: str
     risk_evidence: str
     arg_sources: str = ""
+    arg_genes: str = ""      # e.g. "blaNDM-1; sul1"
     eskape_host: bool = False
     eskape_genus: str = ""
     num_vf: int = 0
     vf_genes: str = ""
     num_mge: int = 0
-    mge_families: str = ""
+    mge_genes: str = ""      # actual IS element names e.g. "ISAba1; IS26"
+    mge_families: str = ""   # IS families e.g. "IS4; Tn3"
+    topology: str = "linear"        # "circular" | "linear" | "too_short"
+    low_confidence: bool = False    # True if confidence < 0.70
 
 
 @dataclass
@@ -284,6 +291,20 @@ class NonPlasmidRow:
     taxonomy_lineage: str = "—"
     best_label: str = ""
     best_score: float = 0.0
+    # ARG annotation (universal — all contig classes)
+    num_args: int = 0
+    arg_genes: str = ""
+    drug_classes: str = ""
+    arg_sources: str = ""
+    # VF annotation
+    num_vf: int = 0
+    vf_genes: str = ""
+    # MGE annotation
+    num_mge: int = 0
+    mge_genes: str = ""
+    mge_families: str = ""
+    topology: str = "linear"
+    low_confidence: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -508,16 +529,214 @@ def _build_drug_cooccurrence_heatmap(plasmid_results: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Genome map — per-plasmid horizontal track diagram
+# ---------------------------------------------------------------------------
+
+_GENE_COLORS = {
+    "arg":      "#e74c3c",   # red
+    "vf":       "#e67e22",   # orange
+    "mge":      "#8e44ad",   # purple
+    "mobility": "#2980b9",   # blue
+    "other":    "#bdc3c7",   # light grey
+}
+
+_MOBILITY_KEYWORDS = frozenset([
+    "conjugat", "relaxase", "mpf", "traG", "traI", "traJ",
+    "replic", "mob", "oriT", "virB", "virD",
+])
+
+
+def _gene_type(gene_name: str, arg_flag: int, vf_flag: int, mge_flag: int) -> str:
+    """Classify an ORF into a display category for the genome map."""
+    if arg_flag:
+        return "arg"
+    if mge_flag:
+        return "mge"
+    if vf_flag:
+        return "vf"
+    name_lower = gene_name.lower()
+    if any(kw in name_lower for kw in _MOBILITY_KEYWORDS):
+        return "mobility"
+    return "other"
+
+
+def _genome_map_data(
+    contig_id: str,
+    contig_length: int,
+    orfs: list,           # list of ORF objects (filtered to this contig)
+    arg_orf_ids: set[str],
+    vf_orf_ids: set[str],
+    mge_orf_ids: set[str],
+    arg_name_by_orf: dict[str, str],
+    vf_name_by_orf: dict[str, str],
+    mge_name_by_orf: dict[str, str],
+) -> dict:
+    """Build a Plotly figure dict for a single contig genome map."""
+    traces = {t: {"x": [], "y": [], "text": [], "color": []} for t in _GENE_COLORS}
+
+    for orf in orfs:
+        oid = orf.orf_id
+        gene_type = _gene_type(
+            arg_name_by_orf.get(oid, vf_name_by_orf.get(oid, mge_name_by_orf.get(oid, ""))),
+            1 if oid in arg_orf_ids else 0,
+            1 if oid in vf_orf_ids  else 0,
+            1 if oid in mge_orf_ids else 0,
+        )
+        mid   = (orf.start + orf.end) / 2
+        width = max(orf.end - orf.start, 1)
+        label = (arg_name_by_orf.get(oid)
+                 or vf_name_by_orf.get(oid)
+                 or mge_name_by_orf.get(oid)
+                 or orf.orf_id)
+        hover = f"{orf.orf_id}<br>{orf.start}–{orf.end} ({'+' if orf.strand >= 0 else '-'})<br>{label}"
+        traces[gene_type]["x"].append(mid)
+        traces[gene_type]["y"].append(1 if orf.strand >= 0 else -1)
+        traces[gene_type]["text"].append(hover)
+        # store width for marker sizing (approx pixels — capped)
+        traces[gene_type]["color"].append(width)
+
+    plotly_traces = []
+    type_labels = {"arg": "ARG", "vf": "Virulence Factor",
+                   "mge": "MGE/IS", "mobility": "Mobility Gene", "other": "Other ORF"}
+    for gtype, color in _GENE_COLORS.items():
+        d = traces[gtype]
+        if not d["x"]:
+            continue
+        plotly_traces.append({
+            "type": "scatter",
+            "mode": "markers",
+            "name": type_labels[gtype],
+            "x": d["x"],
+            "y": d["y"],
+            "text": d["text"],
+            "hoverinfo": "text",
+            "marker": {
+                "color": color,
+                "symbol": "square",
+                "size": 12,
+                "line": {"width": 0.5, "color": "#fff"},
+            },
+        })
+
+    # Backbone line
+    plotly_traces.insert(0, {
+        "type": "scatter",
+        "mode": "lines",
+        "name": "Contig",
+        "x": [0, contig_length],
+        "y": [0, 0],
+        "line": {"color": "#555", "width": 2},
+        "hoverinfo": "skip",
+        "showlegend": False,
+    })
+
+    return {
+        "data": plotly_traces,
+        "layout": {
+            "height": 180,
+            "margin": {"l": 40, "r": 20, "t": 30, "b": 30},
+            "title": {"text": f"{contig_id} ({contig_length:,} bp)", "font": {"size": 12}},
+            "xaxis": {"title": "Position (bp)", "range": [0, contig_length]},
+            "yaxis": {"visible": False, "range": [-2.5, 2.5]},
+            "showlegend": True,
+            "legend": {"orientation": "h", "y": -0.3},
+            "plot_bgcolor": "#f9f9f9",
+            "paper_bgcolor": "transparent",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plain-English summary narrative
+# ---------------------------------------------------------------------------
+
+def _narrative_summary(data: dict) -> str:
+    """Generate a 3–4 sentence natural-language interpretation for the plasmid report."""
+    total         = data.get("total", 0)
+    num_plasmids  = data.get("num_plasmids", 0)
+    total_args    = data.get("total_args", 0)
+    plasmid_rows: list[PlasmidRow] = data.get("plasmid_rows", [])
+
+    if total == 0:
+        return "No sequences were provided for analysis."
+
+    pct = f"{100 * num_plasmids / total:.1f}" if total else "0"
+
+    # Resistance summary
+    arg_contigs = [r for r in plasmid_rows if r.num_args > 0]
+    all_drugs: list[str] = []
+    for r in arg_contigs:
+        all_drugs.extend(d.strip() for d in r.drug_classes.split(";") if d.strip() and d != "—")
+    from collections import Counter
+    drug_counts = Counter(all_drugs)
+    top_drugs = [d for d, _ in drug_counts.most_common(3) if d]
+
+    # High-risk conjugative + ARG
+    high_risk = [r for r in plasmid_rows if r.mobility_class == "conjugative" and r.num_args > 0]
+
+    # Circular
+    circular = sum(1 for r in plasmid_rows if r.topology == "circular")
+
+    sentences: list[str] = []
+
+    # Sentence 1: overview
+    sentences.append(
+        f"PlasFlow v2 classified {num_plasmids:,} of {total:,} contigs ({pct}%) as plasmids."
+    )
+
+    # Sentence 2: resistance
+    if total_args > 0 and arg_contigs:
+        drug_str = ", ".join(top_drugs[:2]) if top_drugs else "multiple drug classes"
+        sentences.append(
+            f"{len(arg_contigs)} plasmid contig{'s' if len(arg_contigs) != 1 else ''} "
+            f"carr{'y' if len(arg_contigs) != 1 else 'ies'} antimicrobial resistance genes "
+            f"({total_args} total ARGs; resistance to {drug_str} detected)."
+        )
+    else:
+        sentences.append("No antimicrobial resistance genes were detected on plasmid contigs.")
+
+    # Sentence 3: high-risk
+    if high_risk:
+        sentences.append(
+            f"<strong>{len(high_risk)} conjugative plasmid{'s' if len(high_risk) != 1 else ''}"
+            f"</strong> co-carr{'y' if len(high_risk) != 1 else 'ies'} resistance genes — "
+            f"these represent the highest horizontal transfer risk."
+        )
+
+    # Sentence 4: topology / circularity
+    if circular > 0:
+        sentences.append(
+            f"{circular} plasmid contig{'s' if circular != 1 else ''} "
+            f"{'show' if circular != 1 else 'shows'} circular topology (direct terminal repeats detected)."
+        )
+
+    return " ".join(sentences)
+
+
+# ---------------------------------------------------------------------------
 # Plasmid page
 # ---------------------------------------------------------------------------
+
+
+def _render_genome_map_js(genome_maps: dict) -> str:
+    """Return JS snippet that renders all per-plasmid genome map charts."""
+    if not genome_maps:
+        return ""
+    lines = []
+    for i, (cid, fig) in enumerate(genome_maps.items()):
+        div_id = f"gmap_{i}"
+        lines.append(
+            f"P.newPlot('{div_id}',{json.dumps(fig['data'])},{json.dumps(fig['layout'])},dm);"
+        )
+    return "\n".join(lines)
 
 
 def _p_row(r: PlasmidRow) -> list:
     """Compact array for the vanilla JS paginator."""
     return [
         r.contig_id, r.contig_length, round(r.confidence, 4),
-        r.num_args, r.drug_classes, r.arg_sources,
-        r.num_vf, r.vf_genes, r.num_mge, r.mge_families,
+        r.num_args, r.arg_genes, r.drug_classes, r.arg_sources,
+        r.num_vf, r.vf_genes, r.num_mge, r.mge_genes, r.mge_families,
         r.eskape_genus if r.eskape_host else "",
         r.mobility_class, r.replicon_type,
         r.risk_score, r.taxonomy, r.risk_evidence,
@@ -525,14 +744,16 @@ def _p_row(r: PlasmidRow) -> list:
 
 
 _PLASMID_COL_HEADERS = [
-    "Contig", "Length (bp)", "Conf.", "ARGs", "Drug Classes", "DB",
-    "VFs", "VF Genes", "MGEs", "MGE Families",
+    "Contig", "Length (bp)", "Conf.",
+    "ARGs", "ARG Names", "Drug Classes", "DB",
+    "VFs", "VF Genes", "MGEs", "MGE Elements", "MGE Families",
     "Pathogen", "Mobility", "Replicon", "Risk", "Taxonomy", "Evidence",
 ]
 
 _PLASMID_DOWNLOAD_HEADERS = [
-    "contig_id", "length_bp", "confidence", "num_args", "drug_classes", "db_source",
-    "num_vf", "vf_genes", "num_mge", "mge_families",
+    "contig_id", "length_bp", "confidence",
+    "num_args", "arg_genes", "drug_classes", "db_source",
+    "num_vf", "vf_genes", "num_mge", "mge_genes", "mge_families",
     "pathogen_host", "mobility_class", "replicon_type", "risk_score", "taxonomy", "risk_evidence",
 ]
 
@@ -576,9 +797,27 @@ def _render_plasmid_page(data: dict) -> str:
     th_row = '<th class="no-sort"><input type="checkbox" id="chk-all" title="Select all on page"></th>'
     th_row += "".join(f"<th>{h}</th>" for h in _PLASMID_COL_HEADERS)
 
+    # Narrative summary block
+    narrative_html = (
+        f'<div class="narrative">{data.get("narrative", "")}</div>'
+        if data.get("narrative") else ""
+    )
+
+    # Genome map section (only when maps are available)
+    genome_maps: dict = data.get("genome_maps", {})
+    if genome_maps:
+        map_divs = "".join(
+            f'<div id="gmap_{i}" class="cbox" style="margin-bottom:8px"></div>'
+            for i, _ in enumerate(genome_maps)
+        )
+        genome_section = f"<h2>Plasmid Genome Maps</h2><p class='meta'>Coloured by gene type: <span style='color:#e74c3c'>■ ARG</span> <span style='color:#e67e22'>■ Virulence</span> <span style='color:#8e44ad'>■ MGE/IS</span> <span style='color:#2980b9'>■ Mobility</span> <span style='color:#bdc3c7'>■ Other</span></p>{map_divs}"  # noqa: E501
+    else:
+        genome_section = ""
+
     body = f"""
 <h1>PlasFlow v2 — Plasmid Report</h1>
 <p class="meta">Input: <code>{data["input_file"]}</code></p>
+{narrative_html}
 <div class="cards">{stat_cards}</div>
 
 <h2>Overview</h2>
@@ -600,6 +839,7 @@ def _render_plasmid_page(data: dict) -> str:
   <div id="cesk"  class="cbox"></div>
 </div>
 
+{genome_section}
 <h2>Plasmid Predictions — risk ≥ 1 ({n_shown:,} contigs)</h2>
 <div class="filter-bar">
   <button class="fbtn active" id="fa" onclick="setRisk('')"  style="background:#ddd;color:#333">All</button>
@@ -636,6 +876,7 @@ P.newPlot('cvf',  {json.dumps(data['vf_data']['data'])}, {json.dumps(data['vf_da
 P.newPlot('cmge', {json.dumps(data['mge_data']['data'])},{json.dumps(data['mge_data']['layout'])},dm);
 P.newPlot('cmob', {json.dumps(data['mobility_data']['data'])},{json.dumps(data['mobility_data']['layout'])},dm);
 P.newPlot('cesk', {json.dumps(data['eskape_data']['data'])},{json.dumps(data['eskape_data']['layout'])},dm);
+{_render_genome_map_js(genome_maps)}
 
 var ALL={row_data_json};
 var HEADERS={headers_json};
@@ -667,22 +908,24 @@ function eskBadge(e){{if(!e)return'—';
   return'<span class="badge '+(ek.indexOf(e)>=0?'besk':'bwho')+'">'+esc(e)+'</span>';}}
 
 var COLS=[
-  {{render:function(v){{return ellipsis(v,28);}}}},
-  {{render:function(v){{return Number(v).toLocaleString();}}}},
-  {{render:function(v){{return v;}}}},
-  {{render:function(v){{return v;}}}},
-  {{render:function(v){{return ellipsis(v,32);}}}},
-  {{render:function(v){{return srcBadges(v);}}}},
-  {{render:function(v){{return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}}}},
-  {{render:function(v){{return ellipsis(v,28);}}}},
-  {{render:function(v){{return v>0?'<span class="badge bmge">'+v+' MGE</span>':'—';}}}},
-  {{render:function(v){{return ellipsis(v,28);}}}},
-  {{render:function(v){{return eskBadge(v);}}}},
-  {{render:function(v){{return esc(v);}}}},
-  {{render:function(v){{return esc(v);}}}},
-  {{render:function(v){{return renderR(v);}}}},
-  {{render:function(v){{return ellipsis(v,25);}}}},
-  {{render:function(v){{return ellipsis(v,32);}}}},
+  {{render:function(v){{return ellipsis(v,28);}}}},           // 0 contig_id
+  {{render:function(v){{return Number(v).toLocaleString();}}}}, // 1 length
+  {{render:function(v){{return v;}}}},                        // 2 confidence
+  {{render:function(v){{return v;}}}},                        // 3 num_args
+  {{render:function(v){{return ellipsis(v,36);}}}},           // 4 arg_genes
+  {{render:function(v){{return ellipsis(v,32);}}}},           // 5 drug_classes
+  {{render:function(v){{return srcBadges(v);}}}},             // 6 arg_sources (DB)
+  {{render:function(v){{return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}}}}, // 7 num_vf
+  {{render:function(v){{return ellipsis(v,28);}}}},           // 8 vf_genes
+  {{render:function(v){{return v>0?'<span class="badge bmge">'+v+' MGE</span>':'—';}}}}, // 9 num_mge
+  {{render:function(v){{return ellipsis(v,28);}}}},           // 10 mge_genes
+  {{render:function(v){{return ellipsis(v,22);}}}},           // 11 mge_families
+  {{render:function(v){{return eskBadge(v);}}}},              // 12 pathogen
+  {{render:function(v){{return esc(v);}}}},                   // 13 mobility_class
+  {{render:function(v){{return esc(v);}}}},                   // 14 replicon_type
+  {{render:function(v){{return renderR(v);}}}},               // 15 risk_score
+  {{render:function(v){{return ellipsis(v,25);}}}},           // 16 taxonomy
+  {{render:function(v){{return ellipsis(v,32);}}}},           // 17 risk_evidence
 ];
 
 var tbl=new LightTable({{tableId:'ptable',data:ALL,cols:COLS,pageSize:50,
@@ -692,7 +935,7 @@ var tbl=new LightTable({{tableId:'ptable',data:ALL,cols:COLS,pageSize:50,
 function setRisk(r){{
   ['fa','fh','fm','fl'].forEach(function(id){{document.getElementById(id).classList.remove('active');}});
   document.getElementById(r===''?'fa':r==='h'?'fh':r==='m'?'fm':'fl').classList.add('active');
-  cur=r===''?ALL.slice():ALL.filter(function(row){{return riskCls(row[13])===r;}});
+  cur=r===''?ALL.slice():ALL.filter(function(row){{return riskCls(row[15])===r;}});
   tbl.data=cur;tbl.filtered=cur.slice();tbl.page=0;tbl.applySort();tbl.render();
   document.getElementById('psearch').value='';
 }}
@@ -730,7 +973,13 @@ window.downloadFiltered=function(){{
 
 
 def _np_row(r: NonPlasmidRow, show_best: bool) -> list:
-    row = [r.contig_id, r.contig_length, round(r.confidence, 4), r.taxonomy, r.taxonomy_lineage]
+    row = [
+        r.contig_id, r.contig_length, round(r.confidence, 4),
+        r.taxonomy, r.taxonomy_lineage,
+        r.num_args, r.arg_genes, r.drug_classes,
+        r.num_vf, r.vf_genes,
+        r.num_mge, r.mge_genes, r.mge_families,
+    ]
     if show_best:
         row += [r.best_label, round(r.best_score, 4)]
     return row
@@ -800,9 +1049,28 @@ def _render_nonplasmid_page(
 </div>"""
 
     # Table columns
-    base_th = "<th>Contig</th><th>Length (bp)</th><th>Confidence</th><th>Taxonomy (LCA)</th>"
+    # _np_row layout: [contig_id(0), length(1), conf(2), taxonomy(3), lineage(4),
+    #                  num_args(5), arg_genes(6), drug_classes(7),
+    #                  num_vf(8), vf_genes(9), num_mge(10), mge_genes(11), mge_families(12),
+    #                  best_label(13)*, best_score(14)*]
+    base_th = (
+        "<th>Contig</th><th>Length (bp)</th><th>Confidence</th><th>Taxonomy (LCA)</th>"
+        "<th>ARGs</th><th>ARG Names</th><th>Drug Classes</th>"
+        "<th>VFs</th><th>VF Genes</th>"
+        "<th>MGEs</th><th>MGE Elements</th><th>MGE Families</th>"
+    )
     if show_best:
         base_th += "<th>Best Label</th><th>Best Score</th>"
+
+    _arg_cols_js = """\
+  {render:function(v){return v>0?'<span class="badge bsarg">'+v+' ARG</span>':'—';}},
+  {render:function(v){return ellipsis(v,36);}},
+  {render:function(v){return ellipsis(v,32);}},
+  {render:function(v){return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}},
+  {render:function(v){return ellipsis(v,28);}},
+  {render:function(v){return v>0?'<span class="badge bmge">'+v+' MGE</span>':'—';}},
+  {render:function(v){return ellipsis(v,28);}},
+  {render:function(v){return ellipsis(v,22);}},"""
 
     if show_best:
         col_js = """[
@@ -810,6 +1078,7 @@ def _render_nonplasmid_page(
   {render:function(v){return Number(v).toLocaleString();}},
   {render:function(v){return v;}},
   {render:function(v,r){return '<span class="ellipsis" title="'+esc(r[4])+'">'+esc(v)+'</span>';}},
+""" + _arg_cols_js + """
   {render:function(v){return esc(v);}},
   {render:function(v){return v;}}
 ]"""
@@ -819,6 +1088,7 @@ def _render_nonplasmid_page(
   {render:function(v){return Number(v).toLocaleString();}},
   {render:function(v){return v;}},
   {render:function(v,r){return '<span class="ellipsis" title="'+esc(r[4])+'">'+esc(v)+'</span>';}},
+""" + _arg_cols_js + """
 ]"""
 
     row_json = json.dumps([_np_row(r, show_best) for r in display])
@@ -882,9 +1152,10 @@ def _np_charts(rows: list, title: str, color: str, show_best: bool = False) -> d
     }
 
 
-def build_report_data(pipeline_result, input_file: str = "") -> dict:
+def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C901
     all_arg_hits = [h for cr in pipeline_result.plasmid_results for h in cr.arg_hits]
     taxonomy = getattr(pipeline_result, "taxonomy", {}) or {}
+    topology_map = getattr(pipeline_result, "topology", {}) or {}
 
     plasmid_rows: list[PlasmidRow] = []
     for cr in pipeline_result.plasmid_results:
@@ -899,11 +1170,16 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
         vf_hits  = getattr(cr, "vf_hits",  [])
         mge_hits = getattr(cr, "mge_hits", [])
         sources  = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
+        arg_genes_str  = "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
+        mge_genes_str  = "; ".join(sorted({h.is_name   for h in mge_hits}))    if mge_hits   else ""
+        mge_fams_str   = "; ".join(sorted({h.is_family for h in mge_hits}))    if mge_hits   else ""
+        cid = cr.record.id
         plasmid_rows.append(PlasmidRow(
-            contig_id=cr.record.id,
+            contig_id=cid,
             contig_length=len(cr.record.seq),
             confidence=cr.prediction.confidence,
             num_args=len(cr.arg_hits),
+            arg_genes=arg_genes_str,
             drug_classes="; ".join(unique_classes) or "—",
             mobility_class=mob.mobility_class if mob else "unknown",
             replicon_type=mob.replicon_type if mob else "unknown",
@@ -916,7 +1192,10 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
             num_vf=len(vf_hits),
             vf_genes="; ".join(sorted({h.gene_name for h in vf_hits})),
             num_mge=len(mge_hits),
-            mge_families="; ".join(sorted({h.is_family for h in mge_hits})),
+            mge_genes=mge_genes_str,
+            mge_families=mge_fams_str,
+            topology=topology_map.get(cid, "linear"),
+            low_confidence=cr.prediction.confidence < 0.70,
         ))
 
     non_plasmid_results = getattr(pipeline_result, "non_plasmid_results", [])
@@ -930,8 +1209,26 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
         scores = getattr(npr.prediction, "scores", {}) or {}
         best_label = max(scores, key=scores.get) if scores else ""
         best_score = scores.get(best_label, 0.0) if best_label else 0.0
+
+        np_arg_hits  = getattr(npr, "arg_hits",  [])
+        np_vf_hits   = getattr(npr, "vf_hits",   [])
+        np_mge_hits  = getattr(npr, "mge_hits",  [])
+
+        np_arg_genes = "; ".join(sorted({h.gene_name for h in np_arg_hits})) if np_arg_hits else ""
+        np_drug_classes = sorted({
+            dc.strip()
+            for h in np_arg_hits
+            for dc in h.drug_class.split(";")
+            if dc.strip() and dc.strip() != "unknown"
+        })
+        np_sources = sorted({h.source for h in np_arg_hits if getattr(h, "source", "")})
+        np_vf_genes  = "; ".join(sorted({h.gene_name for h in np_vf_hits}))  if np_vf_hits  else ""
+        np_mge_genes = "; ".join(sorted({h.is_name   for h in np_mge_hits})) if np_mge_hits else ""
+        np_mge_fams  = "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
+
+        np_cid = npr.record.id
         row = NonPlasmidRow(
-            contig_id=npr.record.id,
+            contig_id=np_cid,
             contig_length=len(npr.record.seq),
             label=npr.prediction.label,
             confidence=npr.prediction.confidence,
@@ -939,6 +1236,17 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
             taxonomy_lineage=tax.lineage if tax else "—",
             best_label=best_label,
             best_score=best_score,
+            num_args=len(np_arg_hits),
+            arg_genes=np_arg_genes,
+            drug_classes="; ".join(np_drug_classes),
+            arg_sources=", ".join(np_sources),
+            num_vf=len(np_vf_hits),
+            vf_genes=np_vf_genes,
+            num_mge=len(np_mge_hits),
+            mge_genes=np_mge_genes,
+            mge_families=np_mge_fams,
+            topology=topology_map.get(np_cid, "linear"),
+            low_confidence=npr.prediction.confidence < 0.70,
         )
         lbl = npr.prediction.label
         if lbl == "phage":        phage_rows.append(row)
@@ -957,7 +1265,41 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
     # Pathogen detection results (populated when taxonomy DB was used)
     pathogens = getattr(pipeline_result, "pathogens", {}) or {}
 
-    return {
+    # Genome maps — per-plasmid contig (only when ORF data is available)
+    genome_maps: dict[str, dict] = {}
+    all_orfs = getattr(pipeline_result, "orfs", []) or []
+    if all_orfs:
+        from collections import defaultdict as _dd
+        orfs_by_contig: dict = _dd(list)
+        for orf in all_orfs:
+            orfs_by_contig[orf.contig_id].append(orf)
+
+        # Build lookup sets/dicts for ARG/VF/MGE by orf_id
+        arg_orf_ids:    set[str] = {h._orf_id for cr in pipeline_result.plasmid_results for h in cr.arg_hits if h._orf_id}
+        vf_orf_ids:     set[str] = {h._orf_id for cr in pipeline_result.plasmid_results for h in cr.vf_hits  if getattr(h, "_orf_id", "")}
+        mge_orf_ids:    set[str] = {h._orf_id for cr in pipeline_result.plasmid_results for h in cr.mge_hits if getattr(h, "_orf_id", "")}
+        arg_name_by_orf: dict[str, str] = {h._orf_id: h.gene_name for cr in pipeline_result.plasmid_results for h in cr.arg_hits if h._orf_id}
+        vf_name_by_orf:  dict[str, str] = {h._orf_id: h.gene_name for cr in pipeline_result.plasmid_results for h in cr.vf_hits  if getattr(h, "_orf_id", "")}
+        mge_name_by_orf: dict[str, str] = {h._orf_id: h.is_name   for cr in pipeline_result.plasmid_results for h in cr.mge_hits if getattr(h, "_orf_id", "")}
+
+        for cr in pipeline_result.plasmid_results:
+            cid = cr.record.id
+            contig_orfs = orfs_by_contig.get(cid, [])
+            if contig_orfs:
+                genome_maps[cid] = _genome_map_data(
+                    contig_id=cid,
+                    contig_length=len(cr.record.seq),
+                    orfs=contig_orfs,
+                    arg_orf_ids=arg_orf_ids,
+                    vf_orf_ids=vf_orf_ids,
+                    mge_orf_ids=mge_orf_ids,
+                    arg_name_by_orf=arg_name_by_orf,
+                    vf_name_by_orf=vf_name_by_orf,
+                    mge_name_by_orf=mge_name_by_orf,
+                )
+
+    # Build the return dict first (narrative needs it)
+    result_dict = {
         "input_file":        input_file or str(pipeline_result.input_fasta),
         "total":             pipeline_result.total_sequences,
         "num_plasmids":      pipeline_result.total_plasmids,
@@ -994,7 +1336,11 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:
         "has_scatter": False, "has_cooccurrence": False,
         "has_phages":  bool(phage_rows), "has_chromosomes": bool(chromosome_rows),
         "has_others":  bool(archaea_rows or unclassified_rows),
+        # genome maps (per-plasmid contig → Plotly figure dict)
+        "genome_maps": genome_maps,
     }
+    result_dict["narrative"] = _narrative_summary(result_dict)
+    return result_dict
 
 
 # ---------------------------------------------------------------------------
@@ -1059,3 +1405,12 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
 def generate_report(report_data: dict, output_path: Path | str) -> Path:
     paths = generate_reports(report_data, Path(output_path).parent)
     return paths["plasmid"]
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases (used by tests and report_cmd imports)
+# ---------------------------------------------------------------------------
+
+_build_pie_data       = _pie
+_build_arg_chart      = _arg_bar
+_build_risk_histogram = _risk_hist

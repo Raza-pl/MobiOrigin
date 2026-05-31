@@ -37,7 +37,7 @@ import csv
 import logging
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from plasflow2.annotate.args import call_orfs
@@ -112,6 +112,8 @@ class MGEHit:
     identity: float  # % amino-acid identity to ISfinder reference
     coverage: float  # % query coverage
     evalue: float
+    # Internal: ORF id used for gene-level table, not exposed in summary reports
+    _orf_id: str = field(default="", repr=False, compare=False)
 
 
 def _parse_isfinder_stitle(stitle: str) -> tuple[str, str]:
@@ -211,6 +213,7 @@ def parse_mge_hits(tsv_path: Path | str) -> list[MGEHit]:
                     identity=float(pident),
                     coverage=float(qcovhsp),
                     evalue=float(evalue),
+                    _orf_id=qseqid,
                 )
             )
 

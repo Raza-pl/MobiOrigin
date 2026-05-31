@@ -28,7 +28,7 @@ from pathlib import Path
 
 from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 
-from plasflow2.annotate.args import ARGHit, annotate_contigs
+from plasflow2.annotate.args import ARGHit, ORF, annotate_contigs, annotate_contigs_with_orfs
 from plasflow2.annotate.mge import MGEHit, annotate_mge
 from plasflow2.annotate.mobility import (
     MobilityResult,
@@ -37,6 +37,7 @@ from plasflow2.annotate.mobility import (
     run_mob_typer,
 )
 from plasflow2.annotate.pathogens import PathogenResult, detect_pathogens
+from plasflow2.annotate.topology import Topology, detect_topologies
 from plasflow2.annotate.taxonomy import TaxResult, assign_taxonomy
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.predict import Prediction, predict
@@ -67,16 +68,19 @@ class ContigResult:
 
 @dataclass
 class NonPlasmidContigResult:
-    """Prediction + taxonomy for a chromosome / phage / archaea / unclassified contig.
+    """Prediction + ARG/VF/MGE/taxonomy for chromosome / phage / archaea / unclassified.
 
-    Does not carry ARG, mobility, or risk annotations (plasmid-only steps).
-    The taxonomy field is populated when --skip-taxonomy is False and a
-    DIAMOND taxonomy database is available — same LCA pipeline as plasmids.
+    ARG, VF, and MGE annotation now runs on ALL contigs so that chromosomal AMR
+    carriage is captured alongside plasmid AMR.  Mobility and risk scoring remain
+    plasmid-only steps.
     """
 
     record: SeqRecord
     prediction: Prediction
     taxonomy: TaxResult | None = None
+    arg_hits: list[ARGHit] = field(default_factory=list)
+    vf_hits: list[VFHit] = field(default_factory=list)
+    mge_hits: list[MGEHit] = field(default_factory=list)
 
 
 @dataclass
@@ -92,6 +96,10 @@ class PipelineResult:
     taxonomy: dict[str, TaxResult] = field(default_factory=dict)
     # Pathogen detection results (subset of taxonomy — only pathogenic contigs)
     pathogens: dict[str, PathogenResult] = field(default_factory=dict)
+    # Gene-level ORF list (populated when annotation runs; empty otherwise)
+    orfs: list[ORF] = field(default_factory=list)
+    # Topology per contig: "circular", "linear", or "too_short"
+    topology: dict[str, Topology] = field(default_factory=dict)
     # Convenience counts
     class_counts: dict[str, int] = field(default_factory=dict)
     total_sequences: int = 0
@@ -101,7 +109,11 @@ class PipelineResult:
     def __post_init__(self) -> None:
         self.total_sequences = len(self.all_predictions)
         self.total_plasmids = len(self.plasmid_results)
-        self.total_args = sum(len(cr.arg_hits) for cr in self.plasmid_results)
+        # Count ARGs across ALL contig classes (plasmid + non-plasmid)
+        self.total_args = (
+            sum(len(cr.arg_hits) for cr in self.plasmid_results)
+            + sum(len(cr.arg_hits) for cr in self.non_plasmid_results)
+        )
 
         if not self.class_counts:
             counts: dict[str, int] = {}
@@ -260,19 +272,31 @@ def run_pipeline(
             plasmid_results=[],
         )
 
+    # Write plasmid FASTA for mobility annotation (plasmid-specific step)
     plasmid_fasta = work_dir / "plasmids.fasta"
     write_fasta(plasmid_records, plasmid_fasta)
 
     # ------------------------------------------------------------------
-    # 4. ARG annotation
+    # 3b. Topology detection (circular vs linear)
+    # ------------------------------------------------------------------
+    logger.info("Detecting contig topology (DTR-based circularity check) …")
+    topology_by_contig = detect_topologies(records)
+
+    # Write ALL contigs FASTA for ARG / VF / MGE annotation
+    # (chromosomal ARG carriage is scientifically important to capture)
+    all_contigs_fasta = work_dir / "all_contigs.fasta"
+    write_fasta(records, all_contigs_fasta)
+
+    # ------------------------------------------------------------------
+    # 4. ARG annotation — ALL contigs (plasmid + chromosome + phage + archaea)
     # ------------------------------------------------------------------
     logger.info(
-        "Annotating ARGs on %d plasmid contigs (CARD%s) …",
-        len(plasmid_records),
+        "Annotating ARGs on ALL %d contigs (CARD%s) …",
+        len(records),
         " + SARG" if sarg_db else "",
     )
-    arg_hits = annotate_contigs(
-        fasta_path=plasmid_fasta,
+    arg_hits, all_orfs = annotate_contigs_with_orfs(
+        fasta_path=all_contigs_fasta,
         card_db=card_db,
         aro_index_path=aro_index,
         work_dir=work_dir / "arg_annotation",
@@ -286,22 +310,22 @@ def run_pipeline(
         args_by_contig.setdefault(hit.contig_id, []).append(hit)
 
     # Pre-predicted proteins path — reused by VFDB and MGE to avoid running
-    # pyrodigal three times on the same sequences.
+    # pyrodigal again on the same sequences.
     arg_proteins = work_dir / "arg_annotation" / "proteins.faa"
 
     # ------------------------------------------------------------------
-    # 4b. Virulence factor annotation (VFDB set A)
+    # 4b. Virulence factor annotation — ALL contigs
     # ------------------------------------------------------------------
     vf_by_contig: dict[str, list[VFHit]] = {}
     if vfdb is not None:
         vfdb_path = Path(vfdb)
         if vfdb_path.exists() or vfdb_path.with_suffix(".dmnd").exists():
             logger.info(
-                "Annotating virulence factors on %d plasmid contigs (VFDB) …", len(plasmid_records)
+                "Annotating virulence factors on ALL %d contigs (VFDB) …", len(records)
             )
             try:
                 vf_hits = annotate_vf(
-                    fasta_path=plasmid_fasta,
+                    fasta_path=all_contigs_fasta,
                     vfdb=vfdb_path,
                     work_dir=work_dir / "vfdb_annotation",
                     threads=threads,
@@ -320,16 +344,16 @@ def run_pipeline(
             logger.warning("VFDB database not found at %s — skipping VF annotation.", vfdb)
 
     # ------------------------------------------------------------------
-    # 4c. MGE / IS element annotation (ISfinder)
+    # 4c. MGE / IS element annotation — ALL contigs
     # ------------------------------------------------------------------
     mge_by_contig: dict[str, list[MGEHit]] = {}
     if mge_db is not None:
         mge_db_path = Path(mge_db)
         if mge_db_path.exists() or mge_db_path.with_suffix(".dmnd").exists():
-            logger.info("Annotating MGEs on %d plasmid contigs (ISfinder) …", len(plasmid_records))
+            logger.info("Annotating MGEs on ALL %d contigs (ISfinder) …", len(records))
             try:
                 mge_hits = annotate_mge(
-                    fasta_path=plasmid_fasta,
+                    fasta_path=all_contigs_fasta,
                     mge_db=mge_db_path,
                     work_dir=work_dir / "mge_annotation",
                     threads=threads,
@@ -423,6 +447,9 @@ def run_pipeline(
                     record=record,
                     prediction=pred_by_id[cid],
                     taxonomy=taxonomy_by_contig.get(cid),
+                    arg_hits=args_by_contig.get(cid, []),
+                    vf_hits=vf_by_contig.get(cid, []),
+                    mge_hits=mge_by_contig.get(cid, []),
                 )
             )
 
@@ -451,6 +478,8 @@ def run_pipeline(
         non_plasmid_results=non_plasmid_results,
         taxonomy=taxonomy_by_contig,
         pathogens=pathogens_by_contig,
+        orfs=all_orfs,
+        topology=topology_by_contig,
     )
     tax_classified = sum(1 for r in taxonomy_by_contig.values() if r.rank != "unclassified")
     total_vf = sum(len(cr.vf_hits) for cr in plasmid_results)

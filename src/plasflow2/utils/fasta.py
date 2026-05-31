@@ -5,6 +5,8 @@ Week 1 — Day 5 implementation target.
 
 from __future__ import annotations
 
+import bz2
+import gzip
 import logging
 from collections.abc import Generator
 from pathlib import Path
@@ -15,27 +17,36 @@ from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 logger = logging.getLogger(__name__)
 
 
+def _open_fasta(path: Path):
+    """Open a FASTA file transparently, supporting .gz and .bz2 compression."""
+    suffix = path.suffix.lower()
+    if suffix == ".gz":
+        return gzip.open(path, "rt")
+    if suffix in (".bz2", ".bzip2"):
+        return bz2.open(path, "rt")
+    return open(path)
+
+
 def load_fasta(path: Path | str, min_length: int = 1000) -> list[SeqRecord]:
     """Load sequences from a FASTA file, filtering by minimum length.
 
+    Supports uncompressed, gzip (.gz), and bzip2 (.bz2) input files.
+
     Args:
-        path: Path to FASTA file.
+        path: Path to FASTA file (plain, .gz, or .bz2).
         min_length: Minimum sequence length to keep (default 1000 bp).
 
     Returns:
         List of SeqRecord objects passing the length filter.
-
-    TODO (Day 5):
-        - Implement GC% computation and attach to SeqRecord.letter_annotations
-        - Validate sequence alphabet (DNA only)
-        - Handle gzipped FASTA (.fa.gz, .fasta.gz)
     """
+    path = Path(path)
     records: list[SeqRecord] = []
     total = 0
-    for record in SeqIO.parse(str(path), "fasta"):
-        total += 1
-        if len(record.seq) >= min_length:
-            records.append(record)
+    with _open_fasta(path) as fh:
+        for record in SeqIO.parse(fh, "fasta"):
+            total += 1
+            if len(record.seq) >= min_length:
+                records.append(record)
     logger.info(
         "Loaded %d/%d sequences from %s (min_length=%d)",
         len(records),
@@ -67,8 +78,13 @@ def write_fasta(records: list[SeqRecord], path: Path | str) -> None:
 
 
 def iter_fasta(path: Path | str) -> Generator[SeqRecord, None, None]:
-    """Lazily iterate over sequences in a FASTA file (memory-efficient)."""
-    yield from SeqIO.parse(str(path), "fasta")
+    """Lazily iterate over sequences in a FASTA file (memory-efficient).
+
+    Supports uncompressed, .gz, and .bz2 files.
+    """
+    path = Path(path)
+    with _open_fasta(path) as fh:
+        yield from SeqIO.parse(fh, "fasta")
 
 
 def split_by_label(

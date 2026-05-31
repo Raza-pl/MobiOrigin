@@ -93,6 +93,9 @@ class ORF:
     contig_id: str
     orf_id: str  # full pyrodigal ID: <contig>_<n>
     sequence: str  # amino-acid sequence
+    start: int = 0   # 1-indexed start coordinate on contig
+    end: int = 0     # 1-indexed end coordinate on contig
+    strand: int = 1  # 1 = forward, -1 = reverse
 
 
 # ---------------------------------------------------------------------------
@@ -246,11 +249,20 @@ def call_orfs(
                 continue
             for i, gene in enumerate(genes, start=1):
                 aa = gene.translate()
+                if isinstance(aa, bytes):
+                    aa = aa.decode()
                 if len(aa) * 3 < min_gene_length:
                     continue
                 orf_id = f"{contig_id}_{i}"
                 fh.write(f">{orf_id}\n{aa}\n")
-                orfs.append(ORF(contig_id=contig_id, orf_id=orf_id, sequence=aa))
+                orfs.append(ORF(
+                    contig_id=contig_id,
+                    orf_id=orf_id,
+                    sequence=aa,
+                    start=gene.begin,
+                    end=gene.end,
+                    strand=gene.strand,
+                ))
 
     logger.info("Predicted %d ORFs from %d contigs → %s", len(orfs), len(records), out_proteins)
     return orfs
@@ -523,6 +535,60 @@ def merge_arg_hits(
 # ---------------------------------------------------------------------------
 
 
+def annotate_contigs_with_orfs(
+    fasta_path: Path | str,
+    card_db: Path | str,
+    aro_index_path: Path | str,
+    work_dir: Path | str,
+    threads: int = 8,
+    sarg_db: Path | str | None = None,
+    min_identity: float = CARD_MIN_IDENTITY,
+    min_coverage: float = CARD_MIN_COVERAGE,
+) -> tuple[list[ARGHit], list[ORF]]:
+    """Same as annotate_contigs() but also returns the predicted ORF list.
+
+    Returns:
+        Tuple of (arg_hits, orfs).  The ORF list carries start/end/strand
+        coordinates needed to build gene-level output tables.
+    """
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    proteins_path = work_dir / "proteins.faa"
+    card_tsv = work_dir / "card_hits.tsv"
+
+    orfs = call_orfs(fasta_path, proteins_path)
+    run_diamond(
+        proteins_path,
+        card_db,
+        card_tsv,
+        threads=threads,
+        min_identity=min_identity,
+        min_coverage=min_coverage,
+    )
+    metadata = load_card_metadata(aro_index_path)
+    card_hits = parse_diamond_hits(card_tsv, metadata)
+
+    if sarg_db is not None:
+        sarg_db_path = Path(sarg_db)
+        if sarg_db_path.exists() or sarg_db_path.with_suffix(".dmnd").exists():
+            sarg_tsv = work_dir / "sarg_hits.tsv"
+            run_diamond(
+                proteins_path,
+                sarg_db_path,
+                sarg_tsv,
+                threads=threads,
+                min_identity=min_identity,
+                min_coverage=min_coverage,
+            )
+            sarg_hits = parse_sarg_hits(sarg_tsv)
+            return merge_arg_hits(card_hits, sarg_hits), orfs
+        else:
+            logger.warning("SARG database not found at %s — running CARD-only annotation", sarg_db)
+
+    return card_hits, orfs
+
+
 def annotate_contigs(
     fasta_path: Path | str,
     card_db: Path | str,
@@ -557,39 +623,14 @@ def annotate_contigs(
         List of ARGHit across all contigs.  Hits from CARD have source="CARD";
         SARG-only supplements have source="SARG".
     """
-    work_dir = Path(work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    proteins_path = work_dir / "proteins.faa"
-    card_tsv = work_dir / "card_hits.tsv"
-
-    call_orfs(fasta_path, proteins_path)
-    run_diamond(
-        proteins_path,
-        card_db,
-        card_tsv,
+    hits, _ = annotate_contigs_with_orfs(
+        fasta_path=fasta_path,
+        card_db=card_db,
+        aro_index_path=aro_index_path,
+        work_dir=work_dir,
         threads=threads,
+        sarg_db=sarg_db,
         min_identity=min_identity,
         min_coverage=min_coverage,
     )
-    metadata = load_card_metadata(aro_index_path)
-    card_hits = parse_diamond_hits(card_tsv, metadata)
-
-    if sarg_db is not None:
-        sarg_db_path = Path(sarg_db)
-        if sarg_db_path.exists() or sarg_db_path.with_suffix(".dmnd").exists():
-            sarg_tsv = work_dir / "sarg_hits.tsv"
-            run_diamond(
-                proteins_path,
-                sarg_db_path,
-                sarg_tsv,
-                threads=threads,
-                min_identity=min_identity,
-                min_coverage=min_coverage,
-            )
-            sarg_hits = parse_sarg_hits(sarg_tsv)
-            return merge_arg_hits(card_hits, sarg_hits)
-        else:
-            logger.warning("SARG database not found at %s — running CARD-only annotation", sarg_db)
-
-    return card_hits
+    return hits

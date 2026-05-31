@@ -33,6 +33,7 @@ import click
 
 from plasflow2 import __version__
 from plasflow2.annotate.args import annotate_contigs
+from plasflow2.output.genes_tsv import write_genes_tsv
 from plasflow2.annotate.mobility import annotate_mobility
 from plasflow2.classify.predict import predict
 from plasflow2.pipeline import PipelineResult, run_pipeline
@@ -107,8 +108,11 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         context_score, host_score, risk_evidence,
         eskape_host, eskape_genus
     """
-    PLASMID_EMPTY = [""] * 20  # filler for non-plasmid rows (16 original + 4 VF/MGE)
+    # Non-plasmid rows get empty strings for the 13 plasmid-specific mobility+risk columns
+    PLASMID_EMPTY = [""] * 13
     PATHOGEN_EMPTY = ["", "", ""]  # filler when no pathogen detected
+    # Non-plasmid rows that lack ARG/VF/MGE results (shouldn't happen if pipeline ran)
+    ANNOT_EMPTY = [""] * 9  # 4 ARG + 2 VF + 3 MGE
 
     HEADER = [
         # ── universal ────────────────────────────────────────────────────
@@ -123,10 +127,19 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "taxonomy",
         "taxonomy_rank",
         "taxonomy_lineage",
-        # ── plasmid-specific ─────────────────────────────────────────────
+        # ── ARG annotation (all contig classes) ──────────────────────────
         "num_args",
+        "arg_genes",         # e.g. "blaNDM-1; sul1; tetA"
         "drug_classes",
         "arg_sources",
+        # ── VF annotation (all contig classes) ───────────────────────────
+        "num_vf",
+        "vf_genes",
+        # ── MGE annotation (all contig classes) ──────────────────────────
+        "num_mge",
+        "mge_genes",         # IS element names e.g. "ISAba1; IS26"
+        "mge_families",      # IS families e.g. "IS4; Tn3"
+        # ── plasmid-specific mobility & risk ─────────────────────────────
         "mobility_class",
         "replicon_type",
         "relaxase_type",
@@ -140,11 +153,9 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "risk_evidence",
         "eskape_host",
         "eskape_genus",
-        # ── virulence factors & MGEs ──────────────────────────────────────
-        "num_vf",
-        "vf_genes",
-        "num_mge",
-        "mge_families",
+        # ── topology & confidence ─────────────────────────────────────────
+        "topology",          # circular / linear / too_short
+        "low_confidence",    # True if confidence < 0.70 or argmax fallback used
         # ── pathogen detection (all classes) ─────────────────────────────
         "pathogen_species",
         "pathogen_threat",
@@ -158,8 +169,9 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Index plasmid results by contig_id for O(1) lookup
-    plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
+    # Index results by contig_id for O(1) lookup
+    plasmid_by_id     = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
+    non_plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.non_plasmid_results}
     # Index all records by contig_id for length lookup
     record_by_id = {cr.record.id: cr.record for cr in pipeline_result.plasmid_results}
     record_by_id.update({cr.record.id: cr.record for cr in pipeline_result.non_plasmid_results})
@@ -190,29 +202,38 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 cr = plasmid_by_id[cid]
                 tax_cols = _tax_fields(cr.taxonomy)
 
-                unique_classes = sorted(
-                    {
-                        dc.strip()
-                        for h in cr.arg_hits
-                        for dc in h.drug_class.split(";")
-                        if dc.strip() and dc.strip() != "unknown"
-                    }
-                )
-                sources = sorted(
-                    {h.source for h in cr.arg_hits if hasattr(h, "source") and h.source}
-                )
-                mob = cr.mobility
-                risk = cr.risk
-
+                # ARG
+                arg_genes    = "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
+                unique_classes = sorted({
+                    dc.strip()
+                    for h in cr.arg_hits
+                    for dc in h.drug_class.split(";")
+                    if dc.strip() and dc.strip() != "unknown"
+                })
+                sources = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
+                # VF
                 vf_hits  = getattr(cr, "vf_hits",  [])
-                mge_hits = getattr(cr, "mge_hits", [])
-                vf_genes     = "; ".join(sorted({h.gene_name  for h in vf_hits}))  if vf_hits  else ""
-                mge_families = "; ".join(sorted({h.is_family  for h in mge_hits})) if mge_hits else ""
+                vf_genes = "; ".join(sorted({h.gene_name for h in vf_hits})) if vf_hits else ""
+                # MGE
+                mge_hits     = getattr(cr, "mge_hits", [])
+                mge_genes    = "; ".join(sorted({h.is_name   for h in mge_hits})) if mge_hits else ""
+                mge_families = "; ".join(sorted({h.is_family for h in mge_hits})) if mge_hits else ""
 
-                plasmid_cols = [
+                annot_cols = [
                     len(cr.arg_hits),
+                    arg_genes,
                     "; ".join(unique_classes) if unique_classes else "",
                     ", ".join(sources) if sources else "",
+                    len(vf_hits),
+                    vf_genes,
+                    len(mge_hits),
+                    mge_genes,
+                    mge_families,
+                ]
+
+                mob = cr.mobility
+                risk = cr.risk
+                plasmid_cols = [
                     mob.mobility_class if mob else "",
                     mob.replicon_type if mob else "",
                     mob.relaxase_type if mob else "",
@@ -226,17 +247,50 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     "; ".join(risk.evidence) if risk.evidence else "",
                     risk.eskape_host,
                     risk.eskape_genus,
-                    # VF / MGE
-                    len(vf_hits),
-                    vf_genes,
-                    len(mge_hits),
-                    mge_families,
                 ]
+
             else:
-                # Non-plasmid: taxonomy from non_plasmid_results
+                # Non-plasmid: extract ARG/VF/MGE from NonPlasmidContigResult
                 tax = pipeline_result.taxonomy.get(cid)
                 tax_cols = _tax_fields(tax)
                 plasmid_cols = PLASMID_EMPTY
+
+                np_cr = non_plasmid_by_id.get(cid)
+                if np_cr is not None:
+                    np_arg_hits  = getattr(np_cr, "arg_hits",  [])
+                    np_vf_hits   = getattr(np_cr, "vf_hits",   [])
+                    np_mge_hits  = getattr(np_cr, "mge_hits",  [])
+                    np_arg_genes = "; ".join(sorted({h.gene_name for h in np_arg_hits})) if np_arg_hits else ""
+                    np_drug_cls  = sorted({
+                        dc.strip()
+                        for h in np_arg_hits
+                        for dc in h.drug_class.split(";")
+                        if dc.strip() and dc.strip() != "unknown"
+                    })
+                    np_sources   = sorted({h.source for h in np_arg_hits if getattr(h, "source", "")})
+                    np_vf_genes  = "; ".join(sorted({h.gene_name for h in np_vf_hits}))  if np_vf_hits  else ""
+                    np_mge_genes = "; ".join(sorted({h.is_name   for h in np_mge_hits})) if np_mge_hits else ""
+                    np_mge_fams  = "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
+                    annot_cols = [
+                        len(np_arg_hits),
+                        np_arg_genes,
+                        "; ".join(np_drug_cls) if np_drug_cls else "",
+                        ", ".join(np_sources) if np_sources else "",
+                        len(np_vf_hits),
+                        np_vf_genes,
+                        len(np_mge_hits),
+                        np_mge_genes,
+                        np_mge_fams,
+                    ]
+                else:
+                    annot_cols = ANNOT_EMPTY
+
+            # ── Topology & confidence flag ────────────────────────────────
+            topology = pipeline_result.topology.get(cid, "")
+            # Low-confidence: True when the model was uncertain (below 0.70
+            # threshold or argmax fallback was the only reason it got a label)
+            low_confidence = pred.confidence < 0.70
+            topo_conf_cols = [topology, str(low_confidence)]
 
             # ── Pathogen detection (all classes) ──────────────────────────
             path_hit = pipeline_result.pathogens.get(cid)
@@ -245,7 +299,9 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
             else:
                 pathogen_cols = PATHOGEN_EMPTY
 
-            writer.writerow(base_cols + tax_cols + plasmid_cols + pathogen_cols)
+            writer.writerow(
+                base_cols + tax_cols + annot_cols + plasmid_cols + topo_conf_cols + pathogen_cols
+            )
 
 
 def _write_predictions_tsv_simple(predictions: list, output_path: Path) -> None:
@@ -618,6 +674,26 @@ def run(
         write_fasta(recs, fasta_out)
         click.echo(f"  {label.capitalize()} sequences ({len(recs)}) → {fasta_out}")
 
+    # --- Write gene-level TSV (all ORFs with ARG/VF/MGE flags + coordinates) ---
+    if pipeline_result.orfs:
+        label_by_contig = {p.sequence_id: p.label for p in pipeline_result.all_predictions}
+        all_vf_hits  = [h for cr in pipeline_result.plasmid_results for h in cr.vf_hits] + \
+                       [h for cr in pipeline_result.non_plasmid_results for h in cr.vf_hits]
+        all_mge_hits = [h for cr in pipeline_result.plasmid_results for h in cr.mge_hits] + \
+                       [h for cr in pipeline_result.non_plasmid_results for h in cr.mge_hits]
+        all_arg_hits = [h for cr in pipeline_result.plasmid_results for h in cr.arg_hits] + \
+                       [h for cr in pipeline_result.non_plasmid_results for h in cr.arg_hits]
+        genes_tsv_path = out / "genes.tsv"
+        write_genes_tsv(
+            orfs=pipeline_result.orfs,
+            arg_hits=all_arg_hits,
+            vf_hits=all_vf_hits,
+            mge_hits=all_mge_hits,
+            label_by_contig=label_by_contig,
+            output_path=genes_tsv_path,
+        )
+        click.echo(f"  Gene table   → {genes_tsv_path}")
+
     # --- Write annotations JSON ---
     ann_json = out / "annotations.json"
     _write_annotations_json(pipeline_result.plasmid_results, ann_json)
@@ -976,11 +1052,14 @@ def report_cmd(
                     e.strip() for e in row.get("risk_evidence", "").split(";") if e.strip()
                 ]
 
-                # VF / MGE — read from TSV (new columns; gracefully absent in old files)
-                num_vf       = int(row.get("num_vf",  0) or 0)
-                vf_genes_str = row.get("vf_genes",     "") or ""
-                num_mge      = int(row.get("num_mge", 0) or 0)
-                mge_fam_str  = row.get("mge_families", "") or ""
+                # ARG gene names (new column; absent in old TSV files)
+                arg_genes_str = row.get("arg_genes", "") or ""
+                # VF / MGE — read from TSV (gracefully absent in old files)
+                num_vf        = int(row.get("num_vf",  0) or 0)
+                vf_genes_str  = row.get("vf_genes",     "") or ""
+                num_mge       = int(row.get("num_mge", 0) or 0)
+                mge_genes_str = row.get("mge_genes", "") or ""
+                mge_fam_str   = row.get("mge_families", "") or ""
 
                 plasmid_rows.append(
                     PlasmidRow(
@@ -988,6 +1067,7 @@ def report_cmd(
                         contig_length=length,
                         confidence=confidence,
                         num_args=num_args,
+                        arg_genes=arg_genes_str,
                         drug_classes=drug_classes_str if drug_classes_str else "—",
                         mobility_class=mob_class,
                         replicon_type=rep_type,
@@ -1000,6 +1080,7 @@ def report_cmd(
                         num_vf=num_vf,
                         vf_genes=vf_genes_str,
                         num_mge=num_mge,
+                        mge_genes=mge_genes_str,
                         mge_families=mge_fam_str,
                     )
                 )
@@ -1020,6 +1101,16 @@ def report_cmd(
                         taxonomy_lineage=tax_lineage,
                         best_label=best_label,
                         best_score=best_score,
+                        # ARG/VF/MGE — universal columns (present for all contig classes)
+                        num_args=int(row.get("num_args", 0) or 0),
+                        arg_genes=row.get("arg_genes", "") or "",
+                        drug_classes=row.get("drug_classes", "") or "",
+                        arg_sources=row.get("arg_sources", "") or "",
+                        num_vf=int(row.get("num_vf", 0) or 0),
+                        vf_genes=row.get("vf_genes", "") or "",
+                        num_mge=int(row.get("num_mge", 0) or 0),
+                        mge_genes=row.get("mge_genes", "") or "",
+                        mge_families=row.get("mge_families", "") or "",
                     )
                 )
 
