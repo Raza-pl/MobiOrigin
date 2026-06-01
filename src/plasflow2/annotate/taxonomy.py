@@ -604,18 +604,21 @@ def assign_taxonomy(
     else:
         query_path = fasta_path
 
-    # 1. Run DIAMOND
-    run_diamond_taxonomy(
-        fasta_path=query_path,
-        taxonomy_db=taxonomy_db,
-        out_tsv=diamond_tsv,
-        threads=threads,
-        mode=mode,
-        min_identity=min_identity,
-        min_coverage=min_coverage,
-        top_n=top_n,
-        block_size=block_size,
-    )
+    # 1. Run DIAMOND (skip if cached result already exists)
+    if diamond_tsv.exists() and diamond_tsv.stat().st_size > 0:
+        logger.info("Taxonomy: reusing cached DIAMOND hits from %s", diamond_tsv)
+    else:
+        run_diamond_taxonomy(
+            fasta_path=query_path,
+            taxonomy_db=taxonomy_db,
+            out_tsv=diamond_tsv,
+            threads=threads,
+            mode=mode,
+            min_identity=min_identity,
+            min_coverage=min_coverage,
+            top_n=top_n,
+            block_size=block_size,
+        )
 
     # 2. Load taxon map if provided
     taxon_map: dict[str, str] | None = None

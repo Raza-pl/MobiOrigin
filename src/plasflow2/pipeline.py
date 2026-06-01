@@ -37,6 +37,10 @@ from plasflow2.annotate.mobility import (
     parse_mob_results,
     run_mob_typer,
 )
+from plasflow2.annotate.mobility_diamond import (
+    annotate_mobility_diamond,
+    find_mob_diamond_dbs,
+)
 from plasflow2.annotate.pathogens import PathogenResult, detect_pathogens
 from plasflow2.annotate.topology import Topology, detect_topologies
 from plasflow2.annotate.taxonomy import TaxResult, assign_taxonomy
@@ -326,16 +330,23 @@ def run_pipeline(
     # pyrodigal again on the same sequences.
     arg_proteins = work_dir / "arg_annotation" / "proteins.faa"
 
+    def _cached(path: Path) -> bool:
+        """Return True if a work-dir result file exists and is non-empty (cache hit)."""
+        if path.exists() and path.stat().st_size > 0:
+            logger.info("  [cache] Reusing %s", path)
+            return True
+        return False
+
     # ------------------------------------------------------------------
     # 4b. Virulence factor annotation — ALL contigs
     # ------------------------------------------------------------------
     vf_by_contig: dict[str, list[VFHit]] = {}
+    _vf_cache = work_dir / "vfdb_annotation" / "vfdb_hits.tsv"
     if vfdb is not None:
         vfdb_path = Path(vfdb)
         if vfdb_path.exists() or vfdb_path.with_suffix(".dmnd").exists():
-            logger.info(
-                "Annotating virulence factors on ALL %d contigs (VFDB) …", len(records)
-            )
+            if not _cached(_vf_cache):
+                logger.info("Annotating VFs on ALL %d contigs (VFDB) …", len(records))
             try:
                 vf_hits = annotate_vf(
                     fasta_path=all_contigs_fasta,
@@ -346,11 +357,7 @@ def run_pipeline(
                 )
                 for hit in vf_hits:
                     vf_by_contig.setdefault(hit.contig_id, []).append(hit)
-                logger.info(
-                    "Found %d virulence factor hits across %d contigs",
-                    len(vf_hits),
-                    len(vf_by_contig),
-                )
+                logger.info("VF hits: %d across %d contigs", len(vf_hits), len(vf_by_contig))
             except Exception as exc:
                 logger.warning("VFDB annotation failed: %s — skipping.", exc)
         else:
@@ -360,10 +367,12 @@ def run_pipeline(
     # 4c. MGE / IS element annotation — ALL contigs
     # ------------------------------------------------------------------
     mge_by_contig: dict[str, list[MGEHit]] = {}
+    _mge_cache = work_dir / "mge_annotation" / "mge_hits.tsv"
     if mge_db is not None:
         mge_db_path = Path(mge_db)
         if mge_db_path.exists() or mge_db_path.with_suffix(".dmnd").exists():
-            logger.info("Annotating MGEs on ALL %d contigs (ISfinder) …", len(records))
+            if not _cached(_mge_cache):
+                logger.info("Annotating MGEs on ALL %d contigs (ISfinder) …", len(records))
             try:
                 mge_hits = annotate_mge(
                     fasta_path=all_contigs_fasta,
@@ -374,9 +383,7 @@ def run_pipeline(
                 )
                 for hit in mge_hits:
                     mge_by_contig.setdefault(hit.contig_id, []).append(hit)
-                logger.info(
-                    "Found %d MGE hits across %d contigs", len(mge_hits), len(mge_by_contig)
-                )
+                logger.info("MGE hits: %d across %d contigs", len(mge_hits), len(mge_by_contig))
             except Exception as exc:
                 logger.warning("MGE annotation failed: %s — skipping.", exc)
         else:
@@ -386,10 +393,12 @@ def run_pipeline(
     # 4d. Plasmid-DB nucleotide matching (plasmid contigs only)
     # ------------------------------------------------------------------
     plasmid_db_hits: dict[str, PlasmidDBHit] = {}
+    _pdb_cache = work_dir / "plasmid_db" / "plasmid_db_hits.paf"
     if plasmid_db_dir is not None:
         plasmid_db_path = Path(plasmid_db_dir)
         if plasmid_db_path.is_dir():
-            logger.info("Running plasmid-DB nucleotide match on %d plasmid contigs …", len(plasmid_records))
+            if not _cached(_pdb_cache):
+                logger.info("Running plasmid-DB match on %d plasmid contigs …", len(plasmid_records))
             try:
                 plasmid_db_hits = annotate_plasmid_db(
                     plasmid_fasta=plasmid_fasta,
@@ -404,21 +413,47 @@ def run_pipeline(
             logger.warning("Plasmid DB dir not found: %s — skipping plasmid-DB match.", plasmid_db_dir)
 
     # ------------------------------------------------------------------
-    # 5. Mobility annotation
+    # 5. Mobility annotation — DIAMOND fast path or mob_typer fallback
     # ------------------------------------------------------------------
     mobility_by_contig: dict[str, MobilityResult] = {}
     if not skip_mobility:
-        logger.info("Running mob_typer on %d plasmid contigs …", len(plasmid_records))
-        try:
-            mob_tsv = run_mob_typer(
-                plasmid_fasta,
-                work_dir / "mob_typer",
-                threads=threads,
+        _mob_diamond_dir = Path(__file__).parent.parent.parent / "data" / "databases" / "mob_suite"
+        _mob_dmnd, _mpf_dmnd, _rep_fasta = find_mob_diamond_dbs(_mob_diamond_dir)
+        _use_diamond_mob = _mob_dmnd is not None or _mpf_dmnd is not None
+
+        if _use_diamond_mob:
+            logger.info(
+                "Mobility annotation: DIAMOND fast path on %d plasmid contigs …",
+                len(plasmid_records),
             )
-            mobility_results = parse_mob_results(mob_tsv)
-            mobility_by_contig = index_by_contig(mobility_results)
-        except (FileNotFoundError, RuntimeError) as exc:
-            logger.warning("mob_typer unavailable or failed: %s — skipping mobility.", exc)
+            try:
+                mob_results = annotate_mobility_diamond(
+                    plasmid_fasta=plasmid_fasta,
+                    mob_suite_dir=_mob_diamond_dir,
+                    work_dir=work_dir / "mob_diamond",
+                    proteins_faa=arg_proteins if arg_proteins.exists() else None,
+                    threads=threads,
+                )
+                mobility_by_contig = index_by_contig(mob_results)
+            except Exception as exc:
+                logger.warning(
+                    "DIAMOND mobility failed: %s — falling back to mob_typer.", exc
+                )
+                _use_diamond_mob = False
+
+        if not _use_diamond_mob:
+            logger.info("Mobility annotation: mob_typer on %d plasmid contigs …",
+                        len(plasmid_records))
+            try:
+                mob_tsv = run_mob_typer(
+                    plasmid_fasta,
+                    work_dir / "mob_typer",
+                    threads=threads,
+                )
+                mobility_results = parse_mob_results(mob_tsv)
+                mobility_by_contig = index_by_contig(mobility_results)
+            except (FileNotFoundError, RuntimeError) as exc:
+                logger.warning("mob_typer unavailable or failed: %s — skipping mobility.", exc)
     else:
         logger.info("Mobility annotation skipped (skip_mobility=True)")
 
@@ -477,11 +512,15 @@ def run_pipeline(
 
         if not _use_kaiju:
             if taxonomy_db_path and taxonomy_db_path.exists():
-                logger.info(
-                    "Taxonomy: DIAMOND blastp on %d contigs "
-                    "(threads=%d, block_size=4.0) …",
-                    len(records), threads,
-                )
+                _tax_cache = work_dir / "taxonomy" / "diamond_taxonomy.tsv"
+                if _cached(_tax_cache):
+                    logger.info("Taxonomy: loading cached results from %s", _tax_cache)
+                else:
+                    logger.info(
+                        "Taxonomy: DIAMOND blastp on %d contigs "
+                        "(threads=%d, block_size=4.0) …",
+                        len(records), threads,
+                    )
                 try:
                     taxonomy_by_contig = assign_taxonomy(
                         fasta_path=fasta_path,

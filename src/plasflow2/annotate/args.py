@@ -557,15 +557,28 @@ def annotate_contigs_with_orfs(
     proteins_path = work_dir / "proteins.faa"
     card_tsv = work_dir / "card_hits.tsv"
 
-    orfs = call_orfs(fasta_path, proteins_path)
-    run_diamond(
-        proteins_path,
-        card_db,
-        card_tsv,
-        threads=threads,
-        min_identity=min_identity,
-        min_coverage=min_coverage,
-    )
+    # Incremental: skip ORF prediction if proteins.faa already exists
+    if proteins_path.exists() and proteins_path.stat().st_size > 0:
+        logger.info("Reusing cached ORFs from %s", proteins_path)
+        from Bio import SeqIO  # type: ignore[import]
+        from Bio.SeqRecord import SeqRecord as _SR  # noqa: F401
+        records = list(SeqIO.parse(str(fasta_path), "fasta"))
+        orfs = [
+            ORF(contig_id="_".join(r.id.rsplit("_", 1)[:-1]) if "_" in r.id else r.id,
+                orf_id=r.id, sequence=str(r.seq))
+            for r in SeqIO.parse(str(proteins_path), "fasta")
+        ]
+        logger.info("Loaded %d cached ORFs", len(orfs))
+    else:
+        orfs = call_orfs(fasta_path, proteins_path)
+
+    # Incremental: skip CARD search if results already cached
+    if card_tsv.exists() and card_tsv.stat().st_size > 0:
+        logger.info("Reusing cached CARD hits from %s", card_tsv)
+    else:
+        run_diamond(proteins_path, card_db, card_tsv, threads=threads,
+                    min_identity=min_identity, min_coverage=min_coverage)
+
     metadata = load_card_metadata(aro_index_path)
     card_hits = parse_diamond_hits(card_tsv, metadata)
 
@@ -573,14 +586,12 @@ def annotate_contigs_with_orfs(
         sarg_db_path = Path(sarg_db)
         if sarg_db_path.exists() or sarg_db_path.with_suffix(".dmnd").exists():
             sarg_tsv = work_dir / "sarg_hits.tsv"
-            run_diamond(
-                proteins_path,
-                sarg_db_path,
-                sarg_tsv,
-                threads=threads,
-                min_identity=min_identity,
-                min_coverage=min_coverage,
-            )
+            # Incremental: skip SARG search if results already cached
+            if sarg_tsv.exists() and sarg_tsv.stat().st_size > 0:
+                logger.info("Reusing cached SARG hits from %s", sarg_tsv)
+            else:
+                run_diamond(proteins_path, sarg_db_path, sarg_tsv, threads=threads,
+                            min_identity=min_identity, min_coverage=min_coverage)
             sarg_hits = parse_sarg_hits(sarg_tsv)
             return merge_arg_hits(card_hits, sarg_hits), orfs
         else:

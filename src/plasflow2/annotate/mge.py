@@ -256,6 +256,10 @@ def annotate_mge(
     else:
         logger.info("Reusing pre-predicted ORFs from %s", proteins_path)
 
+    if mge_tsv.exists() and mge_tsv.stat().st_size > 0:
+        logger.info("Reusing cached MGE hits from %s", mge_tsv)
+        return parse_mge_hits(mge_tsv)
+
     run_mge_diamond(
         proteins_path,
         mge_db,

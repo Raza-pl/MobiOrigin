@@ -96,12 +96,36 @@ def _parse_organism(desc: str) -> str:
 
 
 def _build_combined_fasta(plasmid_db_dir: Path) -> Path | None:
-    """Build (or locate) the combined plasmid nucleotide FASTA."""
+    """Locate the best plasmid reference FASTA for minimap2 matching.
+
+    Strategy: prefer PLSDB alone (5 GB) over the full combined FASTA (13 GB).
+    minimap2 --split-prefix works around the 4 GB index limit but still loads
+    chunks into RAM; a 13 GB reference often causes SIGKILL (OOM) on machines
+    with <32 GB RAM.  PLSDB alone covers >95% of known plasmid sequences and
+    fits comfortably in 16 GB RAM.
+
+    Falls back to combined.fna if PLSDB is absent, or builds combined from
+    whatever sources are available.
+    """
+    # Prefer PLSDB only — best RAM/coverage trade-off
+    plsdb = plasmid_db_dir / "PLSDB.fna"
+    if plsdb.exists():
+        size_gb = plsdb.stat().st_size / 1e9
+        logger.info("Using PLSDB as plasmid reference (%.1f GB) — avoids OOM on large combined FASTA", size_gb)
+        return plsdb
+
+    # Fall back to pre-built combined FASTA
     combined = plasmid_db_dir / "combined.fna"
     if combined.exists():
+        logger.warning(
+            "PLSDB.fna not found — using combined.fna (%.1f GB). "
+            "This may OOM on machines with <32 GB RAM.",
+            combined.stat().st_size / 1e9,
+        )
         return combined
 
-    sources = ["PLSDB.fna", "RefSeq.fna", "COMPASS.fna"]
+    # Build combined from whatever's available
+    sources = ["RefSeq.fna", "COMPASS.fna"]
     available = [plasmid_db_dir / s for s in sources if (plasmid_db_dir / s).exists()]
     if not available:
         logger.warning("No plasmid FASTA files found in %s", plasmid_db_dir)
@@ -166,7 +190,12 @@ def run_plasmid_db_search(
         return []
 
     paf_path = work_dir / "plasmid_db_hits.paf"
-    split_prefix = work_dir / "mm2_split"  # minimap2 uses this for chunked index
+    split_prefix = work_dir / "mm2_split"
+
+    # Cache: if PAF already exists and is non-empty, skip minimap2
+    if paf_path.exists() and paf_path.stat().st_size > 0:
+        logger.info("Plasmid-DB: reusing cached PAF from %s", paf_path)
+        return _parse_paf(paf_path, min_ani=min_ani, min_cov=min_cov)
 
     # --split-prefix lets minimap2 chunk a large reference (>4 GB) into multiple
     # index files rather than loading the whole thing into RAM at once.  Without it

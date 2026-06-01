@@ -222,12 +222,15 @@ def annotate_vf(
     else:
         logger.info("Reusing pre-predicted ORFs from %s", proteins_path)
 
-    run_vfdb_diamond(
-        proteins_path,
-        vfdb,
-        vfdb_tsv,
-        threads=threads,
-        min_identity=min_identity,
-        min_coverage=min_coverage,
-    )
+    if vfdb_tsv.exists() and vfdb_tsv.stat().st_size > 0:
+        logger.info("Reusing cached VFDB hits from %s", vfdb_tsv)
+    else:
+        run_vfdb_diamond(
+            proteins_path,
+            vfdb,
+            vfdb_tsv,
+            threads=threads,
+            min_identity=min_identity,
+            min_coverage=min_coverage,
+        )
     return parse_vfdb_hits(vfdb_tsv)
