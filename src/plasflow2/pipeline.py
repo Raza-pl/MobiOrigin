@@ -30,6 +30,7 @@ from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 
 from plasflow2.annotate.args import ARGHit, ORF, annotate_contigs, annotate_contigs_with_orfs
 from plasflow2.annotate.mge import MGEHit, annotate_mge
+from plasflow2.annotate.plasmid_db import PlasmidDBHit, annotate_plasmid_db
 from plasflow2.annotate.mobility import (
     MobilityResult,
     index_by_contig,
@@ -39,6 +40,11 @@ from plasflow2.annotate.mobility import (
 from plasflow2.annotate.pathogens import PathogenResult, detect_pathogens
 from plasflow2.annotate.topology import Topology, detect_topologies
 from plasflow2.annotate.taxonomy import TaxResult, assign_taxonomy
+from plasflow2.annotate.taxonomy_kaiju import (
+    assign_taxonomy_kaiju,
+    find_kaiju_db,
+    kaiju_available,
+)
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.predict import Prediction, predict
 from plasflow2.risk.scorer import RiskScore, score_plasmid
@@ -100,6 +106,8 @@ class PipelineResult:
     orfs: list[ORF] = field(default_factory=list)
     # Topology per contig: "circular", "linear", or "too_short"
     topology: dict[str, Topology] = field(default_factory=dict)
+    # Plasmid-DB nucleotide match (closest known plasmid per contig; plasmid contigs only)
+    plasmid_db_hits: dict[str, PlasmidDBHit] = field(default_factory=dict)
     # Convenience counts
     class_counts: dict[str, int] = field(default_factory=dict)
     total_sequences: int = 0
@@ -147,6 +155,11 @@ def run_pipeline(
     min_identity: float = 80.0,
     vfdb: Path | str | None = None,
     mge_db: Path | str | None = None,
+    plasmid_db_dir: Path | str | None = None,
+    taxonomy_engine: str = "auto",
+    kaiju_db: Path | str | None = None,
+    kaiju_nodes: Path | str | None = None,
+    kaiju_names: Path | str | None = None,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
 
@@ -370,6 +383,27 @@ def run_pipeline(
             logger.warning("MGE database not found at %s — skipping MGE annotation.", mge_db)
 
     # ------------------------------------------------------------------
+    # 4d. Plasmid-DB nucleotide matching (plasmid contigs only)
+    # ------------------------------------------------------------------
+    plasmid_db_hits: dict[str, PlasmidDBHit] = {}
+    if plasmid_db_dir is not None:
+        plasmid_db_path = Path(plasmid_db_dir)
+        if plasmid_db_path.is_dir():
+            logger.info("Running plasmid-DB nucleotide match on %d plasmid contigs …", len(plasmid_records))
+            try:
+                plasmid_db_hits = annotate_plasmid_db(
+                    plasmid_fasta=plasmid_fasta,
+                    plasmid_db_dir=plasmid_db_path,
+                    work_dir=work_dir / "plasmid_db",
+                    threads=threads,
+                )
+                logger.info("Plasmid-DB: %d / %d contigs matched", len(plasmid_db_hits), len(plasmid_records))
+            except Exception as exc:
+                logger.warning("Plasmid-DB matching failed: %s — skipping.", exc)
+        else:
+            logger.warning("Plasmid DB dir not found: %s — skipping plasmid-DB match.", plasmid_db_dir)
+
+    # ------------------------------------------------------------------
     # 5. Mobility annotation
     # ------------------------------------------------------------------
     mobility_by_contig: dict[str, MobilityResult] = {}
@@ -389,27 +423,82 @@ def run_pipeline(
         logger.info("Mobility annotation skipped (skip_mobility=True)")
 
     # ------------------------------------------------------------------
-    # 6. Taxonomy annotation (all contigs, via DIAMOND blastx against GTDB)
+    # 6. Taxonomy annotation — Kaiju (preferred) or DIAMOND blastp fallback
     # ------------------------------------------------------------------
     taxonomy_by_contig: dict[str, TaxResult] = {}
     if not skip_taxonomy:
-        if taxonomy_db_path and taxonomy_db_path.exists():
-            logger.info("Running taxonomy annotation on all %d contigs …", len(records))
+        reuse_prot = arg_proteins if arg_proteins.exists() else None
+
+        # Resolve engine: "auto" picks Kaiju if installed + DB present, else DIAMOND
+        _use_kaiju = False
+        if taxonomy_engine in ("kaiju", "auto"):
+            _kaiju_db   = Path(kaiju_db)   if kaiju_db   else None
+            _kaiju_nodes = Path(kaiju_nodes) if kaiju_nodes else None
+            _kaiju_names = Path(kaiju_names) if kaiju_names else None
+            if (
+                kaiju_available()
+                and _kaiju_db and _kaiju_db.exists()
+                and _kaiju_nodes and _kaiju_nodes.exists()
+                and _kaiju_names and _kaiju_names.exists()
+            ):
+                _use_kaiju = True
+            elif taxonomy_engine == "kaiju":
+                logger.warning(
+                    "taxonomy_engine='kaiju' requested but kaiju binary or DB files "
+                    "not found — falling back to DIAMOND."
+                )
+
+        if _use_kaiju:
+            if not reuse_prot:
+                logger.warning(
+                    "Kaiju requires pre-predicted proteins (proteins.faa) but none found "
+                    "— falling back to DIAMOND."
+                )
+                _use_kaiju = False
+
+        if _use_kaiju:
+            logger.info(
+                "Taxonomy: Kaiju protein k-mer mode on %d ORFs from %d contigs "
+                "(threads=%d, ~20–50× faster than DIAMOND) …",
+                len(all_orfs), len(records), threads,
+            )
             try:
-                taxonomy_by_contig = assign_taxonomy(
-                    fasta_path=fasta_path,
-                    taxonomy_db=taxonomy_db_path,
+                taxonomy_by_contig = assign_taxonomy_kaiju(
+                    protein_fasta=reuse_prot,
+                    kaiju_db=_kaiju_db,
+                    nodes_dmp=_kaiju_nodes,
+                    names_dmp=_kaiju_names,
                     work_dir=work_dir / "taxonomy",
-                    taxon_map_path=taxon_map,
                     threads=threads,
                 )
             except Exception as exc:
-                logger.warning("Taxonomy annotation failed: %s — skipping.", exc)
-        else:
-            logger.info(
-                "Taxonomy database not provided (--taxonomy-db). "
-                "Use --skip-taxonomy to suppress this message."
-            )
+                logger.warning("Kaiju taxonomy failed: %s — falling back to DIAMOND.", exc)
+                _use_kaiju = False  # trigger DIAMOND fallback below
+
+        if not _use_kaiju:
+            if taxonomy_db_path and taxonomy_db_path.exists():
+                logger.info(
+                    "Taxonomy: DIAMOND blastp on %d contigs "
+                    "(threads=%d, block_size=4.0) …",
+                    len(records), threads,
+                )
+                try:
+                    taxonomy_by_contig = assign_taxonomy(
+                        fasta_path=fasta_path,
+                        taxonomy_db=taxonomy_db_path,
+                        work_dir=work_dir / "taxonomy",
+                        taxon_map_path=taxon_map,
+                        threads=threads,
+                        protein_fasta=reuse_prot,
+                        block_size=4.0,
+                    )
+                except Exception as exc:
+                    logger.warning("DIAMOND taxonomy failed: %s — skipping.", exc)
+            else:
+                logger.info(
+                    "No taxonomy DB found (--taxonomy-db or data/databases/taxonomy/). "
+                    "Use --skip-taxonomy to suppress this message."
+                )
     else:
         logger.info("Taxonomy annotation skipped (skip_taxonomy=True)")
 
@@ -480,6 +569,7 @@ def run_pipeline(
         pathogens=pathogens_by_contig,
         orfs=all_orfs,
         topology=topology_by_contig,
+        plasmid_db_hits=plasmid_db_hits,
     )
     tax_classified = sum(1 for r in taxonomy_by_contig.values() if r.rank != "unclassified")
     total_vf = sum(len(cr.vf_hits) for cr in plasmid_results)

@@ -100,11 +100,25 @@ def predict(
         List of Prediction objects, one per input sequence.
     """
     import torch
+    import torch.nn as nn
 
     from plasflow2.classify.model import load_model
 
     device = get_device()
     model = load_model(model_path, device=device)
+
+    # Multi-GPU: wrap in DataParallel when multiple CUDA devices are available.
+    # DataParallel splits the batch across all GPUs and merges results.
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if n_gpus > 1:
+        logger.info("Using %d GPUs via DataParallel for MLP inference", n_gpus)
+        model = nn.DataParallel(model)
+    elif n_gpus == 1:
+        logger.info("Using 1 GPU for MLP inference")
+    else:
+        logger.info("GPU not available — running MLP inference on CPU")
+
+    model.eval()
 
     X = extract_features(sequences)
     results: list[Prediction] = []

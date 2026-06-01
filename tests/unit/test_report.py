@@ -16,11 +16,13 @@ from plasflow2.classify.predict import Prediction
 from plasflow2.pipeline import ContigResult, PipelineResult
 from plasflow2.report.generator import (
     PlasmidRow,
+    NonPlasmidRow,
     _build_arg_chart,
     _build_pie_data,
     _build_risk_histogram,
     build_report_data,
     generate_report,
+    generate_reports,
 )
 from plasflow2.risk.scorer import RiskScore
 
@@ -168,14 +170,16 @@ def test_arg_chart_ignores_unknown() -> None:
 def test_risk_histogram_structure() -> None:
     result = _build_risk_histogram([3, 5, 8, 8, 10])
     assert result["data"][0]["type"] == "bar"
-    assert len(result["data"][0]["x"]) == 11  # 0..10
+    # Risk scores 1–10 only (score=0 excluded from HTML display)
+    assert len(result["data"][0]["x"]) == 10
 
 
 def test_risk_histogram_counts() -> None:
     result = _build_risk_histogram([3, 3, 8])
     y = result["data"][0]["y"]
-    assert y[3] == 2  # two scores of 3
-    assert y[8] == 1  # one score of 8
+    # x = [1,2,3,4,5,6,7,8,9,10] → index 2 = score 3, index 7 = score 8
+    assert y[2] == 2  # two scores of 3
+    assert y[7] == 1  # one score of 8
 
 
 def test_risk_histogram_empty() -> None:
@@ -186,10 +190,11 @@ def test_risk_histogram_empty() -> None:
 def test_risk_histogram_colors() -> None:
     result = _build_risk_histogram([])
     colors = result["data"][0]["marker"]["color"]
-    assert colors[0] == "#27ae60"  # score 0 → green
-    assert colors[4] == "#e67e22"  # score 4 → orange
-    assert colors[7] == "#c0392b"  # score 7 → red
-    assert colors[10] == "#c0392b"  # score 10 → red
+    # x = [1..10]: index 0=score1(green), index 3=score4(orange), index 6=score7(red)
+    assert colors[0] == "#27ae60"  # score 1 → green
+    assert colors[3] == "#e67e22"  # score 4 → orange
+    assert colors[6] == "#c0392b"  # score 7 → red
+    assert colors[9] == "#c0392b"  # score 10 → red
 
 
 # ---------------------------------------------------------------------------
@@ -305,13 +310,18 @@ def test_build_report_data_no_args_dash() -> None:
 
 
 def test_generate_report_creates_file(tmp_path: Path) -> None:
+    """generate_report() delegates to generate_reports(); the plasmid page is returned."""
     result = _pipeline_result(num_plasmids=2)
     data = build_report_data(result, input_file="test.fasta")
-    out = tmp_path / "report.html"
-    path = generate_report(data, out)
-    assert path == out
-    assert out.exists()
-    assert out.stat().st_size > 0
+    # generate_report writes to output_path.parent/report_plasmid.html
+    out_dir = tmp_path
+    path = generate_report(data, out_dir / "report.html")
+    assert path.exists()
+    assert path.stat().st_size > 0
+    # All 5 pages are created
+    for page in ("report_plasmid.html", "report_chromosome.html", "report_phage.html",
+                 "report_archaea.html", "report_unclassified.html"):
+        assert (out_dir / page).exists()
 
 
 def test_generate_report_contains_plotly(tmp_path: Path) -> None:
@@ -320,7 +330,8 @@ def test_generate_report_contains_plotly(tmp_path: Path) -> None:
     out = generate_report(data, tmp_path / "report.html")
     html = out.read_text()
     assert "plotly" in html.lower()
-    assert "pie-chart" in html
+    # Plasmid page has the pie chart div
+    assert 'id="cpie"' in html
 
 
 def test_generate_report_contains_contig_id(tmp_path: Path) -> None:
@@ -334,6 +345,60 @@ def test_generate_report_contains_contig_id(tmp_path: Path) -> None:
 def test_generate_report_creates_parent_dir(tmp_path: Path) -> None:
     result = _pipeline_result(num_plasmids=1)
     data = build_report_data(result)
-    out = tmp_path / "nested" / "dir" / "report.html"
-    generate_report(data, out)
-    assert out.exists()
+    nested = tmp_path / "nested" / "dir"
+    generate_report(data, nested / "report.html")
+    # At least the plasmid report should exist in the nested dir
+    assert (nested / "report_plasmid.html").exists()
+
+
+def test_nonplasmid_row_has_annotation_fields() -> None:
+    """NonPlasmidRow should carry ARG/VF/MGE fields for all contig classes."""
+    row = NonPlasmidRow(
+        contig_id="c1", contig_length=5000, label="chromosome", confidence=0.92,
+        num_args=2, arg_genes="blaNDM-1; sul1", drug_classes="carbapenem antibiotic",
+        num_vf=1, vf_genes="mgtC",
+        num_mge=1, mge_genes="ISAba1", mge_families="IS4",
+    )
+    assert row.num_args == 2
+    assert "blaNDM-1" in row.arg_genes
+    assert row.num_vf == 1
+    assert row.num_mge == 1
+    assert row.mge_genes == "ISAba1"
+
+
+def test_plasmid_row_has_arg_genes_field() -> None:
+    """PlasmidRow should carry arg_genes (actual gene names)."""
+    from plasflow2.risk.scorer import RiskScore
+    row = PlasmidRow(
+        contig_id="p1", contig_length=3000, confidence=0.98,
+        num_args=2, arg_genes="blaNDM-1; mcr-1",
+        drug_classes="carbapenem antibiotic; colistin",
+        mobility_class="conjugative", replicon_type="IncP-1",
+        risk_score=8, taxonomy="Klebsiella pneumoniae",
+        risk_evidence="Conjugative (+3)",
+    )
+    assert row.arg_genes == "blaNDM-1; mcr-1"
+
+
+def test_build_report_data_nonplasmid_rows_have_annotation(tmp_path: Path) -> None:
+    """build_report_data should populate ARG/VF/MGE fields on NonPlasmidRow."""
+    from plasflow2.pipeline import NonPlasmidContigResult
+    from plasflow2.annotate.args import ARGHit
+
+    np_cr = NonPlasmidContigResult(
+        record=_record("c1"),
+        prediction=_prediction("c1", "chromosome"),
+        arg_hits=[_arg("c1", "carbapenem antibiotic")],
+    )
+    result = PipelineResult(
+        input_fasta=Path("x.fasta"),
+        all_predictions=[_prediction("c1", "chromosome")],
+        plasmid_results=[],
+        non_plasmid_results=[np_cr],
+    )
+    data = build_report_data(result)
+    chrom_rows = data["chromosome_rows"]
+    assert len(chrom_rows) == 1
+    row = chrom_rows[0]
+    assert row.num_args == 1
+    assert "NDM-6" in row.arg_genes

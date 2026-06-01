@@ -69,11 +69,19 @@ def _configure_logging(verbose: bool) -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DEFAULT_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
-_DEFAULT_CARD_DB = Path(__file__).parent.parent.parent / "data" / "databases" / "card" / "card.dmnd"
-_DEFAULT_ARO_INDEX = (
-    Path(__file__).parent.parent.parent / "data" / "databases" / "card" / "aro_index.tsv"
-)
+_DB_ROOT = Path(__file__).parent.parent.parent / "data" / "databases"
+_DEFAULT_MODEL       = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
+_DEFAULT_CARD_DB     = _DB_ROOT / "card" / "card.dmnd"
+_DEFAULT_ARO_INDEX   = _DB_ROOT / "card" / "aro_index.tsv"
+_DEFAULT_SARG_DB     = _DB_ROOT / "sarg" / "sarg.dmnd"
+_DEFAULT_VFDB        = _DB_ROOT / "vfdb" / "vfdb.dmnd"
+_DEFAULT_MGE_DB      = _DB_ROOT / "mge" / "isfinder.dmnd"
+_DEFAULT_PLASMID_DB  = _DB_ROOT / "plasmids"   # dir; combined FASTA is built here
+_DEFAULT_TAXONOMY_DB = _DB_ROOT / "taxonomy" / "refseq_taxonomy.dmnd"
+_DEFAULT_TAXON_MAP   = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
+_DEFAULT_KAIJU_DIR   = _DB_ROOT / "kaiju"
+_DEFAULT_KAIJU_NODES = _DEFAULT_KAIJU_DIR / "nodes.dmp"
+_DEFAULT_KAIJU_NAMES = _DEFAULT_KAIJU_DIR / "names.dmp"
 
 
 def _resolve_model(model_path: str | None) -> Path:
@@ -156,6 +164,11 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         # ── topology & confidence ─────────────────────────────────────────
         "topology",          # circular / linear / too_short
         "low_confidence",    # True if confidence < 0.70 or argmax fallback used
+        # ── plasmid-DB nucleotide match (plasmid contigs only) ────────────
+        "plasmid_db_match",      # closest known plasmid accession (e.g. PLSDB_NZ_CP073379.1)
+        "plasmid_db_source",     # PLSDB / RefSeq / COMPASS
+        "plasmid_db_ani",        # approximate nucleotide identity % to DB hit
+        "plasmid_db_cov",        # query coverage % of the DB hit alignment
         # ── pathogen detection (all classes) ─────────────────────────────
         "pathogen_species",
         "pathogen_threat",
@@ -292,6 +305,18 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
             low_confidence = pred.confidence < 0.70
             topo_conf_cols = [topology, str(low_confidence)]
 
+            # ── Plasmid-DB nucleotide match (plasmid contigs only) ────────
+            pdb_hit = pipeline_result.plasmid_db_hits.get(cid)
+            if pdb_hit:
+                plasmid_db_cols = [
+                    pdb_hit.match_acc,
+                    pdb_hit.source_db,
+                    str(pdb_hit.ani),
+                    str(pdb_hit.query_cov),
+                ]
+            else:
+                plasmid_db_cols = ["", "", "", ""]
+
             # ── Pathogen detection (all classes) ──────────────────────────
             path_hit = pipeline_result.pathogens.get(cid)
             if path_hit:
@@ -300,7 +325,8 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 pathogen_cols = PATHOGEN_EMPTY
 
             writer.writerow(
-                base_cols + tax_cols + annot_cols + plasmid_cols + topo_conf_cols + pathogen_cols
+                base_cols + tax_cols + annot_cols + plasmid_cols
+                + topo_conf_cols + plasmid_db_cols + pathogen_cols
             )
 
 
@@ -529,6 +555,38 @@ def main(ctx: click.Context, verbose: bool) -> None:
     help="Skip taxonomy annotation (use when no taxonomy DB is available).",
 )
 @click.option(
+    "--taxonomy-engine",
+    "taxonomy_engine",
+    default="auto",
+    type=click.Choice(["auto", "kaiju", "diamond"], case_sensitive=False),
+    help=(
+        "Taxonomy annotation engine. 'auto' uses Kaiju if installed and its DB is present, "
+        "otherwise falls back to DIAMOND. 'kaiju' forces Kaiju (20–50× faster). "
+        "'diamond' forces DIAMOND blastp.  [default: auto]"
+    ),
+)
+@click.option(
+    "--kaiju-db",
+    "kaiju_db",
+    default=None,
+    type=click.Path(),
+    help="Kaiju FM-index database (.fmi).  [auto-detected from data/databases/kaiju/]",
+)
+@click.option(
+    "--kaiju-nodes",
+    "kaiju_nodes",
+    default=None,
+    type=click.Path(),
+    help="NCBI taxonomy nodes.dmp for Kaiju.  [auto-detected from data/databases/kaiju/]",
+)
+@click.option(
+    "--kaiju-names",
+    "kaiju_names",
+    default=None,
+    type=click.Path(),
+    help="NCBI taxonomy names.dmp for Kaiju.  [auto-detected from data/databases/kaiju/]",
+)
+@click.option(
     "--sarg-db",
     "sarg_db",
     default=None,
@@ -589,6 +647,10 @@ def run(
     taxonomy_db: str | None,
     taxon_map: str | None,
     skip_taxonomy: bool,
+    taxonomy_engine: str,
+    kaiju_db: str | None,
+    kaiju_nodes: str | None,
+    kaiju_names: str | None,
     sarg_db: str | None,
     min_identity: float,
     vfdb: str | None,
@@ -619,6 +681,43 @@ def run(
     for p, name in [(card_db_path, "--card-db"), (aro_index_path, "--aro-index")]:
         if not p.exists():
             raise click.BadParameter(f"Not found: {p}", param_hint=name)
+
+    # Auto-detect optional databases when not explicitly provided
+    if sarg_db is None and _DEFAULT_SARG_DB.exists():
+        sarg_db = str(_DEFAULT_SARG_DB)
+        click.echo(f"[info] Auto-detected SARG database: {_DEFAULT_SARG_DB}")
+    if vfdb is None and _DEFAULT_VFDB.exists():
+        vfdb = str(_DEFAULT_VFDB)
+        click.echo(f"[info] Auto-detected VFDB database: {_DEFAULT_VFDB}")
+    if mge_db is None and _DEFAULT_MGE_DB.exists():
+        mge_db = str(_DEFAULT_MGE_DB)
+        click.echo(f"[info] Auto-detected MGE database: {_DEFAULT_MGE_DB}")
+    if taxonomy_db is None and not skip_taxonomy and _DEFAULT_TAXONOMY_DB.exists():
+        taxonomy_db = str(_DEFAULT_TAXONOMY_DB)
+        click.echo(f"[info] Auto-detected taxonomy database: {_DEFAULT_TAXONOMY_DB}")
+    if taxon_map is None and not skip_taxonomy and _DEFAULT_TAXON_MAP.exists():
+        taxon_map = str(_DEFAULT_TAXON_MAP)
+    plasmid_db_dir: str | None = None
+    if _DEFAULT_PLASMID_DB.is_dir() and any(_DEFAULT_PLASMID_DB.iterdir()):
+        plasmid_db_dir = str(_DEFAULT_PLASMID_DB)
+        click.echo(f"[info] Auto-detected plasmid database: {_DEFAULT_PLASMID_DB}")
+
+    # Kaiju auto-detection
+    from plasflow2.annotate.taxonomy_kaiju import find_kaiju_db, kaiju_available
+    if kaiju_db is None and _DEFAULT_KAIJU_DIR.is_dir():
+        _found = find_kaiju_db(_DEFAULT_KAIJU_DIR)
+        if _found:
+            kaiju_db = str(_found)
+    if kaiju_nodes is None and _DEFAULT_KAIJU_NODES.exists():
+        kaiju_nodes = str(_DEFAULT_KAIJU_NODES)
+    if kaiju_names is None and _DEFAULT_KAIJU_NAMES.exists():
+        kaiju_names = str(_DEFAULT_KAIJU_NAMES)
+    if kaiju_db and kaiju_nodes and kaiju_names:
+        _engine_label = "kaiju" if taxonomy_engine in ("kaiju", "auto") else "diamond"
+        if taxonomy_engine == "auto" and kaiju_available():
+            click.echo(f"[info] Auto-detected Kaiju database: {kaiju_db} (will use kaiju for taxonomy)")
+        elif taxonomy_engine == "kaiju":
+            click.echo(f"[info] Kaiju database: {kaiju_db}")
 
     click.echo(f"[PlasFlow v2 v{__version__}] Running pipeline on {input_fasta}")
 
@@ -657,6 +756,11 @@ def run(
         min_identity=min_identity,
         vfdb=vfdb,
         mge_db=mge_db,
+        plasmid_db_dir=plasmid_db_dir,
+        taxonomy_engine=taxonomy_engine,
+        kaiju_db=kaiju_db,
+        kaiju_nodes=kaiju_nodes,
+        kaiju_names=kaiju_names,
     )
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
@@ -665,7 +769,23 @@ def run(
     click.echo(f"  Predictions → {preds_tsv}")
 
     # --- Write per-class FASTAs (from all loaded records) ---
-    records = load_fasta(input_fasta, min_length=min_length)
+    # Use the work-dir copy as fallback in case the original input path no longer
+    # exists (e.g. the source was a temp directory that got cleaned up).
+    _fasta_source = Path(input_fasta)
+    if not _fasta_source.exists():
+        _fallback = out / "work" / "all_contigs.fasta"
+        if _fallback.exists():
+            logger.warning(
+                "Original input %s not found — using work-dir copy %s",
+                input_fasta, _fallback,
+            )
+            _fasta_source = _fallback
+        else:
+            raise click.ClickException(
+                f"Input FASTA not found at {input_fasta} and no work-dir copy exists. "
+                "Cannot write per-class FASTA files."
+            )
+    records = load_fasta(_fasta_source, min_length=min_length)
     pred_by_id = {p.sequence_id: p.label for p in pipeline_result.all_predictions}
     labels = [pred_by_id.get(r.id, "unclassified") for r in records]
     bins = split_by_label(records, labels)
@@ -1082,6 +1202,8 @@ def report_cmd(
                         num_mge=num_mge,
                         mge_genes=mge_genes_str,
                         mge_families=mge_fam_str,
+                        topology=row.get("topology", "linear") or "linear",
+                        low_confidence=(row.get("low_confidence", "False") or "False").lower() == "true",
                     )
                 )
             else:
@@ -1111,6 +1233,8 @@ def report_cmd(
                         num_mge=int(row.get("num_mge", 0) or 0),
                         mge_genes=row.get("mge_genes", "") or "",
                         mge_families=row.get("mge_families", "") or "",
+                        topology=row.get("topology", "linear") or "linear",
+                        low_confidence=(row.get("low_confidence", "False") or "False").lower() == "true",
                     )
                 )
 
@@ -1120,6 +1244,7 @@ def report_cmd(
         _pathogen_bar as _build_pathogen_bar,
         _build_drug_cooccurrence_heatmap,
         _np_charts as _build_np_charts,
+        _narrative_summary,
     )
 
     phage_rows        = [r for r in non_plasmid_rows if r.label == "phage"]
@@ -1178,7 +1303,11 @@ def report_cmd(
         "has_phages":        bool(phage_rows),
         "has_chromosomes":   bool(chromosome_rows),
         "has_others":        bool(archaea_rows or unclassified_rows),
+        # genome maps not available when rebuilding from TSV (no ORF data)
+        "genome_maps":       {},
     }
+    # narrative summary (computed after report_data is assembled)
+    report_data["narrative"] = _narrative_summary(report_data)
 
     # Re-read pathogen columns from predictions.tsv and build pathogen chart
     _pathogen_hits: dict[str, _PR] = {}

@@ -94,7 +94,8 @@ def _mock_pipeline(
         patch("plasflow2.pipeline.load_fasta", return_value=fasta_records),
         patch("plasflow2.pipeline.predict", return_value=predictions),
         patch("plasflow2.pipeline.write_fasta"),
-        patch("plasflow2.pipeline.annotate_contigs", return_value=arg_hits or []),
+        patch("plasflow2.pipeline.annotate_contigs_with_orfs", return_value=(arg_hits or [], [])),
+        patch("plasflow2.pipeline.annotate_plasmid_db", return_value={}),
         patch("plasflow2.pipeline.run_mob_typer", return_value=tmp_path / "mob.txt"),
         patch("plasflow2.pipeline.parse_mob_results", return_value=mob_results or []),
     ):
@@ -291,7 +292,8 @@ def test_run_pipeline_mob_typer_failure_is_graceful(tmp_path: Path) -> None:
         patch("plasflow2.pipeline.load_fasta", return_value=[_record("p1")]),
         patch("plasflow2.pipeline.predict", return_value=[_prediction("p1", "plasmid")]),
         patch("plasflow2.pipeline.write_fasta"),
-        patch("plasflow2.pipeline.annotate_contigs", return_value=[]),
+        patch("plasflow2.pipeline.annotate_contigs_with_orfs", return_value=([], [])),
+        patch("plasflow2.pipeline.annotate_plasmid_db", return_value={}),
         patch("plasflow2.pipeline.run_mob_typer", side_effect=RuntimeError("mob_typer not found")),
     ):
         result = run_pipeline(

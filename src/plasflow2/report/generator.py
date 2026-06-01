@@ -93,6 +93,8 @@ tr:hover td{background:#f7fbff}
 .bcard{background:#e8f0fe;color:#1a56db}.bsarg{background:#fef3c7;color:#b45309}
 .besk{background:#fde8e8;color:#c0392b;border:1px solid #e74c3c}
 .bwho{background:#fef3c7;color:#b45309;border:1px solid #f39c12}
+.bcirc{background:#e0f2fe;color:#0369a1;border:1px solid #38bdf8}
+.blowconf{background:#fef9c3;color:#854d0e;border:1px solid #fbbf24}
 .risk-h{color:#c0392b;font-weight:700}.risk-m{color:#e67e22;font-weight:700}
 .risk-l{color:#27ae60;font-weight:700}
 .filter-bar{display:flex;gap:7px;margin:8px 0;flex-wrap:wrap;align-items:center}
@@ -740,6 +742,7 @@ def _p_row(r: PlasmidRow) -> list:
         r.eskape_genus if r.eskape_host else "",
         r.mobility_class, r.replicon_type,
         r.risk_score, r.taxonomy, r.risk_evidence,
+        r.topology, r.low_confidence,
     ]
 
 
@@ -748,6 +751,7 @@ _PLASMID_COL_HEADERS = [
     "ARGs", "ARG Names", "Drug Classes", "DB",
     "VFs", "VF Genes", "MGEs", "MGE Elements", "MGE Families",
     "Pathogen", "Mobility", "Replicon", "Risk", "Taxonomy", "Evidence",
+    "Topology", "Low Conf.",
 ]
 
 _PLASMID_DOWNLOAD_HEADERS = [
@@ -755,6 +759,7 @@ _PLASMID_DOWNLOAD_HEADERS = [
     "num_args", "arg_genes", "drug_classes", "db_source",
     "num_vf", "vf_genes", "num_mge", "mge_genes", "mge_families",
     "pathogen_host", "mobility_class", "replicon_type", "risk_score", "taxonomy", "risk_evidence",
+    "topology", "low_confidence",
 ]
 
 
@@ -926,6 +931,14 @@ var COLS=[
   {{render:function(v){{return renderR(v);}}}},               // 15 risk_score
   {{render:function(v){{return ellipsis(v,25);}}}},           // 16 taxonomy
   {{render:function(v){{return ellipsis(v,32);}}}},           // 17 risk_evidence
+  {{render:function(v){{                                     // 18 topology
+    if(v==='circular')return'<span class="badge bcirc">⭕ circular</span>';
+    if(v==='too_short')return'<span style="color:#95a5a6">too short</span>';
+    return'<span style="color:#7f8c8d">— linear</span>';
+  }}}},
+  {{render:function(v){{                                     // 19 low_confidence
+    return v?'<span class="badge blowconf">⚠ low conf</span>':'<span style="color:#27ae60">✓</span>';
+  }}}},
 ];
 
 var tbl=new LightTable({{tableId:'ptable',data:ALL,cols:COLS,pageSize:50,

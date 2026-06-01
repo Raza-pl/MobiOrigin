@@ -150,7 +150,8 @@ def test_run_produces_outputs(tmp_path: Path) -> None:
     assert "Done." in result.output
     assert (out / "predictions.tsv").exists()
     assert (out / "annotations.json").exists()
-    assert (out / "report.html").exists()
+    # run generates 5 separate HTML reports (one per class)
+    assert (out / "report_plasmid.html").exists()
 
 
 def test_run_missing_model_raises(tmp_path: Path) -> None:
@@ -389,17 +390,31 @@ def test_report_cmd_produces_html(tmp_path: Path) -> None:
         )
     )
 
-    # Write minimal predictions.tsv (new 27-column format)
+    # Write minimal predictions.tsv (38-column format: universal ARG/VF/MGE + plasmid-specific + topology/confidence)
     preds = tmp_path / "predictions.tsv"
-    preds.write_text(
+    header = (
         "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\tarchaea_score\t"
         "taxonomy\ttaxonomy_rank\ttaxonomy_lineage\t"
-        "num_args\tdrug_classes\targ_sources\t"
+        "num_args\targ_genes\tdrug_classes\targ_sources\t"
+        "num_vf\tvf_genes\tnum_mge\tmge_genes\tmge_families\t"
         "mobility_class\treplicon_type\trelaxase_type\tmpf_type\t"
         "risk_score\tmobility_score\targ_score\treplicon_score\t"
-        "context_score\thost_score\trisk_evidence\teskape_host\teskape_genus\n"
-        "p1\t5000\tplasmid\t0.95\t0.95\t0.02\t0.02\t0.01\t\t\t\t0\t\t\t\t\t\t\t0\t0\t0\t0\t0\t0\t\tFalse\t\n"
-        "c1\t3000\tchromosome\t0.90\t0.05\t0.90\t0.03\t0.02\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n"
+        "context_score\thost_score\trisk_evidence\teskape_host\teskape_genus\t"
+        "topology\tlow_confidence\t"
+        "plasmid_db_match\tplasmid_db_source\tplasmid_db_ani\tplasmid_db_cov\t"
+        "pathogen_species\tpathogen_threat\tpathogen_category\n"
+    )
+    preds.write_text(
+        header
+        + "p1\t5000\tplasmid\t0.95\t0.95\t0.02\t0.02\t0.01\t\t\t\t1\tNDM-6\tcarbapenem antibiotic\tCARD\t"
+          "0\t\t0\t\t\tconjugative\tIncP-1alpha\tMOBP\tMPF_T\t"
+          "7\t3\t2\t2\t0\t0\tConjugative (+3)\tFalse\t\t"
+          "linear\tFalse\t"
+          "PLSDB_NZ_CP073379.1\tPLSDB\t98.5\t95.2\t"
+          "\t\t\n"
+        + "c1\t3000\tchromosome\t0.90\t0.05\t0.90\t0.03\t0.02\t\t\t\t0\t\t\t\t"
+          "0\t\t0\t\t\t\t\t\t\t\t\t\t\t\t\t\tFalse\t\t"
+          "linear\tFalse\t\t\t\t\t\t\t\n"
     )
 
     out_html = tmp_path / "report.html"
@@ -418,5 +433,7 @@ def test_report_cmd_produces_html(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert out_html.exists()
-    assert "PlasFlow" in out_html.read_text()
+    # report_cmd generates 5 separate HTML files in the same directory as out_html
+    plasmid_html = tmp_path / "report_plasmid.html"
+    assert plasmid_html.exists()
+    assert "PlasFlow" in plasmid_html.read_text()

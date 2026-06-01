@@ -51,8 +51,11 @@ TAX_MIN_AGREEMENT = 0.5  # fraction of hits that must agree at a rank
 GTDB_RANK_PREFIXES = ["d__", "p__", "c__", "o__", "f__", "g__", "s__"]
 GTDB_RANK_NAMES = ["domain", "phylum", "class", "order", "family", "genus", "species"]
 
-# Regex: match any GTDB lineage embedded in a DIAMOND stitle
-_LINEAGE_RE = re.compile(r"(d__[A-Za-z][^;]*(?:;[a-z]__[^;]*)*)")
+# Regex: match any GTDB-style lineage embedded in a DIAMOND stitle.
+# d__ may be empty (NCBI often omits "superkingdom" rank), so we match
+# d__[^;]* (zero or more non-semicolon chars after d__) and then any
+# number of ;x__... rank tokens.
+_LINEAGE_RE = re.compile(r"(d__[^;]*(?:;[a-z]__[^;]*)+)")
 
 # Map rank prefix → canonical rank name
 _PREFIX_TO_RANK = dict(zip(GTDB_RANK_PREFIXES, GTDB_RANK_NAMES))
@@ -247,11 +250,11 @@ def run_diamond_taxonomy(
     taxonomy_db: Path | str,
     out_tsv: Path | str,
     threads: int = 8,
-    mode: str = "blastx",
+    mode: str = "blastp",
     min_identity: float = TAX_MIN_IDENTITY,
     min_coverage: float = TAX_MIN_COVERAGE,
     top_n: int = TAX_TOP_N,
-    block_size: float = 0.5,
+    block_size: float = 4.0,
 ) -> Path:
     """Run DIAMOND blastx/blastp for taxonomy annotation.
 
@@ -311,9 +314,11 @@ def run_diamond_taxonomy(
         str(top_n),
         "--block-size",
         str(block_size),
-        "--sensitive",
+        # Note: --faster flag was removed — not supported in all DIAMOND versions.
+        # Speed comes from block_size=4.0 (large RAM chunks) + blastp (vs blastx).
     ]
-    logger.info("Running DIAMOND taxonomy (%s): %s", mode, " ".join(cmd))
+    logger.info("Running DIAMOND taxonomy (%s, block_size=%.1f, threads=%d): %s",
+                mode, block_size, threads, " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logger.error("DIAMOND taxonomy stderr: %s", result.stderr)
@@ -472,56 +477,49 @@ def lca_for_contig(
     best_lineage = ""
     best_agreement = 0.0
 
+    from collections import Counter
+
     for prefix, rank_name in zip(GTDB_RANK_PREFIXES, GTDB_RANK_NAMES):
         # Collect the taxon at this rank from each parsed hit
         taxa_at_rank: list[str] = []
         for levels in parsed:
-            # Levels is a list of (prefix, taxon) in rank order
-            taxon_at_level = ""
             for p, t in levels:
                 if p == prefix:
-                    taxon_at_level = t
+                    taxa_at_rank.append(t)
                     break
-            if taxon_at_level:
-                taxa_at_rank.append(taxon_at_level)
 
         if not taxa_at_rank:
-            continue  # no hits have this rank — skip
+            # No hits carry this rank (e.g. d__ is often empty in NCBI-built DBs).
+            # Skip rather than break so we can still assign at phylum / genus level.
+            continue
 
-        # Find the most common taxon at this rank
-        from collections import Counter
-
-        taxon_counts = Counter(taxa_at_rank)
+        taxon_counts: Counter[str] = Counter(taxa_at_rank)
         most_common_taxon, most_common_count = taxon_counts.most_common(1)[0]
 
-        # Agreement = fraction of ALL hits (not just those with this rank present)
-        # that support the most common taxon (Kaiju uses total hits as denominator)
-        agreement = most_common_count / n_hits
+        # Denominator = hits that HAVE this rank (not all hits).
+        # Using all hits penalises ranks that are absent from some DB entries
+        # (e.g. d__ is empty in NCBI-built DBs that lack a "superkingdom" rank).
+        # Strict `>` keeps 50/50 ties from propagating to deeper (wrong) ranks.
+        agreement = most_common_count / len(taxa_at_rank)
 
         if agreement > min_agreement:
-            # Strict majority: this rank is assignable — continue to see if a deeper
-            # rank also passes.  Using strict `>` (not `>=`) ensures that an exact
-            # 50/50 tie stops at the parent rank rather than arbitrarily picking one
-            # branch and continuing deeper (Kaiju default: ties are resolved upward).
             best_rank = rank_name
             best_taxon = most_common_taxon
             best_agreement = agreement
-            # Build consensus lineage up to this rank from the first agreeing hit
-            agreeing_lineages = [
-                levels
-                for levels in parsed
-                if any(p == prefix and t == most_common_taxon for p, t in levels)
-            ]
-            if agreeing_lineages:
-                repr_levels = agreeing_lineages[0]
-                truncated = []
-                for p, t in repr_levels:
-                    truncated.append(t)
-                    if p == prefix:
-                        break
-                best_lineage = ";".join(truncated)
+            # Build consensus lineage up to this rank
+            agreeing_levels = next(
+                (lvs for lvs in parsed
+                 if any(p == prefix and t == most_common_taxon for p, t in lvs)),
+                parsed[0],
+            )
+            truncated = []
+            for p, t in agreeing_levels:
+                truncated.append(t)
+                if p == prefix:
+                    break
+            best_lineage = ";".join(truncated)
         else:
-            # Agreement drops to or below threshold — stop here (don't go deeper)
+            # Majority lost at this rank — don't go deeper
             break
 
     return TaxResult(
@@ -545,28 +543,36 @@ def assign_taxonomy(
     work_dir: Path | str,
     taxon_map_path: Path | str | None = None,
     threads: int = 8,
-    mode: str = "blastx",
+    mode: str = "blastp",
     min_identity: float = TAX_MIN_IDENTITY,
     min_coverage: float = TAX_MIN_COVERAGE,
     top_n: int = TAX_TOP_N,
     min_agreement: float = TAX_MIN_AGREEMENT,
-    block_size: float = 0.5,
+    block_size: float = 4.0,
+    protein_fasta: Path | str | None = None,
 ) -> dict[str, TaxResult]:
     """End-to-end taxonomy assignment: DIAMOND → parse → LCA per contig.
 
     Args:
-        fasta_path: Input nucleotide FASTA (contigs).
+        fasta_path: Input nucleotide FASTA (contigs) — used for blastx mode, or
+                    ignored when protein_fasta is provided.
         taxonomy_db: DIAMOND database (.dmnd) built from GTDB/RefSeq proteins.
         work_dir: Directory for intermediate files (diamond_taxonomy.tsv).
         taxon_map_path: Optional path to 2-column accession→lineage TSV.
                         If None, lineage is parsed from DIAMOND stitle.
         threads: CPU threads for DIAMOND.
-        mode: ``'blastx'`` (nucleotide) or ``'blastp'`` (protein).
+        mode: ``'blastp'`` (protein input, ~6× faster) or ``'blastx'``
+              (nucleotide input).  Defaults to 'blastp' — use protein_fasta to
+              reuse ORFs predicted during ARG annotation.
         min_identity: Minimum % identity for DIAMOND hits.
         min_coverage: Minimum % query coverage for DIAMOND hits.
         top_n: Number of top hits per contig to use for LCA.
         min_agreement: Fraction of hits that must agree at a rank (LCA parameter).
-        block_size: DIAMOND block size (controls RAM usage).
+        block_size: DIAMOND --block-size (GB per thread chunk).  Default 4.0
+                    uses ~32 GB RAM and gives large speed boost over 0.5.
+        protein_fasta: Pre-predicted protein FASTA to use for blastp mode,
+                       reusing pyrodigal ORFs from the ARG annotation step.
+                       When provided, mode is forced to 'blastp'.
 
     Returns:
         Dict mapping contig_id → :class:`TaxResult`.
@@ -579,9 +585,28 @@ def assign_taxonomy(
 
     diamond_tsv = work_dir / "diamond_taxonomy.tsv"
 
+    # If pre-predicted proteins are available, use them directly (blastp, ~6× faster)
+    if protein_fasta is not None:
+        protein_fasta = Path(protein_fasta)
+        if protein_fasta.exists() and protein_fasta.stat().st_size > 0:
+            logger.info(
+                "Taxonomy: reusing pre-predicted ORFs from %s (blastp, ~6× faster than blastx)",
+                protein_fasta,
+            )
+            query_path = protein_fasta
+            mode = "blastp"
+        else:
+            logger.warning(
+                "protein_fasta %s not found or empty — falling back to blastx", protein_fasta
+            )
+            query_path = fasta_path
+            mode = "blastx"
+    else:
+        query_path = fasta_path
+
     # 1. Run DIAMOND
     run_diamond_taxonomy(
-        fasta_path=fasta_path,
+        fasta_path=query_path,
         taxonomy_db=taxonomy_db,
         out_tsv=diamond_tsv,
         threads=threads,

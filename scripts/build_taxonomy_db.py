@@ -149,7 +149,16 @@ def get_lineage_for_taxid(
     taxid_to_rank: dict,
     rank_map: dict,
 ) -> str:
-    """Walk NCBI taxonomy tree upward to build a GTDB-style lineage string."""
+    """Walk NCBI taxonomy tree upward to build a GTDB-style lineage string.
+
+    NCBI taxonomy does not consistently use "superkingdom" as the rank name.
+    We detect Bacteria (taxid 2), Archaea (taxid 2157), and Eukaryota (taxid 2759)
+    explicitly by checking ancestors, so d__ is always populated correctly.
+    """
+    # NCBI top-level domain taxids
+    _DOMAIN_TAXIDS = {2: "Bacteria", 2157: "Archaea", 2759: "Eukaryota",
+                      10239: "Viruses", 12884: "Viroids"}
+
     parts: dict[str, str] = {}
     current = taxid
     visited: set[int] = set()
@@ -157,9 +166,14 @@ def get_lineage_for_taxid(
         visited.add(current)
         rank = taxid_to_rank.get(current, "no rank")
         name = taxid_to_name.get(current, "")
+        # Explicit domain detection before rank_map lookup
+        if current in _DOMAIN_TAXIDS:
+            parts["d__"] = _DOMAIN_TAXIDS[current]
         prefix = rank_map.get(rank)
-        if prefix and name:
+        if prefix and name and prefix != "d__":  # d__ handled above
             parts[prefix] = name
+        elif prefix == "d__" and name and "d__" not in parts:
+            parts["d__"] = name  # fallback: use rank_map if not already set
         parent = taxid_to_parent.get(current, 1)
         if parent == current:
             break
@@ -253,7 +267,8 @@ def predict_proteins_pyrodigal(fasta_path: Path, out_faa: Path, lineage: str) ->
                     prot_id = f"{seq_id}_{i + 1}"
                     # Header format: >prot_id lineage_string
                     f_out.write(f">{prot_id} {lineage}\n")
-                    f_out.write(f"{gene.translate().decode()}\n")
+                    aa = gene.translate()
+                    f_out.write(f"{aa if isinstance(aa, str) else aa.decode()}\n")
                     proteins_written += 1
             except Exception as exc:
                 logger.debug("  pyrodigal failed on %s: %s", seq_id, exc)
