@@ -10,6 +10,15 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 ---
 
+## Changelog
+
+### June 2026
+- **Fix:** replicon typing now uses `minimap2 -x asm5` (assembled-to-assembled preset). The previous `-x sr` (short-read) preset produced zero hits — IncP, IncQ, IncF types were missing from all output. PAF cache removed to prevent stale-result recurrence.
+- **Report:** added **Priority Alert** section to `report_plasmid.html` — surfaces plasmids that are simultaneously mobile, ARG-carrying, and pathogenic-host-matched (the three-signal high-risk intersection).
+- **Report:** added **Pathogenic Host Summary** table to `report_plasmid.html` — breaks down pathogenic plasmid contigs by threat level (critical / high / medium) and species.
+
+---
+
 ## What is new in v2
 
 | Feature | v1 | v2 |
@@ -20,7 +29,7 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | ARG annotation | ✗ | DIAMOND + **CARD + SARG** (dual-DB, auto-detected) |
 | Virulence factors | ✗ | DIAMOND + **VFDB set A** (auto-detected) |
 | MGE / IS elements | ✗ | DIAMOND + **Pärnänen MGE database** (auto-detected) |
-| Mobility typing | ✗ | **MOB-suite** per-contig (conjugative / mobilizable / non-mobilizable) |
+| Mobility typing | ✗ | **MOB-suite + DIAMOND** per-contig (conjugative / mobilizable / non-mobilizable) |
 | Contig taxonomy | ✗ | **DIAMOND blastp + GTDB/RefSeq LCA** — reuses ORFs from ARG step |
 | Plasmid-DB match | ✗ | **minimap2** vs PLSDB + RefSeq + COMPASS — closest known plasmid + ANI |
 | Circular topology | ✗ | **DTR detection** (500 bp terminal window, ≥90 % identity) |
@@ -51,7 +60,7 @@ Tested on GCA_054405655 WWTP metagenome assembly — 24,746 contigs, 177 MB FAST
 | **Total (with taxonomy)** | | **~45–65 min** |
 | **Total (--skip-taxonomy)** | | **~12–15 min** |
 
-Results on that run: **2,559 plasmid contigs · 73 ARGs (38 CARD + 35 SARG-only) · 250 MGE hits · 169,009 genes in genes.tsv**
+Results on that run: **2,339 plasmid contigs · 73 ARGs · 70 VFs · 147 MGEs · 374 pathogenic contigs · 169,009 genes in genes.tsv**
 
 ---
 
@@ -204,7 +213,7 @@ plasflow2 report \
 | `phage.fasta` | Phage sequences |
 | `archaea.fasta` | Archaea sequences |
 | `annotations.json` | Full evidence per plasmid contig |
-| `report_plasmid.html` | Interactive plasmid report (charts + table + genome maps + narrative) |
+| `report_plasmid.html` | Interactive plasmid report (charts + table + genome maps + narrative + **priority alert** + pathogen summary) |
 | `report_chromosome.html` | Chromosome contig report |
 | `report_phage.html` | Phage contig report |
 | `report_archaea.html` | Archaea contig report |

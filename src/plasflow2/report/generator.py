@@ -525,9 +525,77 @@ def _pathogen_bar(pathogens: dict) -> dict:
                       "xaxis":{"title":"Contigs"}}}
 
 
-def _build_drug_cooccurrence_heatmap(plasmid_results: list) -> dict:
-    """Backward-compat stub for report_cmd."""
-    return {"data": [], "layout": {"title": {"text": "Co-occurrence", "font": {"size": 12}}}}
+def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
+    """Build drug-class co-occurrence heatmap from PlasmidRow objects.
+
+    Each cell (i,j) shows how many plasmids carry both drug class i and j.
+    Only includes plasmids with ≥2 drug classes (co-occurrence requires ≥2).
+    """
+    from collections import Counter
+    # Collect drug classes per plasmid
+    drug_sets: list[list[str]] = []
+    for r in plasmid_rows:
+        if not hasattr(r, "drug_classes") or not r.drug_classes or r.drug_classes == "—":
+            continue
+        classes = [c.strip() for c in r.drug_classes.replace(";", ",").split(",")
+                   if c.strip() and c.strip() != "—"]
+        if len(classes) >= 2:
+            drug_sets.append(classes)
+
+    if not drug_sets:
+        return {"data": [], "layout": {"title": {"text": "Drug Class Co-occurrence", "font": {"size": 12}}}}
+
+    # Build co-occurrence matrix
+    all_classes = sorted({c for ds in drug_sets for c in ds})
+    if len(all_classes) < 2:
+        return {"data": [], "layout": {"title": {"text": "Drug Class Co-occurrence", "font": {"size": 12}}}}
+
+    n = len(all_classes)
+    idx = {c: i for i, c in enumerate(all_classes)}
+    matrix = [[0] * n for _ in range(n)]
+    for ds in drug_sets:
+        for i, a in enumerate(ds):
+            for b in ds[i + 1:]:
+                ia, ib = idx[a], idx[b]
+                matrix[ia][ib] += 1
+                matrix[ib][ia] += 1
+
+    # Shorten long class names for display
+    def _short(name: str) -> str:
+        subs = {
+            "antibiotic": "", "beta-lactam": "β-lact", "aminoglycoside": "aminogl.",
+            "fluoroquinolone": "FQ", "tetracycline": "Tet", "macrolide": "Macr.",
+            "carbapenem": "Carb.", "cephalosporin": "Ceph.", "sulfonamide": "Sulf.",
+            "trimethoprim": "TMP", "diaminopyrimidine": "DMP", "phenicol": "Phen.",
+            "lincosamide": "Linc.", "streptogramin": "Strept.", "rifamycin": "Rif.",
+            "glycopeptide": "Glyc.", "peptide": "Pept.",
+        }
+        for k, v in subs.items():
+            name = name.replace(k, v).strip()
+        return name[:20]
+
+    labels = [_short(c) for c in all_classes]
+    z_text = [[str(matrix[i][j]) if matrix[i][j] > 0 else "" for j in range(n)] for i in range(n)]
+
+    return {
+        "data": [{
+            "type": "heatmap",
+            "z": matrix,
+            "x": labels,
+            "y": labels,
+            "text": z_text,
+            "texttemplate": "%{text}",
+            "colorscale": [[0, "#fff5f0"], [0.5, "#fc8d59"], [1, "#b30000"]],
+            "showscale": True,
+            "colorbar": {"title": "Plasmids", "thickness": 12},
+        }],
+        "layout": {
+            "title": {"text": "Drug Class Co-occurrence on Plasmids", "font": {"size": 12}},
+            "xaxis": {"tickangle": -35, "tickfont": {"size": 9}},
+            "yaxis": {"tickfont": {"size": 9}},
+            "margin": {"l": 130, "b": 130, "t": 40, "r": 20},
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -819,11 +887,16 @@ def _render_plasmid_page(data: dict) -> str:
     else:
         genome_section = ""
 
+    high_risk_html  = data.get("high_risk_table", "")
+    pathogen_sum_html = data.get("pathogen_table", "")
+
     body = f"""
 <h1>PlasFlow v2 — Plasmid Report</h1>
 <p class="meta">Input: <code>{data["input_file"]}</code></p>
 {narrative_html}
 <div class="cards">{stat_cards}</div>
+{high_risk_html}
+{pathogen_sum_html}
 
 <h2>Overview</h2>
 <div class="chart-grid g3">
@@ -996,6 +1069,140 @@ def _np_row(r: NonPlasmidRow, show_best: bool) -> list:
     if show_best:
         row += [r.best_label, round(r.best_score, 4)]
     return row
+
+
+def _build_high_risk_table(
+    plasmid_rows: list["PlasmidRow"],
+    pathogens: dict,
+) -> str:
+    """Return an HTML table of plasmids that are mobile AND carry ARGs AND
+    match a pathogenic taxonomy — the three-signal intersection.
+
+    Returns an empty string when no such plasmids exist.
+    """
+    hits = [
+        r for r in plasmid_rows
+        if r.mobility_class in ("conjugative", "mobilizable")
+        and r.num_args > 0
+        and (r.eskape_host or r.contig_id in pathogens)
+    ]
+    if not hits:
+        return ""
+
+    hits.sort(key=lambda r: (-r.risk_score, -r.num_args))
+
+    def _mob_badge(m: str) -> str:
+        color = "#c0392b" if m == "conjugative" else "#e67e22"
+        return f'<span style="background:{color};color:#fff;padding:1px 6px;border-radius:3px;font-size:.78rem">{m}</span>'
+
+    def _threat_badge(cid: str, r: "PlasmidRow") -> str:
+        pr = pathogens.get(cid)
+        if pr:
+            colors = {"critical": "#c0392b", "high": "#e67e22", "medium": "#f39c12"}
+            c = colors.get(pr.threat_level, "#888")
+            label = pr.species or pr.genus
+            return f'<span style="background:{c};color:#fff;padding:1px 6px;border-radius:3px;font-size:.78rem">{label}</span>'
+        if r.eskape_host and r.eskape_genus:
+            return f'<span style="background:#c0392b;color:#fff;padding:1px 6px;border-radius:3px;font-size:.78rem">{r.eskape_genus}</span>'
+        return "—"
+
+    rows_html = "".join(
+        f"<tr>"
+        f"<td style='font-family:monospace;font-size:.8rem'>{r.contig_id}</td>"
+        f"<td>{r.contig_length:,}</td>"
+        f"<td>{_mob_badge(r.mobility_class)}</td>"
+        f"<td>{r.replicon_type if r.replicon_type not in ('-','unknown','') else '—'}</td>"
+        f"<td style='color:#c0392b'><strong>{r.num_args}</strong></td>"
+        f"<td style='font-size:.8rem'>{r.arg_genes or '—'}</td>"
+        f"<td style='font-size:.8rem'>{r.drug_classes or '—'}</td>"
+        f"<td>{_threat_badge(r.contig_id, r)}</td>"
+        f"<td><strong style='color:{'#c0392b' if r.risk_score>=7 else '#e67e22' if r.risk_score>=4 else '#27ae60'}'>{r.risk_score}</strong></td>"
+        f"</tr>"
+        for r in hits
+    )
+
+    return f"""
+<div style="border:2px solid #c0392b;border-radius:6px;padding:12px 16px;margin-bottom:20px;background:#fff5f5">
+<h2 style="color:#c0392b;margin-top:0">&#9888; Priority Alert — {len(hits)} High-Risk Plasmid{'s' if len(hits)!=1 else ''}</h2>
+<p style="margin:0 0 10px;color:#555;font-size:.9rem">
+  Plasmids that are <strong>mobile</strong> (conjugative or mobilizable),
+  carry <strong>resistance genes</strong>, and match a <strong>pathogenic host</strong> taxonomy.
+  These represent the highest-priority AMR dissemination risk.
+</p>
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:.85rem">
+<thead><tr style="background:#fde8e8;text-align:left">
+  <th style="padding:6px 8px">Contig</th>
+  <th style="padding:6px 8px">Length</th>
+  <th style="padding:6px 8px">Mobility</th>
+  <th style="padding:6px 8px">Replicon</th>
+  <th style="padding:6px 8px">ARGs</th>
+  <th style="padding:6px 8px">ARG Genes</th>
+  <th style="padding:6px 8px">Drug Classes</th>
+  <th style="padding:6px 8px">Pathogen Host</th>
+  <th style="padding:6px 8px">Risk</th>
+</tr></thead>
+<tbody style="border-top:1px solid #e0c0c0">
+{rows_html}
+</tbody>
+</table>
+</div>
+</div>"""
+
+
+def _build_pathogen_table(
+    plasmid_rows: list["PlasmidRow"],
+    pathogens: dict,
+) -> str:
+    """Return an HTML summary table of pathogenic plasmid contigs by threat level."""
+    # Pull only plasmid contigs that are in the pathogens dict
+    plas_ids = {r.contig_id for r in plasmid_rows}
+    plas_pathogens = {cid: pr for cid, pr in pathogens.items() if cid in plas_ids}
+    if not plas_pathogens:
+        return ""
+
+    by_level: dict[str, list] = {"critical": [], "high": [], "medium": []}
+    for cid, pr in plas_pathogens.items():
+        by_level.setdefault(pr.threat_level, []).append(pr)
+
+    rows_html = ""
+    for level in ("critical", "high", "medium"):
+        prs = by_level.get(level, [])
+        if not prs:
+            continue
+        colors = {"critical": "#c0392b", "high": "#e67e22", "medium": "#f39c12"}
+        c = colors[level]
+        # Group by species
+        from collections import Counter
+        species_counts = Counter(pr.species or pr.genus for pr in prs)
+        for sp, cnt in species_counts.most_common():
+            rows_html += (
+                f"<tr>"
+                f"<td><span style='background:{c};color:#fff;padding:1px 6px;border-radius:3px;font-size:.78rem'>{level}</span></td>"
+                f"<td style='font-style:italic'>{sp}</td>"
+                f"<td style='text-align:center'><strong>{cnt}</strong></td>"
+                f"</tr>"
+            )
+
+    if not rows_html:
+        return ""
+
+    total = len(plas_pathogens)
+    return f"""
+<div style="border:1px solid #e0c0c0;border-radius:6px;padding:12px 16px;margin-bottom:20px;background:#fffaf9">
+<h2 style="margin-top:0">Pathogenic Host Summary — {total} plasmid contig{'s' if total!=1 else ''}</h2>
+<p style="margin:0 0 10px;color:#555;font-size:.9rem">
+  Plasmid contigs whose taxonomy matches known pathogenic species (WHO BPPL 2024 / ESKAPE / CDC AR Threat Report).
+</p>
+<table style="border-collapse:collapse;font-size:.85rem;min-width:360px">
+<thead><tr style="background:#f5ece8;text-align:left">
+  <th style="padding:6px 10px">Threat</th>
+  <th style="padding:6px 10px">Species</th>
+  <th style="padding:6px 10px">Contigs</th>
+</tr></thead>
+<tbody>{rows_html}</tbody>
+</table>
+</div>"""
 
 
 def _render_nonplasmid_page(
@@ -1331,7 +1538,7 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         "mobility_data":     _mobility_bar(plasmid_rows),
         "eskape_data":       _eskape_bar(plasmid_rows),
         "pathogen_data":     _pathogen_bar(pathogens),
-        "cooccurrence_data": _build_drug_cooccurrence_heatmap([]),
+        "cooccurrence_data": _build_drug_cooccurrence_heatmap(plasmid_rows),
         "scatter_data":      {}, "tax_bar_data": {},
         # row lists
         "plasmid_rows":      plasmid_rows,
@@ -1346,11 +1553,15 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         "arch_charts":       _np_charts(archaea_rows,    "Archaea",    "#8e44ad"),
         "unc_charts":        _np_charts(unclassified_rows, "Unclassified", "#95a5a6", show_best=True),
         # legacy flags
-        "has_scatter": False, "has_cooccurrence": False,
+        "has_scatter": False, "has_cooccurrence": bool(plasmid_rows),
         "has_phages":  bool(phage_rows), "has_chromosomes": bool(chromosome_rows),
         "has_others":  bool(archaea_rows or unclassified_rows),
         # genome maps (per-plasmid contig → Plotly figure dict)
         "genome_maps": genome_maps,
+        # high-risk intersection: conjugative + ARGs + ESKAPE/pathogen
+        "high_risk_table": _build_high_risk_table(plasmid_rows, pathogens),
+        # pathogen summary: breakdown by threat level
+        "pathogen_table": _build_pathogen_table(plasmid_rows, pathogens),
     }
     result_dict["narrative"] = _narrative_summary(result_dict)
     return result_dict
