@@ -148,7 +148,8 @@ def test_run_produces_outputs(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Done." in result.output
-    assert (out / "predictions.tsv").exists()
+    assert (out / "all_predictions.tsv").exists()
+    assert (out / "annotated_predictions.tsv").exists()
     assert (out / "annotations.json").exists()
     # run generates 5 separate HTML reports (one per class)
     assert (out / "report_plasmid.html").exists()

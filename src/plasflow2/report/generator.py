@@ -876,14 +876,19 @@ def _render_plasmid_page(data: dict) -> str:
         if data.get("narrative") else ""
     )
 
-    # Genome map section (only when maps are available)
+    # Genome map section — link to separate page instead of embedding
     genome_maps: dict = data.get("genome_maps", {})
     if genome_maps:
-        map_divs = "".join(
-            f'<div id="gmap_{i}" class="cbox" style="margin-bottom:8px"></div>'
-            for i, _ in enumerate(genome_maps)
+        genome_section = (
+            f'<div style="border:1px solid #d5e8f5;border-radius:6px;padding:12px 16px;'
+            f'margin-bottom:20px;background:#f0f7ff">'
+            f'<h2 style="margin:0 0 6px">Plasmid Genome Maps</h2>'
+            f'<p style="margin:0;color:#555;font-size:.9rem">'
+            f'{len(genome_maps):,} contigs with ≥3 genes or risk &gt; 4 have genome maps. '
+            f'<a href="report_genome_maps.html" style="color:#2c6fad;font-weight:bold">'
+            f'Open genome maps →</a>'
+            f'</p></div>'
         )
-        genome_section = f"<h2>Plasmid Genome Maps</h2><p class='meta'>Coloured by gene type: <span style='color:#e74c3c'>■ ARG</span> <span style='color:#e67e22'>■ Virulence</span> <span style='color:#8e44ad'>■ MGE/IS</span> <span style='color:#2980b9'>■ Mobility</span> <span style='color:#bdc3c7'>■ Other</span></p>{map_divs}"  # noqa: E501
     else:
         genome_section = ""
 
@@ -954,7 +959,6 @@ P.newPlot('cvf',  {json.dumps(data['vf_data']['data'])}, {json.dumps(data['vf_da
 P.newPlot('cmge', {json.dumps(data['mge_data']['data'])},{json.dumps(data['mge_data']['layout'])},dm);
 P.newPlot('cmob', {json.dumps(data['mobility_data']['data'])},{json.dumps(data['mobility_data']['layout'])},dm);
 P.newPlot('cesk', {json.dumps(data['eskape_data']['data'])},{json.dumps(data['eskape_data']['layout'])},dm);
-{_render_genome_map_js(genome_maps)}
 
 var ALL={row_data_json};
 var HEADERS={headers_json};
@@ -1203,6 +1207,68 @@ def _build_pathogen_table(
 <tbody>{rows_html}</tbody>
 </table>
 </div>"""
+
+
+def _render_genome_maps_page(genome_maps: dict, input_file: str = "") -> str:
+    """Standalone HTML page containing all filtered plasmid genome map charts."""
+    if not genome_maps:
+        body = "<p style='color:#888;margin:40px'>No genome maps generated (no contigs with ≥3 genes or risk score &gt; 4).</p>"
+        js_block = ""
+    else:
+        divs = "\n".join(
+            f'<div style="margin-bottom:24px">'
+            f'<p style="font-family:monospace;font-size:.85rem;color:#555;margin:0 0 4px">{cid}</p>'
+            f'<div id="gmap_{i}" style="height:160px"></div>'
+            f'</div>'
+            for i, cid in enumerate(genome_maps)
+        )
+        body = f"""
+<h1 style="font-size:1.3rem;color:#2c3e50">Plasmid Genome Maps</h1>
+<p style="color:#555;font-size:.9rem;margin-bottom:4px">
+  Input: <code>{input_file}</code> &nbsp;·&nbsp;
+  {len(genome_maps):,} contigs shown (≥3 genes or risk &gt; 4) &nbsp;·&nbsp;
+  <a href="report_plasmid.html">← Back to plasmid report</a>
+</p>
+<p style="font-size:.82rem;color:#888;margin-top:0">
+  Colours: <span style="color:#e74c3c">■ ARG</span>
+  <span style="color:#e67e22">■ Virulence</span>
+  <span style="color:#8e44ad">■ MGE/IS</span>
+  <span style="color:#2980b9">■ Mobility</span>
+  <span style="color:#bdc3c7">■ Other</span>
+</p>
+<div style="max-width:1100px">{divs}</div>"""
+
+        plot_calls = "\n".join(
+            f"P.newPlot('gmap_{i}',{json.dumps(fig['data'])},{json.dumps(fig['layout'])},dm);"
+            for i, (cid, fig) in enumerate(genome_maps.items())
+        )
+        js_block = f"""
+<script>
+(function(){{
+var P=window.Plotly,dm={{responsive:true,displayModeBar:false}};
+{plot_calls}
+}})();
+</script>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PlasFlow v2 — Genome Maps</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     margin:24px 32px;background:#fafafa;color:#2c3e50}}
+code{{background:#eee;padding:1px 4px;border-radius:3px;font-size:.85rem}}
+a{{color:#2c6fad}}
+</style>
+</head>
+<body>
+{body}
+{js_block}
+</body>
+</html>"""
 
 
 def _render_nonplasmid_page(
@@ -1502,10 +1568,14 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         vf_name_by_orf:  dict[str, str] = {h._orf_id: h.gene_name for cr in pipeline_result.plasmid_results for h in cr.vf_hits  if getattr(h, "_orf_id", "")}
         mge_name_by_orf: dict[str, str] = {h._orf_id: h.is_name   for cr in pipeline_result.plasmid_results for h in cr.mge_hits if getattr(h, "_orf_id", "")}
 
+        # Build a risk_score lookup so we can apply the filter below
+        risk_by_contig = {cr.record.id: cr.risk.score for cr in pipeline_result.plasmid_results}
+
         for cr in pipeline_result.plasmid_results:
             cid = cr.record.id
             contig_orfs = orfs_by_contig.get(cid, [])
-            if contig_orfs:
+            # Only generate maps for contigs with ≥3 ORFs or risk score > 4
+            if contig_orfs and (len(contig_orfs) >= 3 or risk_by_contig.get(cid, 0) > 4):
                 genome_maps[cid] = _genome_map_data(
                     contig_id=cid,
                     contig_length=len(cr.record.seq),
@@ -1582,10 +1652,15 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
         "phage":        out / "report_phage.html",
         "archaea":      out / "report_archaea.html",
         "unclassified": out / "report_unclassified.html",
+        "genome_maps":  out / "report_genome_maps.html",
     }
 
     html_map = {
         "plasmid": _render_plasmid_page(report_data),
+        "genome_maps": _render_genome_maps_page(
+            report_data.get("genome_maps", {}),
+            input_file=report_data.get("input_file", ""),
+        ),
         "chromosome": _render_nonplasmid_page(
             report_data, "chromosome", "Chromosome", "#27ae60",
             report_data["chromosome_rows"], "ctable",

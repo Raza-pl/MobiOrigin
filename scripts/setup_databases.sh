@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup_databases.sh
+# setup_databases.sh — PlasFlow v2 one-shot database installer
 #
-# One-shot installer for all PlasFlow v2 annotation databases and tools.
+# Downloads and builds all annotation databases:
+#   1. CARD         ARG annotation (DIAMOND + ARO index)
+#   2. SARG         supplementary ARG annotation (DIAMOND)
+#   3. VFDB set A   virulence factor annotation (DIAMOND)
+#   4. MGE          IS elements / integrons / transposons (DIAMOND)
+#   5. PLSDB        plasmid nucleotide DB for minimap2 matching
+#   6. mob-suite    plasmid mobility typing (mob_init)
 #
-# Downloads and builds:
-#   - CARD  (already set up, just verified here)
-#   - VFDB set A protein sequences → DIAMOND database
-#   - ISfinder transposase sequences → DIAMOND database (MGE detection)
+# All databases land at their auto-detected default paths — no flags needed.
 #
-# Installs tools (via conda or brew):
-#   - mob-suite  (plasmid mobility typing)
-#   - diamond    (if not already present)
-#
-# Usage:  bash scripts/setup_databases.sh
+# Usage:
+#   bash scripts/setup_databases.sh              # full setup
+#   bash scripts/setup_databases.sh --skip-plsdb # skip the 5 GB PLSDB download
+#   bash scripts/setup_databases.sh --threads 16
 # =============================================================================
 
 set -euo pipefail
@@ -21,252 +23,282 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DB_DIR="$PROJECT_DIR/data/databases"
-THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)
+THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 8)
+SKIP_PLSDB=false
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# Parse args
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --skip-plsdb) SKIP_PLSDB=true; shift ;;
+        --threads)    THREADS="$2"; shift 2 ;;
+        *) echo "Unknown arg: $1"; exit 1 ;;
+    esac
+done
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[✓]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-err()  { echo -e "${RED}[✗]${NC} $*"; }
+err()  { echo -e "${RED}[✗]${NC} $*"; exit 1; }
+info() { echo "    $*"; }
 
 echo "============================================================"
-echo "  PlasFlow v2 — Database + Tool Setup"
-echo "  DB root: $DB_DIR"
-echo "  Threads: $THREADS"
+echo "  PlasFlow v2 — Database Setup"
+echo "  DB root : $DB_DIR"
+echo "  Threads : $THREADS"
 echo "============================================================"
 echo ""
 
-# ── Helper: install a tool if missing ────────────────────────────────────────
-install_tool() {
-    local tool="$1"
-    local conda_pkg="${2:-$1}"
-    local brew_pkg="${3:-$1}"
-    if command -v "$tool" &>/dev/null; then
-        ok "$tool already installed: $(command -v $tool)"
-        return 0
-    fi
-    warn "$tool not found — installing..."
-    if command -v conda &>/dev/null; then
-        conda install -y -c bioconda -c conda-forge "$conda_pkg" 2>&1 | tail -5
-    elif command -v brew &>/dev/null; then
-        brew install "$brew_pkg"
-    else
-        err "Neither conda nor brew found. Install one of:"
-        err "  conda: https://docs.conda.io/en/latest/miniconda.html"
-        err "  brew:  https://brew.sh"
-        return 1
-    fi
-    if command -v "$tool" &>/dev/null; then
-        ok "$tool installed"
-    else
-        err "Failed to install $tool"
-        return 1
-    fi
-}
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-# ── Helper: download with progress ───────────────────────────────────────────
 download() {
-    local url="$1"
-    local dest="$2"
-    if [[ -f "$dest" ]]; then
-        ok "Already downloaded: $(basename "$dest")"
-        return 0
-    fi
-    echo "  Downloading $(basename "$dest")..."
+    local url="$1" dest="$2"
+    [[ -f "$dest" ]] && { ok "Already exists: $(basename "$dest")"; return 0; }
+    info "Downloading $(basename "$dest") from $url ..."
     if command -v wget &>/dev/null; then
-        wget -q --show-progress -O "$dest" "$url"
+        wget -q --show-progress -O "$dest" "$url" || { rm -f "$dest"; return 1; }
     else
-        curl -L --progress-bar -o "$dest" "$url"
+        curl -L --progress-bar -o "$dest" "$url" || { rm -f "$dest"; return 1; }
     fi
+    ok "Downloaded: $(basename "$dest") ($(du -sh "$dest" | cut -f1))"
 }
 
-# ── Helper: install mob-suite (conda often fails on ARM Mac; pip is reliable) ─
-install_mob_suite() {
-    if command -v mob_typer &>/dev/null; then
-        ok "mob_typer already installed: $(command -v mob_typer)"
-        return 0
-    fi
-    warn "mob_typer not found — installing mob-suite..."
-
-    # Try conda first (works on x86 Linux/Mac)
-    if command -v conda &>/dev/null; then
-        echo "  Trying conda install..."
-        conda install -y -c bioconda -c conda-forge mob-suite 2>&1 | tail -3 || true
-    fi
-
-    # Fallback: pip (works on ARM Mac and everywhere Python is available)
-    if ! command -v mob_typer &>/dev/null; then
-        echo "  conda failed or unavailable — trying pip install mob-suite..."
-        pip install mob-suite --quiet 2>&1 | tail -3 || true
-    fi
-
-    if command -v mob_typer &>/dev/null; then
-        ok "mob_typer installed: $(command -v mob_typer)"
-    else
-        err "mob-suite install failed — mobility typing will be skipped"
-        warn "  Manual install:  pip install mob-suite"
-        return 1
-    fi
+build_diamond_db() {
+    local fasta="$1" db_prefix="$2"
+    info "Building DIAMOND database: $db_prefix ..."
+    diamond makedb --in "$fasta" --db "$db_prefix" --threads "$THREADS" --quiet
+    ok "DIAMOND database built: ${db_prefix}.dmnd"
 }
 
-# ── 1. Tools ──────────────────────────────────────────────────────────────────
-echo "─── Tools ───────────────────────────────────────────────────"
-install_tool diamond diamond diamond
-install_mob_suite || true   # non-fatal: pipeline skips mobility gracefully
+# ── 0. Tools check ────────────────────────────────────────────────────────────
+echo "─── Checking tools ──────────────────────────────────────────"
+
+for tool in diamond minimap2; do
+    if command -v "$tool" &>/dev/null; then
+        ok "$tool: $(command -v $tool)"
+    else
+        warn "$tool not found — install with: conda install -c bioconda $tool"
+    fi
+done
+
+if command -v mob_typer &>/dev/null; then
+    ok "mob_typer: $(command -v mob_typer)"
+else
+    warn "mob_typer not found"
+    info "Install: conda install -c bioconda mob-suite  OR  pip install mob-suite"
+fi
 echo ""
 
-# ── 2. CARD (verify existing) ────────────────────────────────────────────────
-echo "─── CARD (AMR) ──────────────────────────────────────────────"
-CARD_DB="$DB_DIR/card/card.dmnd"
-ARO_INDEX="$DB_DIR/card/aro_index.tsv"
-if [[ -f "$CARD_DB" && -f "$ARO_INDEX" ]]; then
-    ok "CARD database: $CARD_DB"
-    ok "ARO index:     $ARO_INDEX"
+# ── 1. CARD ───────────────────────────────────────────────────────────────────
+echo "─── 1. CARD (Antibiotic Resistance) ────────────────────────"
+CARD_DIR="$DB_DIR/card"
+CARD_DMND="$CARD_DIR/card.dmnd"
+CARD_ARO="$CARD_DIR/aro_index.tsv"
+mkdir -p "$CARD_DIR"
+
+if [[ -f "$CARD_DMND" && -f "$CARD_ARO" ]]; then
+    ok "CARD database: $CARD_DMND"
+    ok "ARO index:     $CARD_ARO"
 else
-    warn "CARD database not found at $DB_DIR/card/"
-    warn "Run:  python -m plasflow2.cli setup"
-    warn "or:   python -c \"from plasflow2.annotate.args import setup_card_db; setup_card_db('$DB_DIR/card')\""
+    info "CARD database not found — building via plasflow2..."
+    python3 -c "
+from plasflow2.annotate.args import setup_card_db
+import sys
+card_dir = sys.argv[1]
+try:
+    dmnd, aro = setup_card_db(card_dir)
+    print(f'CARD database: {dmnd}')
+    print(f'ARO index:     {aro}')
+except Exception as e:
+    print(f'Error: {e}')
+    sys.exit(1)
+" "$CARD_DIR"
+    [[ -f "$CARD_DMND" ]] && ok "CARD built: $CARD_DMND" || warn "CARD build failed — check card.tar.bz2 in $CARD_DIR"
+fi
+echo ""
+
+# ── 2. SARG ───────────────────────────────────────────────────────────────────
+echo "─── 2. SARG (Structured ARG Database) ──────────────────────"
+SARG_DIR="$DB_DIR/sarg"
+SARG_DMND="$SARG_DIR/sarg.dmnd"
+mkdir -p "$SARG_DIR"
+
+if [[ -f "$SARG_DMND" ]]; then
+    ok "SARG database: $SARG_DMND  ($(du -sh "$SARG_DMND" | cut -f1))"
+else
+    SARG_FASTA="$SARG_DIR/sarg.fasta"
+    # SARG v3 — hosted on HKUST lab server + GitHub mirror
+    SARG_URL="https://raw.githubusercontent.com/biofuture/Ublastx_stageone/master/DB/SARG.fasta"
+    SARG_URL_ALT="https://smile.hku.hk/SARGs/static/download/SARG.fasta"
+
+    if ! download "$SARG_URL" "$SARG_FASTA"; then
+        info "Primary URL failed, trying alternate..."
+        download "$SARG_URL_ALT" "$SARG_FASTA" || {
+            warn "SARG download failed. Download manually from https://smile.hku.hk/SARGs"
+            warn "Save to: $SARG_FASTA  then re-run this script."
+        }
+    fi
+
+    if [[ -f "$SARG_FASTA" ]]; then
+        build_diamond_db "$SARG_FASTA" "$SARG_DIR/sarg"
+    fi
 fi
 echo ""
 
 # ── 3. VFDB set A ─────────────────────────────────────────────────────────────
-echo "─── VFDB (Virulence Factors) ────────────────────────────────"
+echo "─── 3. VFDB (Virulence Factors) ────────────────────────────"
 VFDB_DIR="$DB_DIR/vfdb"
-VFDB_FASTA="$VFDB_DIR/VFDB_setA_pro.fas"
-VFDB_DMND="$VFDB_DIR/vfdb_setA.dmnd"
+VFDB_DMND="$VFDB_DIR/vfdb.dmnd"   # NOTE: must match _DEFAULT_VFDB in cli.py
 mkdir -p "$VFDB_DIR"
 
 if [[ -f "$VFDB_DMND" ]]; then
-    ok "VFDB DIAMOND database already exists: $VFDB_DMND"
+    ok "VFDB database: $VFDB_DMND  ($(du -sh "$VFDB_DMND" | cut -f1))"
 else
-    # VFDB set A = experimentally validated VFs only (smaller, more specific)
-    VFDB_URL="http://www.mgc.ac.cn/VFs/Down/VFDB_setA_pro.fas.gz"
+    VFDB_FASTA="$VFDB_DIR/VFDB_setA_pro.fas"
     VFDB_GZ="$VFDB_DIR/VFDB_setA_pro.fas.gz"
+    # VFDB set A = experimentally validated virulence factors only
+    VFDB_URL="http://www.mgc.ac.cn/VFs/Down/VFDB_setA_pro.fas.gz"
 
-    download "$VFDB_URL" "$VFDB_GZ"
-
-    if [[ ! -f "$VFDB_FASTA" ]]; then
-        echo "  Decompressing VFDB..."
-        gunzip -k "$VFDB_GZ"
+    if download "$VFDB_URL" "$VFDB_GZ"; then
+        [[ -f "$VFDB_FASTA" ]] || { info "Decompressing..."; gunzip -k "$VFDB_GZ"; }
+        build_diamond_db "$VFDB_FASTA" "$VFDB_DIR/vfdb"
+    else
+        warn "VFDB download failed (server may be slow)."
+        info "Manual download: http://www.mgc.ac.cn/VFs/Down/VFDB_setA_pro.fas.gz"
+        info "Save to: $VFDB_GZ  then re-run."
     fi
-
-    echo "  Building DIAMOND database for VFDB..."
-    diamond makedb \
-        --in "$VFDB_FASTA" \
-        --db "$VFDB_DIR/vfdb_setA" \
-        --threads "$THREADS" \
-        --quiet
-    ok "VFDB database built: $VFDB_DMND"
 fi
 echo ""
 
-# ── 4. MGE database (Pärnänen et al. 2018 — GitHub, no SSL issues) ───────────
-echo "─── MGE database (IS elements + integrons + transposons) ────"
+# ── 4. MGE database ───────────────────────────────────────────────────────────
+echo "─── 4. MGE database (IS elements / integrons / transposons) ─"
 MGE_DIR="$DB_DIR/mge"
-MGE_NT_FASTA="$MGE_DIR/MGEs_FINAL_99perc_trim.fasta"
-MGE_AA_FASTA="$MGE_DIR/mge_proteins.faa"
-MGE_DMND="$MGE_DIR/isfinder.dmnd"   # keep filename so --mge-db path stays valid
+MGE_DMND="$MGE_DIR/isfinder.dmnd"
 mkdir -p "$MGE_DIR"
 
 if [[ -f "$MGE_DMND" ]]; then
-    ok "MGE DIAMOND database already exists: $MGE_DMND"
+    ok "MGE database: $MGE_DMND  ($(du -sh "$MGE_DMND" | cut -f1))"
 else
-    # Pärnänen et al. 2018 MGE database — direct GitHub download, no SSL issues.
-    # Contains IS*, ISCR*, intI (integrons), tniA/B (Tn transposons) from NCBI.
-    # ~2000 unique CDS sequences, 99% identity clustered.
-    # Paper: Pärnänen et al. Nature Communications 2018;9:3891
+    MGE_NT_FASTA="$MGE_DIR/MGEs_FINAL_99perc_trim.fasta"
+    MGE_AA_FASTA="$MGE_DIR/mge_proteins.faa"
     MGE_TGZ="$MGE_DIR/MGEs_FINAL_99perc_trim.fasta.tar.gz"
     MGE_URL="https://github.com/KatariinaParnanen/MobileGeneticElementDatabase/raw/master/MGEs_FINAL_99perc_trim.fasta.tar.gz"
 
-    download "$MGE_URL" "$MGE_TGZ"
+    if download "$MGE_URL" "$MGE_TGZ"; then
+        [[ -f "$MGE_NT_FASTA" ]] || tar -xzf "$MGE_TGZ" -C "$MGE_DIR"
 
-    if [[ ! -f "$MGE_NT_FASTA" ]]; then
-        echo "  Extracting archive..."
-        tar -xzf "$MGE_TGZ" -C "$MGE_DIR"
-        # Rename if extracted with slightly different name
-        find "$MGE_DIR" -name "MGEs_FINAL*.fasta" ! -name "mge_proteins.faa" \
-             -exec mv {} "$MGE_NT_FASTA" \; 2>/dev/null || true
-    fi
-
-    if [[ ! -f "$MGE_NT_FASTA" ]]; then
-        err "MGE FASTA extraction failed — check $MGE_TGZ"
-        exit 1
-    fi
-
-    NT_COUNT=$(grep -c "^>" "$MGE_NT_FASTA")
-    echo "  Nucleotide CDS sequences: $NT_COUNT"
-
-    # Translate CDS → protein with biopython, then build DIAMOND database
-    echo "  Translating CDS to protein..."
-    python3 - "$MGE_NT_FASTA" "$MGE_AA_FASTA" <<'PYEOF'
+        info "Translating CDS → proteins..."
+        python3 - "$MGE_NT_FASTA" "$MGE_AA_FASTA" <<'PYEOF'
 import sys
 from Bio import SeqIO
 from Bio.Seq import Seq
-
 in_fa, out_fa = sys.argv[1], sys.argv[2]
 written = 0
 with open(out_fa, "w") as fh:
     for rec in SeqIO.parse(in_fa, "fasta"):
-        nt = str(rec.seq).upper().replace("-", "N")
-        # Pad to multiple of 3
-        if len(nt) % 3:
-            nt += "N" * (3 - len(nt) % 3)
+        nt = str(rec.seq).upper().replace("-","N")
+        if len(nt) % 3: nt += "N" * (3 - len(nt) % 3)
         aa = str(Seq(nt).translate(to_stop=True))
-        if len(aa) >= 30:          # skip very short/truncated ORFs
+        if len(aa) >= 30:
             fh.write(f">{rec.id} {rec.description[len(rec.id):].strip()}\n{aa}\n")
             written += 1
-print(f"  Translated {written} proteins → {out_fa}")
+print(f"    {written} proteins translated")
 PYEOF
-
-    AA_COUNT=$(grep -c "^>" "$MGE_AA_FASTA")
-    echo "  Protein sequences: $AA_COUNT"
-
-    echo "  Building DIAMOND database..."
-    diamond makedb \
-        --in "$MGE_AA_FASTA" \
-        --db "$MGE_DIR/isfinder" \
-        --threads "$THREADS" \
-        --quiet
-    ok "MGE database built: $MGE_DMND  ($AA_COUNT proteins, from $NT_COUNT CDS)"
+        build_diamond_db "$MGE_AA_FASTA" "$MGE_DIR/isfinder"
+    else
+        warn "MGE download failed."
+    fi
 fi
 echo ""
 
-# ── 5. mob-suite database (if mob_typer is installed) ────────────────────────
-echo "─── MOB-suite databases ─────────────────────────────────────"
-if command -v mob_typer &>/dev/null; then
-    if [[ -d "$HOME/.mob_suite" || -d "/usr/local/share/mob-suite" ]]; then
-        ok "mob-suite databases already initialised"
+# ── 5. Plasmid databases (for minimap2 matching) ─────────────────────────────
+echo "─── 5. Plasmid databases (PLSDB + RefSeq + COMPASS) ────────"
+PLAS_DIR="$DB_DIR/plasmids"
+mkdir -p "$PLAS_DIR"
+
+if $SKIP_PLSDB; then
+    warn "Skipping plasmid DB download (--skip-plsdb)"
+else
+    # PLSDB — curated plasmid sequence database (~5 GB nucleotide FASTA)
+    PLSDB_FILE="$PLAS_DIR/PLSDB.fna"
+    PLSDB_URL="https://ccb-microbe.cs.uni-saarland.de/plsdb/plasmids/download/plsdb.fna.bz2"
+    PLSDB_BZ2="$PLAS_DIR/plsdb.fna.bz2"
+
+    if [[ -f "$PLSDB_FILE" ]]; then
+        ok "PLSDB: $PLSDB_FILE  ($(du -sh "$PLSDB_FILE" | cut -f1))"
     else
-        echo "  Initialising mob-suite databases (downloads ~500 MB)..."
-        mob_init 2>&1 | tail -5 && ok "mob-suite databases ready" || \
-            warn "mob_init failed — run 'mob_init' manually after installation"
+        info "Downloading PLSDB (~1 GB compressed, ~5 GB uncompressed)..."
+        if download "$PLSDB_URL" "$PLSDB_BZ2"; then
+            info "Decompressing PLSDB..."
+            bzip2 -dk "$PLSDB_BZ2"
+            mv "$PLAS_DIR/plsdb.fna" "$PLSDB_FILE"
+            ok "PLSDB: $PLSDB_FILE  ($(du -sh "$PLSDB_FILE" | cut -f1))"
+        else
+            warn "PLSDB download failed. The plasmid-DB matching step will be skipped."
+            info "Manual: https://ccb-microbe.cs.uni-saarland.de/plsdb"
+        fi
+    fi
+
+    # Check for RefSeq and COMPASS (typically pre-downloaded or user-provided)
+    for db in RefSeq COMPASS; do
+        f="$PLAS_DIR/${db}.fna"
+        [[ -f "$f" ]] && ok "$db: $f  ($(du -sh "$f" | cut -f1))" \
+                       || info "$db not found at $f (optional — PLSDB alone is sufficient)"
+    done
+
+    # Build combined FASTA for minimap2 (done lazily at runtime if missing)
+    COMBINED="$PLAS_DIR/combined.fna"
+    [[ -f "$COMBINED" ]] && ok "Combined plasmid FASTA: $COMBINED  ($(du -sh "$COMBINED" | cut -f1))" \
+                          || info "combined.fna will be built automatically on first run"
+fi
+echo ""
+
+# ── 6. MOB-suite databases ────────────────────────────────────────────────────
+echo "─── 6. MOB-suite databases ──────────────────────────────────"
+if command -v mob_typer &>/dev/null; then
+    # Check if mob_init has been run (databases exist somewhere)
+    MOB_DB_FOUND=false
+    for d in "$HOME/.mob_suite" "$HOME/.local/share/mob-suite" \
+              "/usr/local/share/mob-suite" "/opt/conda/share/mob-suite"; do
+        [[ -d "$d" ]] && { ok "mob-suite databases: $d"; MOB_DB_FOUND=true; break; }
+    done
+    if ! $MOB_DB_FOUND; then
+        info "Running mob_init (downloads ~500 MB — takes a few minutes)..."
+        mob_init && ok "mob-suite databases initialised" \
+                 || warn "mob_init failed — run 'mob_init' manually"
     fi
 else
-    warn "mob_typer not installed — mobility typing will be skipped"
-    warn "Install: conda install -c bioconda mob-suite"
+    warn "mob_typer not installed — skipping"
+    info "Install: conda install -c bioconda -c conda-forge mob-suite"
+    info "   OR:   pip install mob-suite && mob_init"
 fi
 echo ""
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "============================================================"
-echo "  Setup complete! Database locations:"
+echo "  Setup Summary"
+echo "============================================================"
+
+check_db() {
+    local label="$1" path="$2"
+    if [[ -f "$path" ]]; then
+        printf "  ${GREEN}✓${NC} %-22s %s\n" "$label:" "$path"
+    else
+        printf "  ${YELLOW}✗${NC} %-22s NOT FOUND\n" "$label:"
+    fi
+}
+
+check_db "CARD"        "$DB_DIR/card/card.dmnd"
+check_db "ARO index"   "$DB_DIR/card/aro_index.tsv"
+check_db "SARG"        "$DB_DIR/sarg/sarg.dmnd"
+check_db "VFDB"        "$DB_DIR/vfdb/vfdb.dmnd"
+check_db "MGE"         "$DB_DIR/mge/isfinder.dmnd"
+check_db "PLSDB"       "$DB_DIR/plasmids/PLSDB.fna"
+
 echo ""
-printf "  %-20s %s\n" "CARD (ARG):"  "${CARD_DB:-NOT FOUND}"
-printf "  %-20s %s\n" "VFDB:"        "${VFDB_DMND:-NOT FOUND}"
-printf "  %-20s %s\n" "MGE database:" "${MGE_DMND:-NOT FOUND}"
-printf "  %-20s %s\n" "mob_typer:"   "$(command -v mob_typer 2>/dev/null || echo 'NOT INSTALLED')"
+echo "  Run the pipeline (all databases auto-detected):"
+echo "    plasflow2 run --input assembly.fasta --output results/ --threads $THREADS"
 echo ""
-echo "  Full pipeline run example:"
-echo "    python -m plasflow2.cli run \\"
-echo "      --input  contigs.fasta \\"
-echo "      --output results/my_run/ \\"
-echo "      --model  data/models/mlp_v2.pt \\"
-echo "      --card-db   $CARD_DB \\"
-echo "      --aro-index $ARO_INDEX \\"
-echo "      --vfdb      $VFDB_DMND \\"
-echo "      --mge-db    $MGE_DMND \\"
-echo "      --context wastewater \\"
-echo "      --threads $THREADS"
+echo "  Or with context:"
+echo "    plasflow2 run --input assembly.fasta --output results/ \\"
+echo "      --context wastewater --threads $THREADS --plasmid-threshold 0.95"
 echo "============================================================"

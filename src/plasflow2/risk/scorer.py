@@ -95,6 +95,29 @@ WHO_PRIORITY_GENERA: frozenset[str] = frozenset(
     }
 )
 
+# WHO priority families (broad net for incomplete taxonomy)
+WHO_PRIORITY_FAMILIES: frozenset[str] = frozenset(
+    {
+        "Mycobacteriaceae",
+        "Enterobacteriaceae",  # already in ESKAPE_FAMILIES but included for completeness
+    }
+)
+
+
+def _context_score(source_context: str, evidence: list[str]) -> int:
+    """Return context score and append evidence string."""
+    ctx = source_context.lower()
+    if ctx == "clinical":
+        evidence.append("Source context: clinical (+3)")
+        return 3
+    elif ctx in {"wastewater", "food"}:
+        evidence.append(f"Source context: {ctx} (+2)")
+        return 2
+    elif ctx == "environmental":
+        evidence.append("Source context: environmental (+1)")
+        return 1
+    return 0
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -294,6 +317,88 @@ def score_plasmid(
         mobility_score=mob_score,
         arg_score=arg_score,
         replicon_score=rep_score,
+        context_score=ctx_score,
+        host_score=host_score,
+        eskape_host=is_pathogen,
+        eskape_genus=matched_genus,
+    )
+
+
+def score_nonplasmid(
+    contig_id: str,
+    label: str,
+    arg_hits: list[ARGHit],
+    source_context: str = "unspecified",
+    taxonomy: TaxResult | None = None,
+) -> RiskScore:
+    """Compute ARG risk score for a chromosome/phage/archaea/unclassified contig.
+
+    Non-plasmid contigs don't have mobility or replicon data, so the score is
+    based on ARG burden + pathogenic host taxonomy + source context.
+    This identifies chromosomally-encoded ARGs in high-risk pathogens — clinically
+    important because chromosomal ARGs can be mobilised by plasmid-mediated events.
+
+    Maximum score: 8 (ARG burden 3 + host 3 + context 2 = 8).
+
+    Args:
+        contig_id:      Contig identifier.
+        label:          Contig class (chromosome/phage/archaea/unclassified).
+        arg_hits:       ARG hits on this contig.
+        source_context: Sample source context.
+        taxonomy:       LCA taxonomy result for this contig.
+
+    Returns:
+        RiskScore with score 0–8, evidence, and host fields.
+    """
+    evidence: list[str] = []
+    total = 0
+
+    # ── ARG burden ────────────────────────────────────────────────────────────
+    n_args = len(arg_hits)
+    drug_classes = {h.drug_class for h in arg_hits if h.drug_class != "unknown"}
+    n_classes = len(drug_classes)
+    if n_args >= 5 or n_classes >= 3:
+        arg_score = 3
+        evidence.append(f"High ARG burden ({n_args} genes, {n_classes} classes, +3)")
+    elif n_args >= 3 or n_classes >= 2:
+        arg_score = 2
+        evidence.append(f"Moderate ARG burden ({n_args} genes, {n_classes} classes, +2)")
+    elif n_args >= 1:
+        arg_score = 1
+        evidence.append(f"{n_args} ARG(s) detected (+1)")
+    else:
+        arg_score = 0
+    total += arg_score
+
+    # ── Host taxonomy ─────────────────────────────────────────────────────────
+    host_score = 0
+    is_pathogen = False
+    matched_genus = ""
+    if taxonomy is not None:
+        genus, family = _extract_genus_family(taxonomy)
+        if genus in ESKAPE_GENERA or family in ESKAPE_FAMILIES:
+            host_score = 3
+            is_pathogen = True
+            matched_genus = genus or family
+            evidence.append(f"ESKAPE/priority pathogen host: {matched_genus} (+3)")
+        elif genus in WHO_PRIORITY_GENERA or family in WHO_PRIORITY_FAMILIES:
+            host_score = 2
+            is_pathogen = True
+            matched_genus = genus or family
+            evidence.append(f"WHO priority pathogen host: {matched_genus} (+2)")
+    total += host_score
+
+    # ── Source context ────────────────────────────────────────────────────────
+    ctx_score = _context_score(source_context, evidence)
+    total += ctx_score
+
+    return RiskScore(
+        contig_id=contig_id,
+        score=min(total, 10),
+        evidence=evidence,
+        mobility_score=0,       # not applicable for non-plasmid
+        arg_score=arg_score,
+        replicon_score=0,       # not applicable for non-plasmid
         context_score=ctx_score,
         host_score=host_score,
         eskape_host=is_pathogen,

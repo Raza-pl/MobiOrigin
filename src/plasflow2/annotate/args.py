@@ -1,14 +1,11 @@
-"""ARG (Antibiotic Resistance Gene) detection via DIAMOND + CARD and/or SARG.
+"""ARG (Antibiotic Resistance Gene) detection via DIAMOND + CARD, SARG, and AMRFinderPlus DB.
 
-Pipeline (CARD-only):
-    FASTA → call_orfs() → proteins.faa → run_diamond(card_db) → TSV
-          → parse_diamond_hits() → [ARGHit(source="CARD")]
-
-Pipeline (CARD + SARG dual):
+Pipeline (triple-DB):
     FASTA → call_orfs() → proteins.faa
-          → run_diamond(card_db)  → card_hits.tsv  → parse_diamond_hits()
-          → run_diamond(sarg_db)  → sarg_hits.tsv  → parse_sarg_hits()
-          → merge_arg_hits()      → deduplicated [ARGHit] (CARD preferred per ORF)
+          → run_diamond(card_db)    → card_hits.tsv    → parse_diamond_hits()
+          → run_diamond(sarg_db)    → sarg_hits.tsv    → parse_sarg_hits()
+          → run_diamond(amrprot_db) → amrprot_hits.tsv → parse_amrprot_hits()
+          → merge_arg_hits()        → deduplicated [ARGHit] (CARD > AMR > SARG per ORF)
 
 Database setup (one-time):
     # CARD
@@ -17,6 +14,10 @@ Database setup (one-time):
 
     # SARG — download from https://smile.hku.hk/SARGs, then:
     diamond makedb --in sarg.fasta -d data/databases/sarg/sarg
+
+    # AMRFinderPlus DB — copy AMRProt + fam.tab from the AMRFinder DB dir, then:
+    diamond makedb --in AMRProt -d data/databases/amrfinder/amrprot
+    cp fam.tab data/databases/amrfinder/fam.tab
 """
 
 from __future__ import annotations
@@ -81,7 +82,7 @@ class ARGHit:
     identity: float  # % amino-acid identity
     coverage: float  # % query coverage
     evalue: float
-    source: Literal["CARD", "SARG"] = "CARD"
+    source: Literal["CARD", "SARG", "AMR"] = "CARD"
     # Internal: ORF id used for deduplication, not exposed in reports
     _orf_id: str = field(default="", repr=False, compare=False)
 
@@ -496,36 +497,213 @@ def parse_sarg_hits(tsv_path: Path | str) -> list[ARGHit]:
 
 
 # ---------------------------------------------------------------------------
-# Dual-database merge
+# AMRFinderPlus DB (DIAMOND-based, no CLI dependency)
+# ---------------------------------------------------------------------------
+
+# AMRProt stitle format used by this DB:
+#   WP_486348205.1 subclass B1 metallo-beta-lactamase VIM-97 [Pseudomonas aeruginosa]
+# Gene name = last whitespace token before the final [...] bracket.
+# Drug class = inferred from keywords in the description text.
+_AMRPROT_BRACKET_RE = re.compile(r"\[([^\]]+)\]\s*$")
+
+# Keyword → drug class mapping (description text, case-insensitive)
+_DRUG_CLASS_KEYWORDS: list[tuple[str, str]] = [
+    ("metallo-beta-lactamase",    "beta-lactam"),
+    ("beta-lactamase",            "beta-lactam"),
+    ("carbapenemase",             "beta-lactam"),
+    ("penicillinase",             "beta-lactam"),
+    ("cephalosporinase",          "beta-lactam"),
+    ("aminoglycoside",            "aminoglycoside antibiotic"),
+    ("tetracycline",              "tetracycline antibiotic"),
+    ("chloramphenicol",           "phenicol antibiotic"),
+    ("sulfonamide",               "sulfonamide antibiotic"),
+    ("trimethoprim",              "diaminopyrimidine antibiotic"),
+    ("quinolone",                 "fluoroquinolone antibiotic"),
+    ("fluoroquinolone",           "fluoroquinolone antibiotic"),
+    ("rifamycin",                 "rifamycin antibiotic"),
+    ("vancomycin",                "glycopeptide antibiotic"),
+    ("glycopeptide",              "glycopeptide antibiotic"),
+    ("colistin",                  "peptide antibiotic"),
+    ("polymyxin",                 "peptide antibiotic"),
+    ("fosfomycin",                "fosfomycin"),
+    ("macrolide",                 "macrolide antibiotic"),
+    ("efflux",                    "efflux"),
+    ("multidrug",                 "multidrug"),
+]
+
+
+def _infer_drug_class(description: str) -> str:
+    """Infer drug class from AMRProt description text using keyword matching."""
+    desc_lower = description.lower()
+    for keyword, drug_class in _DRUG_CLASS_KEYWORDS:
+        if keyword in desc_lower:
+            return drug_class
+    return "unknown"
+
+
+def load_amrfinder_metadata(fam_tab_path: Path | str) -> dict[str, dict]:  # type: ignore[type-arg]
+    """Load AMRFinderPlus fam.tab into a dict keyed by gene/family symbol.
+
+    fam.tab columns (may vary by DB version):
+        #family_symbol  type  subtype  description  class  subclass  ...
+    We keep type=AMR rows only — STRESS and VIRULENCE are covered by VFDB.
+    """
+    meta: dict[str, dict] = {}  # type: ignore[type-arg]
+    fam_tab_path = Path(fam_tab_path)
+    if not fam_tab_path.exists():
+        logger.warning("AMRFinder fam.tab not found at %s — drug classes will be inferred from headers", fam_tab_path)
+        return meta
+
+    with open(fam_tab_path, newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            # Normalise column names (strip leading #)
+            row = {k.lstrip("#"): v for k, v in row.items()}
+            if row.get("type", "AMR").upper() not in ("AMR", ""):
+                continue
+            symbol = row.get("family_symbol", row.get("gene_symbol", "")).strip().lower()
+            if not symbol:
+                continue
+            drug_class = (
+                row.get("class", row.get("subclass", row.get("subtype", "unknown")))
+            ).strip() or "unknown"
+            meta[symbol] = {
+                "drug_class": drug_class.lower(),
+                "subclass": row.get("subclass", "").strip(),
+                "description": row.get("description", "").strip(),
+            }
+    logger.info("Loaded %d AMRFinder family entries from %s", len(meta), fam_tab_path)
+    return meta
+
+
+def parse_amrprot_hits(
+    tsv_path: Path | str,
+    amr_metadata: dict | None = None,  # type: ignore[type-arg]
+) -> list[ARGHit]:
+    """Parse DIAMOND tabular output from an AMRProt search into ARGHit objects.
+
+    Gene symbol is extracted from the stitle (second word of the FASTA header).
+    Drug class is resolved from fam.tab metadata when available, otherwise
+    inferred from the last bracketed field in the header.
+
+    Args:
+        tsv_path: DIAMOND output (format 6: qseqid sseqid pident qcovhsp evalue stitle).
+        amr_metadata: Dict from load_amrfinder_metadata() — optional but recommended.
+
+    Returns:
+        List of ARGHit with source="AMR".
+    """
+    tsv_path = Path(tsv_path)
+    hits: list[ARGHit] = []
+    meta = amr_metadata or {}
+
+    with open(tsv_path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 6:
+                continue
+            qseqid, sseqid, pident, qcovhsp, evalue, stitle = (
+                parts[0], parts[1], parts[2], parts[3], parts[4], parts[5],
+            )
+            contig_id = re.sub(r"_\d+$", "", qseqid)
+
+            # Header format: "ACCESSION description GENE-NAME [Organism]"
+            # Gene name = last token before the trailing [organism] bracket.
+            # e.g. "WP_001.1 subclass B1 metallo-beta-lactamase VIM-97 [Pseudomonas aeruginosa]"
+            #       → gene_name = "VIM-97", description = "subclass B1 metallo-beta-lactamase"
+            bracket_match = _AMRPROT_BRACKET_RE.search(stitle)
+            if bracket_match:
+                pre_bracket = stitle[:bracket_match.start()].strip()
+            else:
+                pre_bracket = stitle.strip()
+
+            pre_tokens = pre_bracket.split()
+            # Skip accession (first token), gene = last token, description = middle
+            if len(pre_tokens) >= 3:
+                gene_name  = pre_tokens[-1]
+                description = " ".join(pre_tokens[1:-1])
+            elif len(pre_tokens) == 2:
+                gene_name  = pre_tokens[-1]
+                description = pre_tokens[0]
+            else:
+                gene_name  = sseqid
+                description = stitle
+
+            # Drug class: fam.tab lookup → keyword inference from description
+            drug_class = "unknown"
+            gene_lower = gene_name.lower()
+            if gene_lower in meta:
+                drug_class = meta[gene_lower]["drug_class"]
+            else:
+                for symbol, m in meta.items():
+                    if gene_lower.startswith(symbol):
+                        drug_class = m["drug_class"]
+                        break
+                else:
+                    drug_class = _infer_drug_class(description)
+
+            hits.append(ARGHit(
+                contig_id=contig_id,
+                gene_name=gene_name,
+                aro_accession=sseqid,
+                amr_family=gene_name,
+                drug_class=drug_class,
+                resistance_mechanism="unknown",
+                identity=float(pident),
+                coverage=float(qcovhsp),
+                evalue=float(evalue),
+                source="AMR",
+                _orf_id=qseqid,
+            ))
+
+    logger.info("Parsed %d AMRFinderPlus DB hits from %s", len(hits), tsv_path)
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Triple-database merge
 # ---------------------------------------------------------------------------
 
 
 def merge_arg_hits(
     card_hits: list[ARGHit],
     sarg_hits: list[ARGHit],
+    amr_hits: list[ARGHit] | None = None,
 ) -> list[ARGHit]:
-    """Merge CARD and SARG hit lists, preferring CARD when both detect the same ORF.
+    """Merge CARD, AMRFinderPlus DB, and SARG hits with priority CARD > AMR > SARG.
 
-    Deduplication is per-ORF (_orf_id): if an ORF produced a CARD hit it is
-    kept and the corresponding SARG hit for that ORF is discarded.  SARG hits
-    for ORFs *not* found by CARD are appended as supplementary hits.
+    Deduplication is per-ORF (_orf_id).  For each ORF only the highest-priority
+    source is kept:
+      1. CARD   — most curated, clinical-grade gene names + ARO accessions
+      2. AMR    — AMRFinderPlus DB, catches genes CARD misses (esp. point mutants)
+      3. SARG   — broadest environmental coverage, used only when neither above matched
 
     Args:
         card_hits: Hits from parse_diamond_hits() (source="CARD").
         sarg_hits: Hits from parse_sarg_hits() (source="SARG").
+        amr_hits:  Hits from parse_amrprot_hits() (source="AMR"), optional.
 
     Returns:
-        Merged list: all CARD hits + SARG-only hits, stable-ordered.
+        Merged list: CARD + AMR-only + SARG-only hits, stable-ordered.
     """
     card_orf_ids: set[str] = {h._orf_id for h in card_hits if h._orf_id}
-    sarg_only = [h for h in sarg_hits if h._orf_id not in card_orf_ids]
 
-    merged = card_hits + sarg_only
+    amr_only: list[ARGHit] = []
+    amr_orf_ids: set[str] = set()
+    if amr_hits:
+        amr_only = [h for h in amr_hits if h._orf_id not in card_orf_ids]
+        amr_orf_ids = {h._orf_id for h in amr_only if h._orf_id}
+
+    covered = card_orf_ids | amr_orf_ids
+    sarg_only = [h for h in sarg_hits if h._orf_id not in covered]
+
+    merged = card_hits + amr_only + sarg_only
     logger.info(
-        "Merged ARG hits: %d CARD + %d SARG-only = %d total",
-        len(card_hits),
-        len(sarg_only),
-        len(merged),
+        "Merged ARG hits: %d CARD + %d AMR-only + %d SARG-only = %d total",
+        len(card_hits), len(amr_only), len(sarg_only), len(merged),
     )
     return merged
 
@@ -542,6 +720,7 @@ def annotate_contigs_with_orfs(
     work_dir: Path | str,
     threads: int = 8,
     sarg_db: Path | str | None = None,
+    amrprot_db: Path | str | None = None,
     min_identity: float = CARD_MIN_IDENTITY,
     min_coverage: float = CARD_MIN_COVERAGE,
 ) -> tuple[list[ARGHit], list[ORF]]:
@@ -582,22 +761,38 @@ def annotate_contigs_with_orfs(
     metadata = load_card_metadata(aro_index_path)
     card_hits = parse_diamond_hits(card_tsv, metadata)
 
+    sarg_hits: list[ARGHit] = []
     if sarg_db is not None:
         sarg_db_path = Path(sarg_db)
         if sarg_db_path.exists() or sarg_db_path.with_suffix(".dmnd").exists():
             sarg_tsv = work_dir / "sarg_hits.tsv"
-            # Incremental: skip SARG search if results already cached
             if sarg_tsv.exists() and sarg_tsv.stat().st_size > 0:
                 logger.info("Reusing cached SARG hits from %s", sarg_tsv)
             else:
                 run_diamond(proteins_path, sarg_db_path, sarg_tsv, threads=threads,
                             min_identity=min_identity, min_coverage=min_coverage)
             sarg_hits = parse_sarg_hits(sarg_tsv)
-            return merge_arg_hits(card_hits, sarg_hits), orfs
         else:
-            logger.warning("SARG database not found at %s — running CARD-only annotation", sarg_db)
+            logger.warning("SARG database not found at %s — skipping", sarg_db)
 
-    return card_hits, orfs
+    amr_hits: list[ARGHit] = []
+    if amrprot_db is not None:
+        amrprot_db_path = Path(amrprot_db)
+        if amrprot_db_path.exists() or amrprot_db_path.with_suffix(".dmnd").exists():
+            amrprot_tsv = work_dir / "amrprot_hits.tsv"
+            if amrprot_tsv.exists() and amrprot_tsv.stat().st_size > 0:
+                logger.info("Reusing cached AMRProt hits from %s", amrprot_tsv)
+            else:
+                run_diamond(proteins_path, amrprot_db_path, amrprot_tsv, threads=threads,
+                            min_identity=min_identity, min_coverage=min_coverage)
+            # Load fam.tab from same directory as the DB for drug class metadata
+            fam_tab = amrprot_db_path.parent / "fam.tab"
+            amr_meta = load_amrfinder_metadata(fam_tab)
+            amr_hits = parse_amrprot_hits(amrprot_tsv, amr_meta)
+        else:
+            logger.warning("AMRProt database not found at %s — skipping", amrprot_db)
+
+    return merge_arg_hits(card_hits, sarg_hits, amr_hits), orfs
 
 
 def annotate_contigs(

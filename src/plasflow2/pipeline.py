@@ -28,7 +28,7 @@ from pathlib import Path
 
 from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 
-from plasflow2.annotate.args import ARGHit, ORF, annotate_contigs, annotate_contigs_with_orfs
+from plasflow2.annotate.args import ARGHit, ORF, annotate_contigs, annotate_contigs_with_orfs, merge_arg_hits
 from plasflow2.annotate.mge import MGEHit, annotate_mge
 from plasflow2.annotate.plasmid_db import PlasmidDBHit, annotate_plasmid_db
 from plasflow2.annotate.mobility import (
@@ -51,7 +51,7 @@ from plasflow2.annotate.taxonomy_kaiju import (
 )
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.predict import Prediction, predict
-from plasflow2.risk.scorer import RiskScore, score_plasmid
+from plasflow2.risk.scorer import RiskScore, score_plasmid, score_nonplasmid
 from plasflow2.utils.fasta import load_fasta, write_fasta
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ class NonPlasmidContigResult:
     arg_hits: list[ARGHit] = field(default_factory=list)
     vf_hits: list[VFHit] = field(default_factory=list)
     mge_hits: list[MGEHit] = field(default_factory=list)
+    risk: RiskScore | None = None
 
 
 @dataclass
@@ -156,6 +157,7 @@ def run_pipeline(
     taxon_map_path: Path | str | None = None,
     skip_taxonomy: bool = False,
     sarg_db: Path | str | None = None,
+    amrprot_db: Path | str | None = None,
     min_identity: float = 80.0,
     vfdb: Path | str | None = None,
     mge_db: Path | str | None = None,
@@ -307,11 +309,13 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # 4. ARG annotation — ALL contigs (plasmid + chromosome + phage + archaea)
     # ------------------------------------------------------------------
-    logger.info(
-        "Annotating ARGs on ALL %d contigs (CARD%s) …",
-        len(records),
-        " + SARG" if sarg_db else "",
-    )
+    # Auto-detect AMRProt DIAMOND DB if not explicitly provided
+    _amrprot_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "amrfinder" / "amrprot.dmnd"
+    _amrprot_db = amrprot_db or (_amrprot_auto if _amrprot_auto.exists() else None)
+
+    dbs_label = "CARD" + (" + SARG" if sarg_db else "") + (" + AMRProt" if _amrprot_db else "")
+    logger.info("Annotating ARGs on ALL %d contigs (%s) …", len(records), dbs_label)
+
     arg_hits, all_orfs = annotate_contigs_with_orfs(
         fasta_path=all_contigs_fasta,
         card_db=card_db,
@@ -319,16 +323,16 @@ def run_pipeline(
         work_dir=work_dir / "arg_annotation",
         threads=threads,
         sarg_db=sarg_db,
+        amrprot_db=_amrprot_db,
         min_identity=min_identity,
     )
+    # Pre-predicted proteins path — reused by VFDB, MGE, mobility, taxonomy
+    arg_proteins = work_dir / "arg_annotation" / "proteins.faa"
+
     # Group hits by contig_id for fast lookup
     args_by_contig: dict[str, list[ARGHit]] = {}
     for hit in arg_hits:
         args_by_contig.setdefault(hit.contig_id, []).append(hit)
-
-    # Pre-predicted proteins path — reused by VFDB and MGE to avoid running
-    # pyrodigal again on the same sequences.
-    arg_proteins = work_dir / "arg_annotation" / "proteins.faa"
 
     def _cached(path: Path) -> bool:
         """Return True if a work-dir result file exists and is non-empty (cache hit)."""
@@ -564,20 +568,29 @@ def run_pipeline(
         )
 
     # ------------------------------------------------------------------
-    # 8. Build NonPlasmidContigResult list (chromosome / phage / archaea / unclassified)
+    # 8. Build NonPlasmidContigResult list + risk score ALL non-plasmid contigs
     # ------------------------------------------------------------------
     non_plasmid_results: list[NonPlasmidContigResult] = []
     for record in records:
         cid = record.id
         if pred_by_id[cid].label != "plasmid":
+            np_arg_hits = args_by_contig.get(cid, [])
+            np_risk = score_nonplasmid(
+                contig_id=cid,
+                label=pred_by_id[cid].label,
+                arg_hits=np_arg_hits,
+                source_context=source_context,
+                taxonomy=taxonomy_by_contig.get(cid),
+            )
             non_plasmid_results.append(
                 NonPlasmidContigResult(
                     record=record,
                     prediction=pred_by_id[cid],
                     taxonomy=taxonomy_by_contig.get(cid),
-                    arg_hits=args_by_contig.get(cid, []),
+                    arg_hits=np_arg_hits,
                     vf_hits=vf_by_contig.get(cid, []),
                     mge_hits=mge_by_contig.get(cid, []),
+                    risk=np_risk,
                 )
             )
 

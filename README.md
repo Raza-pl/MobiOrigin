@@ -14,6 +14,10 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 ### June 2026
 - **Fix:** replicon typing now uses `minimap2 -x asm5` (assembled-to-assembled preset). The previous `-x sr` (short-read) preset produced zero hits — IncP, IncQ, IncF types were missing from all output. PAF cache removed to prevent stale-result recurrence.
+- **Fix:** `NonPlasmidContigResult` dataclass now includes the `risk` field — fixes a crash in the pipeline test suite.
+- **ARG:** added **AMRFinderPlus DB as a third ARG database** (DIAMOND-based, no CLI dependency). Priority order per ORF: CARD > AMRProt > SARG. Auto-detected from `data/databases/amrfinder/amrprot.dmnd`. Setup: `bash scripts/setup_amrprot_diamond.sh`.
+- **Output:** renamed `predictions.tsv` → `all_predictions.tsv`. Added `annotated_predictions.tsv` — a focused 12-column table containing only contigs with ARGs, MGEs, VFs, mobility class, or pathogen hits.
+- **Report:** genome maps moved to a separate `report_genome_maps.html` — eliminates lag in the main plasmid report. Maps are filtered to contigs with ≥3 genes or risk score > 4.
 - **Report:** added **Priority Alert** section to `report_plasmid.html` — surfaces plasmids that are simultaneously mobile, ARG-carrying, and pathogenic-host-matched (the three-signal high-risk intersection).
 - **Report:** added **Pathogenic Host Summary** table to `report_plasmid.html` — breaks down pathogenic plasmid contigs by threat level (critical / high / medium) and species.
 
@@ -26,7 +30,7 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Python | 3.5 / TensorFlow 0.10 | 3.10+ / PyTorch 2.x |
 | Classes | plasmid vs chromosome | plasmid · chromosome · **phage** · **archaea** · unclassified |
 | Architecture | TF neural net | **4-class MLP** with length feature |
-| ARG annotation | ✗ | DIAMOND + **CARD + SARG** (dual-DB, auto-detected) |
+| ARG annotation | ✗ | DIAMOND + **CARD + SARG + AMRFinderPlus DB** (triple-DB, auto-detected) |
 | Virulence factors | ✗ | DIAMOND + **VFDB set A** (auto-detected) |
 | MGE / IS elements | ✗ | DIAMOND + **Pärnänen MGE database** (auto-detected) |
 | Mobility typing | ✗ | **MOB-suite + DIAMOND** per-contig (conjugative / mobilizable / non-mobilizable) |
@@ -72,6 +76,7 @@ All optional databases are **auto-detected** from `data/databases/` — no flags
 data/databases/
   card/         card.dmnd  aro_index.tsv           ← CARD ARG annotation
   sarg/         sarg.dmnd                           ← SARG ARG annotation (auto)
+  amrfinder/    amrprot.dmnd  fam.tab               ← AMRFinderPlus ARG annotation (auto)
   vfdb/         vfdb.dmnd                           ← VFDB virulence factors (auto)
   mge/          isfinder.dmnd                       ← MGE / IS elements (auto)
   taxonomy/     refseq_taxonomy.dmnd  taxon_map.tsv ← Contig taxonomy (auto)
@@ -102,7 +107,7 @@ pip install -e .
 
 | Tool | Purpose | Install |
 |---|---|---|
-| [DIAMOND](https://github.com/bbuchfink/diamond) | ARG / VF / MGE / taxonomy | `conda install -c bioconda diamond` |
+| [DIAMOND](https://github.com/bbuchfink/diamond) | ARG (CARD+SARG+AMRProt) / VF / MGE / taxonomy | `conda install -c bioconda diamond` |
 | [MOB-suite](https://github.com/phac-nml/mob-suite) | Plasmid mobility typing | `conda install -c conda-forge -c bioconda mob_suite` |
 | [minimap2](https://github.com/lh3/minimap2) | Plasmid-DB nucleotide match | `conda install -c bioconda minimap2` |
 
@@ -130,10 +135,11 @@ bash scripts/setup_databases.sh
 Builds all databases at their auto-detected paths:
 1. **CARD** — ARG annotation (`data/databases/card/`)
 2. **SARG** — Structured ARG (`data/databases/sarg/sarg.dmnd`)
-3. **VFDB set A** — virulence factors (`data/databases/vfdb/vfdb.dmnd`)
-4. **Pärnänen MGE database** (`data/databases/mge/isfinder.dmnd`)
-5. **Plasmid databases** — PLSDB + RefSeq + COMPASS (`data/databases/plasmids/`)
-6. MOB-suite reference data (`mob_init`)
+3. **AMRFinderPlus DB** — third ARG database (`data/databases/amrfinder/amrprot.dmnd`). Place `AMRfinder.fasta` in `data/databases/` then run: `bash scripts/setup_amrprot_diamond.sh`
+4. **VFDB set A** — virulence factors (`data/databases/vfdb/vfdb.dmnd`)
+5. **Pärnänen MGE database** (`data/databases/mge/isfinder.dmnd`)
+6. **Plasmid databases** — PLSDB + RefSeq + COMPASS (`data/databases/plasmids/`)
+7. MOB-suite reference data (`mob_init`)
 
 ### Optional: taxonomy database (~2 GB)
 
@@ -206,14 +212,16 @@ plasflow2 report \
 
 | File | Description |
 |---|---|
-| `predictions.tsv` | 42-column per-contig table (all contigs) |
+| `all_predictions.tsv` | 42-column per-contig table (all contigs, all annotations) |
+| `annotated_predictions.tsv` | Focused 12-column table — only contigs with ARGs, MGEs, VFs, mobility, or pathogen hits |
 | `genes.tsv` | Per-ORF table — coordinates, ARG/VF/MGE flags, all contigs |
 | `plasmid.fasta` | Plasmid sequences |
 | `chromosome.fasta` | Chromosome sequences |
 | `phage.fasta` | Phage sequences |
 | `archaea.fasta` | Archaea sequences |
 | `annotations.json` | Full evidence per plasmid contig |
-| `report_plasmid.html` | Interactive plasmid report (charts + table + genome maps + narrative + **priority alert** + pathogen summary) |
+| `report_plasmid.html` | Interactive plasmid report (charts + table + narrative + **priority alert** + pathogen summary) |
+| `report_genome_maps.html` | Standalone genome maps — contigs with ≥3 genes or risk > 4 (linked from plasmid report) |
 | `report_chromosome.html` | Chromosome contig report |
 | `report_phage.html` | Phage contig report |
 | `report_archaea.html` | Archaea contig report |

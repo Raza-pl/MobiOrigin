@@ -330,6 +330,119 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
             )
 
 
+def _write_annotated_tsv(pipeline_result: PipelineResult, output_path: Path) -> None:
+    """Write a focused TSV of contigs that have at least one annotation.
+
+    A contig is included if it has any of:
+      - ARG hits (resistance genes)
+      - MGE hits (mobile genetic elements)
+      - VF hits (virulence factors)
+      - mobility class other than non-mobilizable/unknown (plasmids only)
+      - pathogen detection
+
+    Columns are a curated subset of all_predictions.tsv, matching the user's
+    requested schema:
+      contig_id, prediction, arg_genes, drug_classes, mge_genes, mge_families,
+      vf_genes, vf_families, mobility_class, risk_score, taxonomy_lineage,
+      pathogen_category
+    """
+    HEADER = [
+        "contig_id",
+        "prediction",
+        "arg_genes",
+        "arg_drug_classes",
+        "mge_genes",
+        "mge_families",
+        "vf_genes",
+        "vf_families",
+        "mobility_class",
+        "risk_score",
+        "taxonomy_lca",
+        "pathogen_category",
+    ]
+
+    plasmid_by_id     = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
+    non_plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.non_plasmid_results}
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+
+    with open(output_path, "w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        writer.writerow(HEADER)
+
+        for pred in pipeline_result.all_predictions:
+            cid = pred.sequence_id
+
+            if pred.label == "plasmid" and cid in plasmid_by_id:
+                cr = plasmid_by_id[cid]
+                arg_hits  = cr.arg_hits or []
+                vf_hits   = getattr(cr, "vf_hits",  []) or []
+                mge_hits  = getattr(cr, "mge_hits", []) or []
+                mob       = cr.mobility
+                mob_class = mob.mobility_class if mob else "unknown"
+                risk_score = cr.risk.score
+
+                tax = cr.taxonomy
+                tax_lca = tax.lineage if tax else ""
+
+                path_hit = pipeline_result.pathogens.get(cid)
+                pathogen_cat = path_hit.category if path_hit else ""
+
+                is_mobile = mob_class not in ("non-mobilizable", "unknown", "")
+            else:
+                np_cr = non_plasmid_by_id.get(cid)
+                arg_hits  = getattr(np_cr, "arg_hits",  []) if np_cr else []
+                vf_hits   = getattr(np_cr, "vf_hits",   []) if np_cr else []
+                mge_hits  = getattr(np_cr, "mge_hits",  []) if np_cr else []
+                mob_class  = ""
+                risk_score = ""
+                is_mobile  = False
+
+                tax = pipeline_result.taxonomy.get(cid)
+                tax_lca = tax.lineage if tax else ""
+
+                path_hit = pipeline_result.pathogens.get(cid)
+                pathogen_cat = path_hit.category if path_hit else ""
+
+            # Filter: include only if at least one annotation present
+            if not (arg_hits or mge_hits or vf_hits or is_mobile or pathogen_cat):
+                continue
+
+            arg_genes   = "; ".join(sorted({h.gene_name for h in arg_hits}))
+            drug_classes = "; ".join(sorted({
+                dc.strip()
+                for h in arg_hits
+                for dc in h.drug_class.split(";")
+                if dc.strip() and dc.strip() != "unknown"
+            }))
+            mge_genes    = "; ".join(sorted({h.is_name   for h in mge_hits}))
+            mge_families = "; ".join(sorted({h.is_family for h in mge_hits}))
+            vf_genes     = "; ".join(sorted({h.gene_name for h in vf_hits}))
+            vf_families  = "; ".join(sorted({
+                getattr(h, "vf_category", "") for h in vf_hits
+                if getattr(h, "vf_category", "")
+            }))
+
+            writer.writerow([
+                cid,
+                pred.label,
+                arg_genes,
+                drug_classes,
+                mge_genes,
+                mge_families,
+                vf_genes,
+                vf_families,
+                mob_class,
+                risk_score,
+                tax_lca,
+                pathogen_cat,
+            ])
+            written += 1
+
+    logger.info("Annotated predictions: %d contigs written to %s", written, output_path)
+
+
 def _write_predictions_tsv_simple(predictions: list, output_path: Path) -> None:
     """Lightweight TSV writer used by 'plasflow2 classify' (no pipeline result)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -598,6 +711,18 @@ def main(ctx: click.Context, verbose: bool) -> None:
     ),
 )
 @click.option(
+    "--amrprot-db",
+    "amrprot_db",
+    default=None,
+    type=click.Path(),
+    help=(
+        "DIAMOND database (.dmnd) built from the AMRFinderPlus AMRProt FASTA. "
+        "Auto-detected from data/databases/amrfinder/amrprot.dmnd when present. "
+        "Priority: CARD > AMRProt > SARG per ORF. "
+        "Setup: diamond makedb --in AMRProt -d data/databases/amrfinder/amrprot"
+    ),
+)
+@click.option(
     "--min-identity",
     "min_identity",
     default=80.0,
@@ -652,6 +777,7 @@ def run(
     kaiju_nodes: str | None,
     kaiju_names: str | None,
     sarg_db: str | None,
+    amrprot_db: str | None,
     min_identity: float,
     vfdb: str | None,
     mge_db: str | None,
@@ -661,7 +787,8 @@ def run(
 
     \b
     Outputs written to OUTPUT_DIR:
-        predictions.tsv           — per-sequence classification (all contigs)
+        all_predictions.tsv       — per-sequence classification (all contigs, all annotations)
+        annotated_predictions.tsv — filtered: contigs with ARGs / MGEs / VFs / mobility / pathogens
         plasmids.fasta            — classified plasmid sequences
         annotations.json          — ARG + mobility + risk per plasmid contig
         report_plasmid.html       — plasmid detail report (ARG/VF/MGE/risk)
@@ -753,6 +880,7 @@ def run(
         taxon_map_path=taxon_map,
         skip_taxonomy=skip_taxonomy,
         sarg_db=sarg_db,
+        amrprot_db=amrprot_db,
         min_identity=min_identity,
         vfdb=vfdb,
         mge_db=mge_db,
@@ -764,9 +892,14 @@ def run(
     )
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
-    preds_tsv = out / "predictions.tsv"
+    preds_tsv = out / "all_predictions.tsv"
     _write_predictions_tsv(pipeline_result, preds_tsv)
     click.echo(f"  Predictions → {preds_tsv}")
+
+    # --- Write filtered annotated TSV (annotated contigs only) ---
+    annot_tsv = out / "annotated_predictions.tsv"
+    _write_annotated_tsv(pipeline_result, annot_tsv)
+    click.echo(f"  Annotated   → {annot_tsv}")
 
     # --- Write per-class FASTAs (from all loaded records) ---
     # Use the work-dir copy as fallback in case the original input path no longer
@@ -1034,7 +1167,7 @@ def annotate(
     "-p",
     required=True,
     type=click.Path(exists=True),
-    help="predictions.tsv produced by 'plasflow2 run' (comprehensive format with all annotations).",
+    help="all_predictions.tsv (or legacy predictions.tsv) produced by 'plasflow2 run'.",
 )
 @click.option(
     "--output",
@@ -1067,9 +1200,9 @@ def report_cmd(
     annotations: str | None,
     context: str,
 ) -> None:
-    """Regenerate an HTML report from predictions.tsv (no pipeline re-run needed).
+    """Regenerate an HTML report from all_predictions.tsv (no pipeline re-run needed).
 
-    The predictions.tsv produced by 'plasflow2 run' contains all annotations
+    The all_predictions.tsv produced by 'plasflow2 run' contains all annotations
     (ARGs, mobility, risk scores, taxonomy, ESKAPE host) for every contig.
     This command reads that file and rebuilds the full interactive report.
     """
