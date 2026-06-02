@@ -46,25 +46,36 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 ---
 
-## Benchmarked performance (May 2026)
+## Benchmarked performance (June 2026)
 
-Tested on GCA_054405655 WWTP metagenome assembly — 24,746 contigs, 177 MB FASTA, Apple Silicon CPU, 16 threads:
+### GCA_054405655 — WWTP metagenome (validation dataset)
+24,746 contigs · 177 MB FASTA · Apple Silicon CPU · 16 threads
 
 | Step | Tool | Time |
 |---|---|---|
 | MLP classify (24,746 contigs) | PyTorch CPU | ~15 sec |
 | ORF prediction | pyrodigal | ~5 min |
-| ARG annotation CARD (2.4 MB DB) | DIAMOND blastp | ~14 sec |
-| ARG annotation SARG (57 MB DB) | DIAMOND blastp | ~5 min |
-| MGE annotation (0.8 MB DB) | DIAMOND blastp | ~9 sec |
-| Plasmid-DB match (13 GB combined) | minimap2 split-prefix | ~10 min |
-| Mobility typing (2,559 contigs) | MOB-suite per-contig | ~1 min |
+| ARG annotation CARD + SARG + AMRProt | DIAMOND blastp | ~20 sec |
+| MGE annotation | DIAMOND blastp | ~9 sec |
+| Plasmid-DB match (13 GB) | minimap2 split-prefix | ~10 min |
+| Mobility + replicon typing | DIAMOND + minimap2 asm5 | ~1 min |
 | Taxonomy (897 MB DB, blastp reuse) | DIAMOND blastp | ~20–40 min |
 | Report generation | Python | ~30 sec |
-| **Total (with taxonomy)** | | **~45–65 min** |
-| **Total (--skip-taxonomy)** | | **~12–15 min** |
+| **Total (with taxonomy)** | | **~45 sec (cached) · ~45–65 min (fresh)** |
 
-Results on that run: **2,339 plasmid contigs · 73 ARGs · 70 VFs · 147 MGEs · 374 pathogenic contigs · 169,009 genes in genes.tsv**
+**Results:** 2,339 plasmids · 73 ARGs · 70 VFs · 147 MGEs · 8 replicon types (IncP, IncQ2 …) · 374 pathogenic contigs · 169,009 genes
+
+### W1 — Wastewater metagenome assembly (larger dataset)
+205,645 contigs · Apple Silicon CPU · 16 threads · 93 min wall-clock
+
+| Metric | Count |
+|---|---|
+| Total contigs | 205,645 |
+| Plasmid contigs | 22,409 |
+| Chromosome contigs | ~180,000 |
+| ARGs detected (CARD + SARG) | 182 |
+| Circular topology | 1 |
+| Genes in genes.tsv | 711,225 ORFs predicted |
 
 ---
 
