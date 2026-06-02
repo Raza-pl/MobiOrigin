@@ -101,14 +101,37 @@ def _infer_is_family(name: str, description: str) -> str:
     return "Unknown"
 
 
+def load_mge_metadata(tsv_path: Path | str) -> dict[str, dict]:  # type: ignore
+    """Load mge_database.tsv → dict keyed by gene_name (lower-case).
+
+    Columns: ID, Sub_class (IS family e.g. IS26), gene_name, Class, Length
+    Returns: {gene_name_lower: {sub_class, mge_class}}
+    """
+    meta: dict[str, dict] = {}  # type: ignore
+    tsv_path = Path(tsv_path)
+    if not tsv_path.exists():
+        return meta
+    with open(tsv_path, newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        for row in reader:
+            gene = row.get("gene_name", "").strip().lower()
+            sub  = row.get("Sub_class", "").strip()
+            cls  = row.get("Class", "").strip()
+            if gene:
+                meta[gene] = {"sub_class": sub, "mge_class": cls}
+    logger.info("Loaded %d MGE family entries from %s", len(meta), tsv_path)
+    return meta
+
+
 @dataclass
 class MGEHit:
     """Single DIAMOND hit against the ISfinder MGE protein database."""
 
     contig_id: str
-    is_name: str  # ISfinder element name, e.g. "ISAba1"
-    is_family: str  # IS family, e.g. "IS4", "Tn3", "Integron"
-    description: str  # Free-text description from ISfinder header
+    is_name: str     # ISfinder element name, e.g. "ISAba1"
+    is_family: str   # IS family from mge_database or inferred, e.g. "IS26", "Tn3"
+    mge_class: str   # Broader class: "Insertion sequences", "Transposons", "Integron"
+    description: str # Free-text description from ISfinder header
     identity: float  # % amino-acid identity to ISfinder reference
     coverage: float  # % query coverage
     evalue: float
@@ -187,9 +210,18 @@ def run_mge_diamond(
         raise RuntimeError(f"DIAMOND (MGE) failed with exit code {result.returncode}")
 
 
-def parse_mge_hits(tsv_path: Path | str) -> list[MGEHit]:
-    """Parse DIAMOND output against ISfinder into MGEHit objects."""
+def parse_mge_hits(
+    tsv_path: Path | str,
+    mge_meta: dict | None = None,  # type: ignore
+) -> list[MGEHit]:
+    """Parse DIAMOND output against ISfinder into MGEHit objects.
+
+    Args:
+        tsv_path: DIAMOND tabular output.
+        mge_meta: Optional dict from load_mge_metadata() for enriched family/class.
+    """
     tsv_path = Path(tsv_path)
+    meta = mge_meta or {}
     hits: list[MGEHit] = []
 
     if not tsv_path.exists() or tsv_path.stat().st_size == 0:
@@ -203,12 +235,18 @@ def parse_mge_hits(tsv_path: Path | str) -> list[MGEHit]:
             qseqid, _sseqid, pident, qcovhsp, evalue, stitle = row[:6]
             contig_id = "_".join(qseqid.rsplit("_", 1)[:-1]) if "_" in qseqid else qseqid
             is_name, description = _parse_isfinder_stitle(stitle)
-            is_family = _infer_is_family(is_name, description)
+
+            # Enrich from mge_database.xlsx if available
+            entry = meta.get(is_name.lower(), {})
+            is_family = entry.get("sub_class") or _infer_is_family(is_name, description)
+            mge_class = entry.get("mge_class", "")
+
             hits.append(
                 MGEHit(
                     contig_id=contig_id,
                     is_name=is_name,
                     is_family=is_family,
+                    mge_class=mge_class,
                     description=description[:120],
                     identity=float(pident),
                     coverage=float(qcovhsp),
@@ -256,9 +294,15 @@ def annotate_mge(
     else:
         logger.info("Reusing pre-predicted ORFs from %s", proteins_path)
 
+    # Load MGE family metadata from mge_database.xlsx (auto-detect from DB dir)
+    mge_db_path = Path(mge_db)
+    meta_candidates = list(mge_db_path.parent.glob("mge_database.tsv")) + \
+                      list(mge_db_path.parent.glob("*.tsv"))
+    mge_meta = load_mge_metadata(meta_candidates[0]) if meta_candidates else {}
+
     if mge_tsv.exists() and mge_tsv.stat().st_size > 0:
         logger.info("Reusing cached MGE hits from %s", mge_tsv)
-        return parse_mge_hits(mge_tsv)
+        return parse_mge_hits(mge_tsv, mge_meta)
 
     run_mge_diamond(
         proteins_path,
@@ -268,4 +312,4 @@ def annotate_mge(
         min_identity=min_identity,
         min_coverage=min_coverage,
     )
-    return parse_mge_hits(mge_tsv)
+    return parse_mge_hits(mge_tsv, mge_meta)

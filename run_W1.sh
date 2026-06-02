@@ -6,7 +6,7 @@ PROJ="$(cd "$(dirname "$0")" && pwd)"
 INPUT="$PROJ/data/test/W1.contigs.fa.gz"
 OUTPUT="$PROJ/results/W1"
 THREADS=16
-LOG="$OUTPUT/run.log"
+LOG="$PROJ/w1.log"
 
 # ── sanity check ──────────────────────────────────────────────────────────────
 if [[ ! -f "$INPUT" ]]; then
@@ -22,6 +22,11 @@ echo "Threads: $THREADS"
 echo "Started: $(date)"
 echo ""
 
+# Fresh run — wipe previous results
+if [ -d "$OUTPUT" ]; then
+    echo "Removing previous results at $OUTPUT …"
+    rm -rf "$OUTPUT"
+fi
 mkdir -p "$OUTPUT"
 cd "$PROJ"
 

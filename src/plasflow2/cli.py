@@ -173,6 +173,15 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "pathogen_species",
         "pathogen_threat",
         "pathogen_category",
+        # ── BacMet biocide/metal resistance (all classes) ─────────────────
+        "num_bacmet",
+        "bacmet_genes",
+        "bacmet_class",
+        "bacmet_compounds",
+        # ── ICE (all classes) ─────────────────────────────────────────────
+        "num_ice",
+        "ice_ids",
+        "ice_functions",
     ]
 
     def _tax_fields(tax) -> list:
@@ -231,6 +240,15 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 mge_hits     = getattr(cr, "mge_hits", [])
                 mge_genes    = "; ".join(sorted({h.is_name   for h in mge_hits})) if mge_hits else ""
                 mge_families = "; ".join(sorted({h.is_family for h in mge_hits})) if mge_hits else ""
+                # BacMet
+                bm_hits     = getattr(cr, "bacmet_hits", [])
+                bm_genes    = "; ".join(sorted({h.gene_name for h in bm_hits})) if bm_hits else ""
+                bm_classes  = "; ".join(sorted({h.resistance_class for h in bm_hits})) if bm_hits else ""
+                bm_compounds= "; ".join(sorted({h.compound for h in bm_hits if h.compound})) if bm_hits else ""
+                # ICE
+                ice_hits_cr  = getattr(cr, "ice_hits", [])
+                ice_ids_str  = "; ".join(sorted({h.ice_id for h in ice_hits_cr})) if ice_hits_cr else ""
+                ice_funcs    = "; ".join(sorted({h.gene_function for h in ice_hits_cr if h.gene_function})) if ice_hits_cr else ""
 
                 annot_cols = [
                     len(cr.arg_hits),
@@ -243,6 +261,8 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     mge_genes,
                     mge_families,
                 ]
+                bacmet_cols = [len(bm_hits), bm_genes, bm_classes, bm_compounds]
+                ice_cols    = [len(ice_hits_cr), ice_ids_str, ice_funcs]
 
                 mob = cr.mobility
                 risk = cr.risk
@@ -273,6 +293,8 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     np_arg_hits  = getattr(np_cr, "arg_hits",  [])
                     np_vf_hits   = getattr(np_cr, "vf_hits",   [])
                     np_mge_hits  = getattr(np_cr, "mge_hits",  [])
+                    np_bm_hits   = getattr(np_cr, "bacmet_hits", [])
+                    np_ice_hits  = getattr(np_cr, "ice_hits",   [])
                     np_arg_genes = "; ".join(sorted({h.gene_name for h in np_arg_hits})) if np_arg_hits else ""
                     np_drug_cls  = sorted({
                         dc.strip()
@@ -285,18 +307,27 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     np_mge_genes = "; ".join(sorted({h.is_name   for h in np_mge_hits})) if np_mge_hits else ""
                     np_mge_fams  = "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
                     annot_cols = [
-                        len(np_arg_hits),
-                        np_arg_genes,
+                        len(np_arg_hits), np_arg_genes,
                         "; ".join(np_drug_cls) if np_drug_cls else "",
                         ", ".join(np_sources) if np_sources else "",
-                        len(np_vf_hits),
-                        np_vf_genes,
-                        len(np_mge_hits),
-                        np_mge_genes,
-                        np_mge_fams,
+                        len(np_vf_hits), np_vf_genes,
+                        len(np_mge_hits), np_mge_genes, np_mge_fams,
+                    ]
+                    bacmet_cols = [
+                        len(np_bm_hits),
+                        "; ".join(sorted({h.gene_name for h in np_bm_hits})),
+                        "; ".join(sorted({h.resistance_class for h in np_bm_hits})),
+                        "; ".join(sorted({h.compound for h in np_bm_hits if h.compound})),
+                    ]
+                    ice_cols = [
+                        len(np_ice_hits),
+                        "; ".join(sorted({h.ice_id for h in np_ice_hits})),
+                        "; ".join(sorted({h.gene_function for h in np_ice_hits if h.gene_function})),
                     ]
                 else:
-                    annot_cols = ANNOT_EMPTY
+                    annot_cols  = ANNOT_EMPTY
+                    bacmet_cols = ["", "", "", ""]
+                    ice_cols    = ["", "", ""]
 
             # ── Topology & confidence flag ────────────────────────────────
             topology = pipeline_result.topology.get(cid, "")
@@ -327,6 +358,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
             writer.writerow(
                 base_cols + tax_cols + annot_cols + plasmid_cols
                 + topo_conf_cols + plasmid_db_cols + pathogen_cols
+                + bacmet_cols + ice_cols
             )
 
 
@@ -354,7 +386,12 @@ def _write_annotated_tsv(pipeline_result: PipelineResult, output_path: Path) -> 
         "mge_genes",
         "mge_families",
         "vf_genes",
-        "vf_families",
+        "vf_categories",
+        "bacmet_genes",
+        "bacmet_class",
+        "bacmet_compounds",
+        "ice_ids",
+        "ice_functions",
         "mobility_class",
         "risk_score",
         "taxonomy_lca",
@@ -376,67 +413,61 @@ def _write_annotated_tsv(pipeline_result: PipelineResult, output_path: Path) -> 
 
             if pred.label == "plasmid" and cid in plasmid_by_id:
                 cr = plasmid_by_id[cid]
-                arg_hits  = cr.arg_hits or []
-                vf_hits   = getattr(cr, "vf_hits",  []) or []
-                mge_hits  = getattr(cr, "mge_hits", []) or []
-                mob       = cr.mobility
-                mob_class = mob.mobility_class if mob else "unknown"
-                risk_score = cr.risk.score
-
+                arg_hits    = cr.arg_hits or []
+                vf_hits     = getattr(cr, "vf_hits",     []) or []
+                mge_hits    = getattr(cr, "mge_hits",    []) or []
+                bm_hits     = getattr(cr, "bacmet_hits", []) or []
+                ice_hits_cr = getattr(cr, "ice_hits",    []) or []
+                mob         = cr.mobility
+                mob_class   = mob.mobility_class if mob else "unknown"
+                risk_score  = cr.risk.score
                 tax = cr.taxonomy
                 tax_lca = tax.lineage if tax else ""
-
                 path_hit = pipeline_result.pathogens.get(cid)
                 pathogen_cat = path_hit.category if path_hit else ""
-
                 is_mobile = mob_class not in ("non-mobilizable", "unknown", "")
             else:
-                np_cr = non_plasmid_by_id.get(cid)
-                arg_hits  = getattr(np_cr, "arg_hits",  []) if np_cr else []
-                vf_hits   = getattr(np_cr, "vf_hits",   []) if np_cr else []
-                mge_hits  = getattr(np_cr, "mge_hits",  []) if np_cr else []
-                mob_class  = ""
-                risk_score = ""
-                is_mobile  = False
-
+                np_cr       = non_plasmid_by_id.get(cid)
+                arg_hits    = getattr(np_cr, "arg_hits",     []) if np_cr else []
+                vf_hits     = getattr(np_cr, "vf_hits",      []) if np_cr else []
+                mge_hits    = getattr(np_cr, "mge_hits",     []) if np_cr else []
+                bm_hits     = getattr(np_cr, "bacmet_hits",  []) if np_cr else []
+                ice_hits_cr = getattr(np_cr, "ice_hits",     []) if np_cr else []
+                mob_class   = ""
+                risk_score  = ""
+                is_mobile   = False
                 tax = pipeline_result.taxonomy.get(cid)
                 tax_lca = tax.lineage if tax else ""
-
                 path_hit = pipeline_result.pathogens.get(cid)
                 pathogen_cat = path_hit.category if path_hit else ""
 
             # Filter: include only if at least one annotation present
-            if not (arg_hits or mge_hits or vf_hits or is_mobile or pathogen_cat):
+            if not (arg_hits or mge_hits or vf_hits or bm_hits or ice_hits_cr or is_mobile or pathogen_cat):
                 continue
 
-            arg_genes   = "; ".join(sorted({h.gene_name for h in arg_hits}))
+            arg_genes    = "; ".join(sorted({h.gene_name for h in arg_hits}))
             drug_classes = "; ".join(sorted({
-                dc.strip()
-                for h in arg_hits
-                for dc in h.drug_class.split(";")
+                dc.strip() for h in arg_hits for dc in h.drug_class.split(";")
                 if dc.strip() and dc.strip() != "unknown"
             }))
             mge_genes    = "; ".join(sorted({h.is_name   for h in mge_hits}))
             mge_families = "; ".join(sorted({h.is_family for h in mge_hits}))
             vf_genes     = "; ".join(sorted({h.gene_name for h in vf_hits}))
-            vf_families  = "; ".join(sorted({
-                getattr(h, "vf_category", "") for h in vf_hits
-                if getattr(h, "vf_category", "")
-            }))
+            vf_cats      = "; ".join(sorted({getattr(h, "vf_category", "") for h in vf_hits if getattr(h, "vf_category", "")}))
+            bm_genes     = "; ".join(sorted({h.gene_name for h in bm_hits}))
+            bm_class     = "; ".join(sorted({h.resistance_class for h in bm_hits}))
+            bm_compounds = "; ".join(sorted({h.compound for h in bm_hits if h.compound}))
+            ice_ids_str  = "; ".join(sorted({h.ice_id for h in ice_hits_cr}))
+            ice_funcs    = "; ".join(sorted({h.gene_function for h in ice_hits_cr if h.gene_function}))
 
             writer.writerow([
-                cid,
-                pred.label,
-                arg_genes,
-                drug_classes,
-                mge_genes,
-                mge_families,
-                vf_genes,
-                vf_families,
-                mob_class,
-                risk_score,
-                tax_lca,
-                pathogen_cat,
+                cid, pred.label,
+                arg_genes, drug_classes,
+                mge_genes, mge_families,
+                vf_genes, vf_cats,
+                bm_genes, bm_class, bm_compounds,
+                ice_ids_str, ice_funcs,
+                mob_class, risk_score, tax_lca, pathogen_cat,
             ])
             written += 1
 

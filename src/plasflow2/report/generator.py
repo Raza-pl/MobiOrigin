@@ -754,11 +754,26 @@ def _render_plasmid_page(data: dict) -> str:
     high_risk_html    = data.get("high_risk_table", "")
     pathogen_sum_html = data.get("pathogen_table", "")
 
+    # Circular maps link — show only when circular contigs exist
+    n_circular = sum(1 for r in all_rows if r.topology == "circular")
+    circular_link = ""
+    if n_circular:
+        circular_link = (
+            f'<div style="border:1px solid #1a7a4a;border-radius:6px;padding:10px 16px;'
+            f'margin-bottom:16px;background:#f0faf4">'
+            f'<strong style="color:#1a7a4a">&#9711; {n_circular} circular plasmid'
+            f'{"s" if n_circular!=1 else ""} detected</strong> — '
+            f'<a href="report_circular_plasmids.html" style="color:#1a7a4a;font-weight:bold">'
+            f'View circular genome maps →</a>'
+            f'</div>'
+        )
+
     body = f"""
 <h1>PlasFlow v2 — Plasmid Report</h1>
 <p class="meta">Input: <code>{data["input_file"]}</code></p>
 {narrative_html}
 <div class="cards">{stat_cards}</div>
+{circular_link}
 {high_risk_html}
 {pathogen_sum_html}
 <h2>Overview</h2>
@@ -1389,6 +1404,9 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         "high_risk_table": _build_high_risk_table(plasmid_rows, pathogens),
         # pathogen summary: breakdown by threat level
         "pathogen_table": _build_pathogen_table(plasmid_rows, pathogens),
+        # pass through for circular maps page
+        "_pipeline_result": pipeline_result,
+        "topology_map":     topology_map,
     }
     result_dict["narrative"] = _narrative_summary(result_dict)
     return result_dict
@@ -1444,6 +1462,21 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
     for key, path in pages.items():
         path.write_text(html_map[key], encoding="utf-8")
         logger.info("Report written to %s", path)
+
+    # Circular plasmid maps — separate page, only when ORF data is available
+    pipeline_result = report_data.get("_pipeline_result")
+    topology_map    = report_data.get("topology_map", {})
+    if pipeline_result is not None and getattr(pipeline_result, "orfs", None):
+        from plasflow2.report.circular_map import build_circular_maps_page
+        circular_path = out / "report_circular_plasmids.html"
+        circular_html = build_circular_maps_page(
+            pipeline_result=pipeline_result,
+            topology_map=topology_map,
+            input_file=report_data.get("input_file", ""),
+        )
+        circular_path.write_text(circular_html, encoding="utf-8")
+        logger.info("Report written to %s", circular_path)
+        pages["circular_plasmids"] = circular_path
 
     return pages
 

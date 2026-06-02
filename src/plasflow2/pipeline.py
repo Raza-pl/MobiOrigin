@@ -30,6 +30,8 @@ from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 
 from plasflow2.annotate.args import ARGHit, ORF, annotate_contigs, annotate_contigs_with_orfs, merge_arg_hits
 from plasflow2.annotate.mge import MGEHit, annotate_mge
+from plasflow2.annotate.bacmet import BacMetHit, annotate_bacmet
+from plasflow2.annotate.ice import ICEHit, annotate_ice
 from plasflow2.annotate.plasmid_db import PlasmidDBHit, annotate_plasmid_db
 from plasflow2.annotate.mobility import (
     MobilityResult,
@@ -72,18 +74,15 @@ class ContigResult:
     mobility: MobilityResult | None
     risk: RiskScore
     taxonomy: TaxResult | None = None  # LCA taxonomy from DIAMOND (optional)
-    vf_hits: list[VFHit] = field(default_factory=list)  # VFDB virulence factors
-    mge_hits: list[MGEHit] = field(default_factory=list)  # ISfinder MGE elements
+    vf_hits: list[VFHit] = field(default_factory=list)
+    mge_hits: list[MGEHit] = field(default_factory=list)
+    bacmet_hits: list[BacMetHit] = field(default_factory=list)
+    ice_hits: list[ICEHit] = field(default_factory=list)
 
 
 @dataclass
 class NonPlasmidContigResult:
-    """Prediction + ARG/VF/MGE/taxonomy for chromosome / phage / archaea / unclassified.
-
-    ARG, VF, and MGE annotation now runs on ALL contigs so that chromosomal AMR
-    carriage is captured alongside plasmid AMR.  Mobility and risk scoring remain
-    plasmid-only steps.
-    """
+    """Prediction + ARG/VF/MGE/taxonomy for chromosome / phage / archaea / unclassified."""
 
     record: SeqRecord
     prediction: Prediction
@@ -91,6 +90,8 @@ class NonPlasmidContigResult:
     arg_hits: list[ARGHit] = field(default_factory=list)
     vf_hits: list[VFHit] = field(default_factory=list)
     mge_hits: list[MGEHit] = field(default_factory=list)
+    bacmet_hits: list[BacMetHit] = field(default_factory=list)
+    ice_hits: list[ICEHit] = field(default_factory=list)
     risk: RiskScore | None = None
 
 
@@ -394,6 +395,44 @@ def run_pipeline(
             logger.warning("MGE database not found at %s — skipping MGE annotation.", mge_db)
 
     # ------------------------------------------------------------------
+    # 4c-2. BacMet annotation — ALL contigs (biocide/metal resistance)
+    # ------------------------------------------------------------------
+    bacmet_by_contig: dict[str, list[BacMetHit]] = {}
+    _bacmet_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "bacmet" / "bacmet.dmnd"
+    if _bacmet_auto.exists() and arg_proteins.exists():
+        try:
+            bacmet_hits = annotate_bacmet(
+                proteins_faa=arg_proteins,
+                bacmet_db=_bacmet_auto,
+                work_dir=work_dir / "bacmet_annotation",
+                threads=threads,
+            )
+            for hit in bacmet_hits:
+                bacmet_by_contig.setdefault(hit.contig_id, []).append(hit)
+            logger.info("BacMet hits: %d across %d contigs", len(bacmet_hits), len(bacmet_by_contig))
+        except Exception as exc:
+            logger.warning("BacMet annotation failed: %s — skipping.", exc)
+
+    # ------------------------------------------------------------------
+    # 4c-3. ICE annotation — ALL contigs (integrative conjugative elements)
+    # ------------------------------------------------------------------
+    ice_by_contig: dict[str, list[ICEHit]] = {}
+    _ice_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "ice" / "ice.dmnd"
+    if _ice_auto.exists() and arg_proteins.exists():
+        try:
+            ice_hits_all = annotate_ice(
+                proteins_faa=arg_proteins,
+                ice_db=_ice_auto,
+                work_dir=work_dir / "ice_annotation",
+                threads=threads,
+            )
+            for hit in ice_hits_all:
+                ice_by_contig.setdefault(hit.contig_id, []).append(hit)
+            logger.info("ICE hits: %d across %d contigs", len(ice_hits_all), len(ice_by_contig))
+        except Exception as exc:
+            logger.warning("ICE annotation failed: %s — skipping.", exc)
+
+    # ------------------------------------------------------------------
     # 4d. Plasmid-DB nucleotide matching (plasmid contigs only)
     # ------------------------------------------------------------------
     plasmid_db_hits: dict[str, PlasmidDBHit] = {}
@@ -564,6 +603,8 @@ def run_pipeline(
                 taxonomy=taxonomy_by_contig.get(cid),
                 vf_hits=vf_by_contig.get(cid, []),
                 mge_hits=mge_by_contig.get(cid, []),
+                bacmet_hits=bacmet_by_contig.get(cid, []),
+                ice_hits=ice_by_contig.get(cid, []),
             )
         )
 
@@ -590,6 +631,8 @@ def run_pipeline(
                     arg_hits=np_arg_hits,
                     vf_hits=vf_by_contig.get(cid, []),
                     mge_hits=mge_by_contig.get(cid, []),
+                    bacmet_hits=bacmet_by_contig.get(cid, []),
+                    ice_hits=ice_by_contig.get(cid, []),
                     risk=np_risk,
                 )
             )

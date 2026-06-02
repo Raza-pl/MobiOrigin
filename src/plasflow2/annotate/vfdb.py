@@ -51,15 +51,47 @@ _VFDB_HEADER_RE = re.compile(
 )
 
 
+def load_vfdb_metadata(index_path: Path | str) -> dict[str, str]:
+    """Load vfdb_indx.txt → dict mapping VFG accession → functional category.
+
+    File format (tab-separated, no header):
+        VFG050302(gb|WP_001045627.1)  VFC0001  Adherence
+
+    Returns: {WP_001045627.1: "Adherence"}
+    """
+    meta: dict[str, str] = {}
+    index_path = Path(index_path)
+    if not index_path.exists():
+        return meta
+    with open(index_path) as fh:
+        for line in fh:
+            parts = line.strip().split("\t")
+            if len(parts) < 3:
+                continue
+            vfg_field = parts[0]  # e.g. VFG050302(gb|WP_001045627.1)
+            category = parts[2].strip()
+            # Extract accession from parentheses
+            acc_m = re.search(r"\((?:gb|ref)\|([^|)]+)\)", vfg_field)
+            if acc_m:
+                meta[acc_m.group(1)] = category
+            # Also key by VFG ID alone
+            vfg_m = re.match(r"(VFG\d+)", vfg_field)
+            if vfg_m:
+                meta[vfg_m.group(1)] = category
+    logger.info("Loaded %d VFDB category entries from %s", len(meta), index_path)
+    return meta
+
+
 @dataclass
 class VFHit:
     """Single DIAMOND hit against the VFDB virulence factor database."""
 
     contig_id: str
-    gene_name: str  # e.g. "mgtC", "stx1A"
-    vfg_id: str  # VFDB gene ID, e.g. "VFG000068"
-    vf_group: str  # VF group name, e.g. "mgtC (VF0091)"
-    organism: str  # Source organism, e.g. "Salmonella enterica"
+    gene_name: str   # e.g. "mgtC", "stx1A"
+    vfg_id: str      # VFDB gene ID, e.g. "VFG000068"
+    vf_group: str    # VF group name, e.g. "mgtC (VF0091)"
+    vf_category: str # Functional category from vfdb_indx.txt, e.g. "Adherence", "Toxin"
+    organism: str    # Source organism, e.g. "Salmonella enterica"
     identity: float  # % amino-acid identity
     coverage: float  # % query coverage
     evalue: float
@@ -145,16 +177,13 @@ def run_vfdb_diamond(
         raise RuntimeError(f"DIAMOND (VFDB) failed with exit code {result.returncode}")
 
 
-def parse_vfdb_hits(tsv_path: Path | str) -> list[VFHit]:
-    """Parse DIAMOND tabular output against VFDB into VFHit objects.
-
-    Args:
-        tsv_path: Path to DIAMOND outfmt 6 TSV (qseqid sseqid pident qcovhsp evalue stitle).
-
-    Returns:
-        List of VFHit, one per row.
-    """
+def parse_vfdb_hits(
+    tsv_path: Path | str,
+    vfdb_meta: dict[str, str] | None = None,
+) -> list[VFHit]:
+    """Parse DIAMOND tabular output against VFDB into VFHit objects."""
     tsv_path = Path(tsv_path)
+    meta = vfdb_meta or {}
     hits: list[VFHit] = []
 
     if not tsv_path.exists() or tsv_path.stat().st_size == 0:
@@ -166,15 +195,23 @@ def parse_vfdb_hits(tsv_path: Path | str) -> list[VFHit]:
             if len(row) < 6:
                 continue
             qseqid, _sseqid, pident, qcovhsp, evalue, stitle = row[:6]
-            # Contig ID is the ORF id minus the trailing _<n> suffix
             contig_id = "_".join(qseqid.rsplit("_", 1)[:-1]) if "_" in qseqid else qseqid
             gene_name, vfg_id, vf_group, organism = _parse_vfdb_stitle(stitle)
+
+            # Resolve category: try VFG ID first, then accession from stitle
+            vf_category = meta.get(vfg_id, "")
+            if not vf_category:
+                acc_m = re.search(r"\((?:gb|ref)\|([^|)]+)\)", stitle)
+                if acc_m:
+                    vf_category = meta.get(acc_m.group(1), "")
+
             hits.append(
                 VFHit(
                     contig_id=contig_id,
                     gene_name=gene_name,
                     vfg_id=vfg_id,
                     vf_group=vf_group,
+                    vf_category=vf_category,
                     organism=organism,
                     identity=float(pident),
                     coverage=float(qcovhsp),
@@ -222,6 +259,12 @@ def annotate_vf(
     else:
         logger.info("Reusing pre-predicted ORFs from %s", proteins_path)
 
+    # Load VFDB category index (auto-detect from DB directory)
+    vfdb_path = Path(vfdb)
+    idx_candidates = list(vfdb_path.parent.glob("vfdb_indx.txt")) + \
+                     list(vfdb_path.parent.glob("*.txt"))
+    vfdb_meta = load_vfdb_metadata(idx_candidates[0]) if idx_candidates else {}
+
     if vfdb_tsv.exists() and vfdb_tsv.stat().st_size > 0:
         logger.info("Reusing cached VFDB hits from %s", vfdb_tsv)
     else:
@@ -233,4 +276,4 @@ def annotate_vf(
             min_identity=min_identity,
             min_coverage=min_coverage,
         )
-    return parse_vfdb_hits(vfdb_tsv)
+    return parse_vfdb_hits(vfdb_tsv, vfdb_meta)
