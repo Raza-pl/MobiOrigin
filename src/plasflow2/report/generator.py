@@ -602,119 +602,6 @@ def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
 # Genome map — per-plasmid horizontal track diagram
 # ---------------------------------------------------------------------------
 
-_GENE_COLORS = {
-    "arg":      "#e74c3c",   # red
-    "vf":       "#e67e22",   # orange
-    "mge":      "#8e44ad",   # purple
-    "mobility": "#2980b9",   # blue
-    "other":    "#bdc3c7",   # light grey
-}
-
-_MOBILITY_KEYWORDS = frozenset([
-    "conjugat", "relaxase", "mpf", "traG", "traI", "traJ",
-    "replic", "mob", "oriT", "virB", "virD",
-])
-
-
-def _gene_type(gene_name: str, arg_flag: int, vf_flag: int, mge_flag: int) -> str:
-    """Classify an ORF into a display category for the genome map."""
-    if arg_flag:
-        return "arg"
-    if mge_flag:
-        return "mge"
-    if vf_flag:
-        return "vf"
-    name_lower = gene_name.lower()
-    if any(kw in name_lower for kw in _MOBILITY_KEYWORDS):
-        return "mobility"
-    return "other"
-
-
-def _genome_map_data(
-    contig_id: str,
-    contig_length: int,
-    orfs: list,           # list of ORF objects (filtered to this contig)
-    arg_orf_ids: set[str],
-    vf_orf_ids: set[str],
-    mge_orf_ids: set[str],
-    arg_name_by_orf: dict[str, str],
-    vf_name_by_orf: dict[str, str],
-    mge_name_by_orf: dict[str, str],
-) -> dict:
-    """Build a Plotly figure dict for a single contig genome map."""
-    traces = {t: {"x": [], "y": [], "text": [], "color": []} for t in _GENE_COLORS}
-
-    for orf in orfs:
-        oid = orf.orf_id
-        gene_type = _gene_type(
-            arg_name_by_orf.get(oid, vf_name_by_orf.get(oid, mge_name_by_orf.get(oid, ""))),
-            1 if oid in arg_orf_ids else 0,
-            1 if oid in vf_orf_ids  else 0,
-            1 if oid in mge_orf_ids else 0,
-        )
-        mid   = (orf.start + orf.end) / 2
-        width = max(orf.end - orf.start, 1)
-        label = (arg_name_by_orf.get(oid)
-                 or vf_name_by_orf.get(oid)
-                 or mge_name_by_orf.get(oid)
-                 or orf.orf_id)
-        hover = f"{orf.orf_id}<br>{orf.start}–{orf.end} ({'+' if orf.strand >= 0 else '-'})<br>{label}"
-        traces[gene_type]["x"].append(mid)
-        traces[gene_type]["y"].append(1 if orf.strand >= 0 else -1)
-        traces[gene_type]["text"].append(hover)
-        # store width for marker sizing (approx pixels — capped)
-        traces[gene_type]["color"].append(width)
-
-    plotly_traces = []
-    type_labels = {"arg": "ARG", "vf": "Virulence Factor",
-                   "mge": "MGE/IS", "mobility": "Mobility Gene", "other": "Other ORF"}
-    for gtype, color in _GENE_COLORS.items():
-        d = traces[gtype]
-        if not d["x"]:
-            continue
-        plotly_traces.append({
-            "type": "scatter",
-            "mode": "markers",
-            "name": type_labels[gtype],
-            "x": d["x"],
-            "y": d["y"],
-            "text": d["text"],
-            "hoverinfo": "text",
-            "marker": {
-                "color": color,
-                "symbol": "square",
-                "size": 12,
-                "line": {"width": 0.5, "color": "#fff"},
-            },
-        })
-
-    # Backbone line
-    plotly_traces.insert(0, {
-        "type": "scatter",
-        "mode": "lines",
-        "name": "Contig",
-        "x": [0, contig_length],
-        "y": [0, 0],
-        "line": {"color": "#555", "width": 2},
-        "hoverinfo": "skip",
-        "showlegend": False,
-    })
-
-    return {
-        "data": plotly_traces,
-        "layout": {
-            "height": 180,
-            "margin": {"l": 40, "r": 20, "t": 30, "b": 30},
-            "title": {"text": f"{contig_id} ({contig_length:,} bp)", "font": {"size": 12}},
-            "xaxis": {"title": "Position (bp)", "range": [0, contig_length]},
-            "yaxis": {"visible": False, "range": [-2.5, 2.5]},
-            "showlegend": True,
-            "legend": {"orientation": "h", "y": -0.3},
-            "plot_bgcolor": "#f9f9f9",
-            "paper_bgcolor": "transparent",
-        },
-    }
-
 
 # ---------------------------------------------------------------------------
 # Plain-English summary narrative
@@ -786,19 +673,6 @@ def _narrative_summary(data: dict) -> str:
 # ---------------------------------------------------------------------------
 # Plasmid page
 # ---------------------------------------------------------------------------
-
-
-def _render_genome_map_js(genome_maps: dict) -> str:
-    """Return JS snippet that renders all per-plasmid genome map charts."""
-    if not genome_maps:
-        return ""
-    lines = []
-    for i, (cid, fig) in enumerate(genome_maps.items()):
-        div_id = f"gmap_{i}"
-        lines.append(
-            f"P.newPlot('{div_id}',{json.dumps(fig['data'])},{json.dumps(fig['layout'])},dm);"
-        )
-    return "\n".join(lines)
 
 
 def _p_row(r: PlasmidRow) -> list:
@@ -876,23 +750,8 @@ def _render_plasmid_page(data: dict) -> str:
         if data.get("narrative") else ""
     )
 
-    # Genome map section — link to separate page instead of embedding
-    genome_maps: dict = data.get("genome_maps", {})
-    if genome_maps:
-        genome_section = (
-            f'<div style="border:1px solid #d5e8f5;border-radius:6px;padding:12px 16px;'
-            f'margin-bottom:20px;background:#f0f7ff">'
-            f'<h2 style="margin:0 0 6px">Plasmid Genome Maps</h2>'
-            f'<p style="margin:0;color:#555;font-size:.9rem">'
-            f'{len(genome_maps):,} contigs with ≥3 genes or risk &gt; 4 have genome maps. '
-            f'<a href="report_genome_maps.html" style="color:#2c6fad;font-weight:bold">'
-            f'Open genome maps →</a>'
-            f'</p></div>'
-        )
-    else:
-        genome_section = ""
 
-    high_risk_html  = data.get("high_risk_table", "")
+    high_risk_html    = data.get("high_risk_table", "")
     pathogen_sum_html = data.get("pathogen_table", "")
 
     body = f"""
@@ -902,7 +761,6 @@ def _render_plasmid_page(data: dict) -> str:
 <div class="cards">{stat_cards}</div>
 {high_risk_html}
 {pathogen_sum_html}
-
 <h2>Overview</h2>
 <div class="chart-grid g3">
   <div id="cpie"  class="cbox"></div>
@@ -922,7 +780,6 @@ def _render_plasmid_page(data: dict) -> str:
   <div id="cesk"  class="cbox"></div>
 </div>
 
-{genome_section}
 <h2>Plasmid Predictions — risk ≥ 1 ({n_shown:,} contigs)</h2>
 <div class="filter-bar">
   <button class="fbtn active" id="fa" onclick="setRisk('')"  style="background:#ddd;color:#333">All</button>
@@ -1209,68 +1066,6 @@ def _build_pathogen_table(
 </div>"""
 
 
-def _render_genome_maps_page(genome_maps: dict, input_file: str = "") -> str:
-    """Standalone HTML page containing all filtered plasmid genome map charts."""
-    if not genome_maps:
-        body = "<p style='color:#888;margin:40px'>No genome maps generated (no contigs with ≥3 genes or risk score &gt; 4).</p>"
-        js_block = ""
-    else:
-        divs = "\n".join(
-            f'<div style="margin-bottom:24px">'
-            f'<p style="font-family:monospace;font-size:.85rem;color:#555;margin:0 0 4px">{cid}</p>'
-            f'<div id="gmap_{i}" style="height:160px"></div>'
-            f'</div>'
-            for i, cid in enumerate(genome_maps)
-        )
-        body = f"""
-<h1 style="font-size:1.3rem;color:#2c3e50">Plasmid Genome Maps</h1>
-<p style="color:#555;font-size:.9rem;margin-bottom:4px">
-  Input: <code>{input_file}</code> &nbsp;·&nbsp;
-  {len(genome_maps):,} contigs shown (≥3 genes or risk &gt; 4) &nbsp;·&nbsp;
-  <a href="report_plasmid.html">← Back to plasmid report</a>
-</p>
-<p style="font-size:.82rem;color:#888;margin-top:0">
-  Colours: <span style="color:#e74c3c">■ ARG</span>
-  <span style="color:#e67e22">■ Virulence</span>
-  <span style="color:#8e44ad">■ MGE/IS</span>
-  <span style="color:#2980b9">■ Mobility</span>
-  <span style="color:#bdc3c7">■ Other</span>
-</p>
-<div style="max-width:1100px">{divs}</div>"""
-
-        plot_calls = "\n".join(
-            f"P.newPlot('gmap_{i}',{json.dumps(fig['data'])},{json.dumps(fig['layout'])},dm);"
-            for i, (cid, fig) in enumerate(genome_maps.items())
-        )
-        js_block = f"""
-<script>
-(function(){{
-var P=window.Plotly,dm={{responsive:true,displayModeBar:false}};
-{plot_calls}
-}})();
-</script>"""
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PlasFlow v2 — Genome Maps</title>
-<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-<style>
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     margin:24px 32px;background:#fafafa;color:#2c3e50}}
-code{{background:#eee;padding:1px 4px;border-radius:3px;font-size:.85rem}}
-a{{color:#2c6fad}}
-</style>
-</head>
-<body>
-{body}
-{js_block}
-</body>
-</html>"""
-
-
 def _render_nonplasmid_page(
     data: dict,
     class_key: str,
@@ -1551,42 +1346,6 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
     # Pathogen detection results (populated when taxonomy DB was used)
     pathogens = getattr(pipeline_result, "pathogens", {}) or {}
 
-    # Genome maps — per-plasmid contig (only when ORF data is available)
-    genome_maps: dict[str, dict] = {}
-    all_orfs = getattr(pipeline_result, "orfs", []) or []
-    if all_orfs:
-        from collections import defaultdict as _dd
-        orfs_by_contig: dict = _dd(list)
-        for orf in all_orfs:
-            orfs_by_contig[orf.contig_id].append(orf)
-
-        # Build lookup sets/dicts for ARG/VF/MGE by orf_id
-        arg_orf_ids:    set[str] = {h._orf_id for cr in pipeline_result.plasmid_results for h in cr.arg_hits if h._orf_id}
-        vf_orf_ids:     set[str] = {h._orf_id for cr in pipeline_result.plasmid_results for h in cr.vf_hits  if getattr(h, "_orf_id", "")}
-        mge_orf_ids:    set[str] = {h._orf_id for cr in pipeline_result.plasmid_results for h in cr.mge_hits if getattr(h, "_orf_id", "")}
-        arg_name_by_orf: dict[str, str] = {h._orf_id: h.gene_name for cr in pipeline_result.plasmid_results for h in cr.arg_hits if h._orf_id}
-        vf_name_by_orf:  dict[str, str] = {h._orf_id: h.gene_name for cr in pipeline_result.plasmid_results for h in cr.vf_hits  if getattr(h, "_orf_id", "")}
-        mge_name_by_orf: dict[str, str] = {h._orf_id: h.is_name   for cr in pipeline_result.plasmid_results for h in cr.mge_hits if getattr(h, "_orf_id", "")}
-
-        # Build a risk_score lookup so we can apply the filter below
-        risk_by_contig = {cr.record.id: cr.risk.score for cr in pipeline_result.plasmid_results}
-
-        for cr in pipeline_result.plasmid_results:
-            cid = cr.record.id
-            contig_orfs = orfs_by_contig.get(cid, [])
-            # Only generate maps for contigs with ≥3 ORFs or risk score > 4
-            if contig_orfs and (len(contig_orfs) >= 3 or risk_by_contig.get(cid, 0) > 4):
-                genome_maps[cid] = _genome_map_data(
-                    contig_id=cid,
-                    contig_length=len(cr.record.seq),
-                    orfs=contig_orfs,
-                    arg_orf_ids=arg_orf_ids,
-                    vf_orf_ids=vf_orf_ids,
-                    mge_orf_ids=mge_orf_ids,
-                    arg_name_by_orf=arg_name_by_orf,
-                    vf_name_by_orf=vf_name_by_orf,
-                    mge_name_by_orf=mge_name_by_orf,
-                )
 
     # Build the return dict first (narrative needs it)
     result_dict = {
@@ -1626,8 +1385,6 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         "has_scatter": False, "has_cooccurrence": bool(plasmid_rows),
         "has_phages":  bool(phage_rows), "has_chromosomes": bool(chromosome_rows),
         "has_others":  bool(archaea_rows or unclassified_rows),
-        # genome maps (per-plasmid contig → Plotly figure dict)
-        "genome_maps": genome_maps,
         # high-risk intersection: conjugative + ARGs + ESKAPE/pathogen
         "high_risk_table": _build_high_risk_table(plasmid_rows, pathogens),
         # pathogen summary: breakdown by threat level
@@ -1652,15 +1409,10 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
         "phage":        out / "report_phage.html",
         "archaea":      out / "report_archaea.html",
         "unclassified": out / "report_unclassified.html",
-        "genome_maps":  out / "report_genome_maps.html",
     }
 
     html_map = {
         "plasmid": _render_plasmid_page(report_data),
-        "genome_maps": _render_genome_maps_page(
-            report_data.get("genome_maps", {}),
-            input_file=report_data.get("input_file", ""),
-        ),
         "chromosome": _render_nonplasmid_page(
             report_data, "chromosome", "Chromosome", "#27ae60",
             report_data["chromosome_rows"], "ctable",
