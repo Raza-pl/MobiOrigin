@@ -25,6 +25,18 @@ if [[ ! -f "$AMRPROT_FASTA" ]]; then
     exit 1
 fi
 
+# Auto-locate fam.tab from conda AMRFinder DB installation
+FAM_TAB=""
+for candidate in \
+    "$HOME/miniconda3/envs/plasflow2/bin/data/"*/fam.tab \
+    "$HOME/anaconda3/envs/plasflow2/bin/data/"*/fam.tab \
+    "$HOME/miniconda3/pkgs/"*/bin/data/*/fam.tab; do
+    if [[ -f "$candidate" ]]; then
+        FAM_TAB="$candidate"
+        break
+    fi
+done
+
 echo "=== AMRProt DIAMOND setup ==="
 echo "Source : $AMRPROT_FASTA"
 echo "Output : $OUT_DIR/"
@@ -34,6 +46,14 @@ mkdir -p "$OUT_DIR"
 echo "Building DIAMOND database …"
 diamond makedb --in "$AMRPROT_FASTA" -d "$OUT_DIR/amrprot" --quiet
 echo "  → $OUT_DIR/amrprot.dmnd"
+
+if [[ -n "$FAM_TAB" ]]; then
+    cp "$FAM_TAB" "$OUT_DIR/fam.tab"
+    echo "  → $OUT_DIR/fam.tab (from $FAM_TAB)"
+else
+    echo "  WARNING: fam.tab not found in conda env — drug classes will be inferred from headers"
+    echo "  To fix: find ~/miniconda3 -name fam.tab and copy to $OUT_DIR/fam.tab"
+fi
 
 echo ""
 echo "Done. PlasFlow will auto-detect data/databases/amrfinder/amrprot.dmnd on next run."
