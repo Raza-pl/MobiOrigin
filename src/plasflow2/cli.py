@@ -23,6 +23,13 @@ Week 4 — Days 21-22 + 26 implementation.
 
 from __future__ import annotations
 
+# ── macOS ARM segfault fix — MUST be before any numpy/torch import ──────────
+import os as _os
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    _os.environ.setdefault(_v, "1")
+# ────────────────────────────────────────────────────────────────────────────
+
 import csv
 import json
 import logging
@@ -884,10 +891,10 @@ def run(
     # effective floor; anything above the class-specific threshold is still a
     # normal high-confidence call.
     argmax_fallback = min_confidence is not None
+    # --min-confidence lowers the general class threshold but must NOT override
+    # --plasmid-threshold which is intentionally set higher to reduce FP plasmids.
     effective_threshold = min(threshold, min_confidence) if argmax_fallback else threshold
-    effective_plasmid_threshold = (
-        min(plasmid_threshold, min_confidence) if argmax_fallback else plasmid_threshold
-    )
+    effective_plasmid_threshold = plasmid_threshold  # always honour explicitly set value
     if argmax_fallback:
         click.echo(
             f"[info] --min-confidence={min_confidence}: contigs below threshold will receive "

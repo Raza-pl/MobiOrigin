@@ -107,11 +107,15 @@ def _build_combined_fasta(plasmid_db_dir: Path) -> Path | None:
     Falls back to combined.fna if PLSDB is absent, or builds combined from
     whatever sources are available.
     """
-    # Prefer PLSDB only — best RAM/coverage trade-off
-    plsdb = plasmid_db_dir / "PLSDB.fna"
-    if plsdb.exists():
+    # Prefer PLSDB only — best RAM/coverage trade-off (accept both naming conventions)
+    plsdb = next(
+        (plasmid_db_dir / n for n in ("plsdb.fasta", "PLSDB.fna", "plsdb.fna")
+         if (plasmid_db_dir / n).exists()),
+        None,
+    )
+    if plsdb is not None:
         size_gb = plsdb.stat().st_size / 1e9
-        logger.info("Using PLSDB as plasmid reference (%.1f GB) — avoids OOM on large combined FASTA", size_gb)
+        logger.info("Using %s as plasmid reference (%.1f GB) — avoids OOM on large combined FASTA", plsdb.name, size_gb)
         return plsdb
 
     # Fall back to pre-built combined FASTA
