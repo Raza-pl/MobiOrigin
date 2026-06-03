@@ -13,13 +13,19 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 ## Changelog
 
 ### June 2026
-- **Fix:** replicon typing now uses `minimap2 -x asm5` (assembled-to-assembled preset). The previous `-x sr` (short-read) preset produced zero hits — IncP, IncQ, IncF types were missing from all output. PAF cache removed to prevent stale-result recurrence.
+- **Model:** retrained MLP on **800,000 sequences** (200k per class) using 5,922 GTDB r220 bacterial genomes + 1,032 archaeal genomes + 72,556 PLSDB plasmids. Validation accuracy 86.18% (up from ~82% on old 400k dataset). Archaeal retraining ongoing with more GTDB genomes.
+- **Fix:** `--plasmid-threshold` is now respected independently of `--min-confidence` — previously `min_confidence` was silently overriding the plasmid threshold, causing plasmid over-classification.
+- **Fix:** plasmid DB matcher now auto-detects `plsdb.fasta` in addition to legacy `PLSDB.fna` filename.
+- **Fix:** replicon typing now uses `minimap2 -x asm5` (assembled-to-assembled preset). The previous `-x sr` (short-read) preset produced zero hits — IncP, IncQ, IncF types were missing from all output.
 - **Fix:** `NonPlasmidContigResult` dataclass now includes the `risk` field — fixes a crash in the pipeline test suite.
+- **Fix:** macOS ARM segfault during classification resolved — BLAS thread caps now set at CLI entry point before any numpy/torch import.
 - **ARG:** added **AMRFinderPlus DB as a third ARG database** (DIAMOND-based, no CLI dependency). Priority order per ORF: CARD > AMRProt > SARG. Auto-detected from `data/databases/amrfinder/amrprot.dmnd`. Setup: `bash scripts/setup_amrprot_diamond.sh`.
-- **Output:** renamed `predictions.tsv` → `all_predictions.tsv`. Added `annotated_predictions.tsv` — a focused 12-column table containing only contigs with ARGs, MGEs, VFs, mobility class, or pathogen hits.
-- **Report:** genome maps moved to a separate `report_genome_maps.html` — eliminates lag in the main plasmid report. Maps are filtered to contigs with ≥3 genes or risk score > 4.
-- **Report:** added **Priority Alert** section to `report_plasmid.html` — surfaces plasmids that are simultaneously mobile, ARG-carrying, and pathogenic-host-matched (the three-signal high-risk intersection).
-- **Report:** added **Pathogenic Host Summary** table to `report_plasmid.html` — breaks down pathogenic plasmid contigs by threat level (critical / high / medium) and species.
+- **Annotation:** added **BacMet2** (biocide & metal resistance) and **ICEberg3** (integrative conjugative elements) annotation via DIAMOND. Both auto-detected from `data/databases/bacmet/` and `data/databases/ice/`. Setup: `bash scripts/setup_bacmet_ice_diamond.sh`.
+- **Annotation:** MGE hits now enriched with IS family and class from `mge_database.tsv`. VFG hits enriched with functional category from `vfdb_indx.txt`.
+- **Output:** renamed `predictions.tsv` → `all_predictions.tsv`. Added `annotated_predictions.tsv` — a focused 17-column table for contigs with ARGs, MGEs, VFs, BacMet, ICE, mobility, or pathogen hits.
+- **Report:** added **circular plasmid SVG maps** — pure SVG genome diagrams for each circular plasmid contig, colour-coded by gene type (ARG/VFG/MGE/BacMet/ICE/mobility). Saved to `report_circular_plasmids.html`, linked from the main plasmid report.
+- **Report:** added **Priority Alert** section — surfaces plasmids that are simultaneously mobile, ARG-carrying, and pathogenic-host-matched.
+- **Report:** added **Pathogenic Host Summary** table — breakdown by threat level (critical / high / medium) and species.
 
 ---
 
@@ -32,7 +38,9 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Architecture | TF neural net | **4-class MLP** with length feature |
 | ARG annotation | ✗ | DIAMOND + **CARD + SARG + AMRFinderPlus DB** (triple-DB, auto-detected) |
 | Virulence factors | ✗ | DIAMOND + **VFDB set A** (auto-detected) |
-| MGE / IS elements | ✗ | DIAMOND + **Pärnänen MGE database** (auto-detected) |
+| MGE / IS elements | ✗ | DIAMOND + **Pärnänen MGE database** + IS family/class enrichment (auto-detected) |
+| BacMet (biocide/metal) | ✗ | DIAMOND + **BacMet2 experimentally confirmed** (auto-detected) |
+| ICE elements | ✗ | DIAMOND + **ICEberg3 experimental** (auto-detected) |
 | Mobility typing | ✗ | **MOB-suite + DIAMOND** per-contig (conjugative / mobilizable / non-mobilizable) |
 | Contig taxonomy | ✗ | **DIAMOND blastp + GTDB/RefSeq LCA** — reuses ORFs from ARG step |
 | Plasmid-DB match | ✗ | **minimap2** vs PLSDB + RefSeq + COMPASS — closest known plasmid + ANI |
@@ -41,7 +49,8 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Gene-level output | ✗ | **genes.tsv** — 169k+ ORFs with coordinates + ARG/VF/MGE flags |
 | Compressed input | ✗ | `.gz` and `.bz2` FASTA accepted natively |
 | AMR risk score | ✗ | 0–10 with ESKAPE host detection + WHO 2024 pathogens |
-| HTML report | ✗ | **5 interactive pages**, plain-English narrative, genome maps, Plotly charts |
+| HTML report | ✗ | **6 interactive pages** — plasmid · chromosome · phage · archaea · unclassified · **circular maps** |
+| Circular maps | ✗ | **Pure SVG** per-contig genome maps for circular plasmids (ARG/VFG/MGE/BacMet/ICE colour-coded) |
 | Test suite | ✗ | 192 unit + integration tests |
 
 ---
@@ -63,19 +72,23 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Report generation | Python | ~30 sec |
 | **Total (with taxonomy)** | | **~45 sec (cached) · ~45–65 min (fresh)** |
 
-**Results:** 2,339 plasmids · 73 ARGs · 70 VFs · 147 MGEs · 8 replicon types (IncP, IncQ2 …) · 374 pathogenic contigs · 169,009 genes
+**Results (new model, June 2026):** 24,356 plasmids · 208 ARGs · 448 VFs · 1,093 MGEs · 204 BacMet · 4,225 ICE · 18 replicon types · 2,041 pathogenic contigs · 481,219 genes
+> Note: plasmid count elevated due to training imbalance — retraining with more GTDB chromosomal/archaeal genomes in progress.
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads · 93 min wall-clock
 
-| Metric | Count |
-|---|---|
-| Total contigs | 205,645 |
-| Plasmid contigs | 22,409 |
-| Chromosome contigs | ~180,000 |
-| ARGs detected (CARD + SARG) | 182 |
-| Circular topology | 1 |
-| Genes in genes.tsv | 711,225 ORFs predicted |
+| Metric | Old model | New model (June 2026) |
+|---|---|---|
+| Plasmid contigs | 22,409 | 16,229 |
+| Chromosome contigs | 138,589 | 154,393 |
+| Phage contigs | 20,182 | 10,477 |
+| Archaea contigs | 24,465 | 24,546 |
+| ARGs (CARD+SARG+AMRProt) | 182 | 185 |
+| BacMet hits | — | 39 |
+| ICE hits | — | 1,376 |
+| Pathogenic contigs | 589 | 589 |
+| Wall-clock time | 93 min | 93 min |
 
 ---
 
@@ -88,6 +101,8 @@ data/databases/
   card/         card.dmnd  aro_index.tsv           ← CARD ARG annotation
   sarg/         sarg.dmnd                           ← SARG ARG annotation (auto)
   amrfinder/    amrprot.dmnd  fam.tab               ← AMRFinderPlus ARG annotation (auto)
+  bacmet/       bacmet.dmnd  Bacmet_list.tsv       ← BacMet2 biocide/metal resistance (auto)
+  ice/          ice.dmnd  ice_experimental_list.tsv ← ICEberg3 ICE annotation (auto)
   vfdb/         vfdb.dmnd                           ← VFDB virulence factors (auto)
   mge/          isfinder.dmnd                       ← MGE / IS elements (auto)
   taxonomy/     refseq_taxonomy.dmnd  taxon_map.tsv ← Contig taxonomy (auto)
@@ -147,6 +162,8 @@ Builds all databases at their auto-detected paths:
 1. **CARD** — ARG annotation (`data/databases/card/`)
 2. **SARG** — Structured ARG (`data/databases/sarg/sarg.dmnd`)
 3. **AMRFinderPlus DB** — third ARG database (`data/databases/amrfinder/amrprot.dmnd`). Place `AMRfinder.fasta` in `data/databases/` then run: `bash scripts/setup_amrprot_diamond.sh`
+4. **BacMet2** — biocide & metal resistance (`data/databases/bacmet/bacmet.dmnd`). Run: `bash scripts/setup_bacmet_ice_diamond.sh`
+5. **ICEberg3** — integrative conjugative elements (`data/databases/ice/ice.dmnd`). Run: `bash scripts/setup_bacmet_ice_diamond.sh`
 4. **VFDB set A** — virulence factors (`data/databases/vfdb/vfdb.dmnd`)
 5. **Pärnänen MGE database** (`data/databases/mge/isfinder.dmnd`)
 6. **Plasmid databases** — PLSDB + RefSeq + COMPASS (`data/databases/plasmids/`)
