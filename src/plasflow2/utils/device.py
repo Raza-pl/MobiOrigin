@@ -10,8 +10,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Class labels used throughout the project
-CLASSES = ["plasmid", "chromosome", "phage", "archaea"]
+# Class labels for the 3-class MLP (plasmid / chromosome / phage).
+# Archaea is NOT a model class — it is detected post-classification using
+# DIAMOND taxonomy: contigs where archaeal ORF hits > bacterial ORF hits
+# AND archaeal hits >= 5 are relabelled "archaea" after the MLP runs.
+CLASSES = ["plasmid", "chromosome", "phage"]
 NUM_CLASSES = len(CLASSES)
 CLASS_TO_IDX = {c: i for i, c in enumerate(CLASSES)}
 IDX_TO_CLASS = dict(enumerate(CLASSES))

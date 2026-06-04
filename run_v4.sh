@@ -69,7 +69,7 @@ $CMD run \
     --output  "$OUTPUT" \
     --threads "$THREADS" \
     --context wastewater \
-    --plasmid-threshold 0.95 \
+    --plasmid-threshold 0.98 \
     --min-confidence 0.70 \
     2>&1 | tee "$LOG"
 

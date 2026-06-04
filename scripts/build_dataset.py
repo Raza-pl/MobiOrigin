@@ -875,46 +875,16 @@ def main() -> None:
     all_labels.extend(chrom_labels)
     source_stats["chromosome"] = len(chrom_seqs)
 
-    # ── Archaea (streaming directory, same approach as chromosomes) ───────────
-    logger.info("=" * 60)
-    logger.info("ARCHAEA CLASS")
-    logger.info("=" * 60)
-
-    archaea_added = 0
-    if args.archaea_dir and args.archaea_dir.is_dir():
-        archaea_files = _fasta_files_in_dir(args.archaea_dir)
-        logger.info("Streaming %d archaeal genome files …", len(archaea_files))
-        seqs, ids, labels = load_windowed_streaming(
-            archaea_files,
-            label="archaea",
-            max_total=args.max_per_class,
-            min_length=args.min_length,
-            seed=args.seed,
+    # Archaea is NOT a training class in the 3-class model.
+    # Archaeal contigs are detected post-classification in the pipeline using
+    # DIAMOND taxonomy ORF voting (archaea_hits > bacteria_hits AND >= 5).
+    # If --archaea-dir is passed, log a clear explanation and skip it.
+    if args.archaea_dir:
+        logger.info(
+            "NOTE: --archaea-dir was provided but archaea is no longer a model class.\n"
+            "      Archaeal contigs are detected post-classification using DIAMOND taxonomy.\n"
+            "      The archaea directory will be ignored."
         )
-        all_seqs.extend(seqs)
-        all_ids.extend(ids)
-        all_labels.extend(labels)
-        archaea_added = len(seqs)
-        logger.info("  Archaea windows: %d", archaea_added)
-    else:
-        # Fall back to legacy single-file stub if present
-        archaea_path = data_dir / "archaea.fna"
-        if archaea_path.exists():
-            seqs, ids, labels = load_and_subsample(
-                archaea_path, "archaea", args.max_per_class, args.min_length, args.seed
-            )
-            all_seqs.extend(seqs)
-            all_ids.extend(ids)
-            all_labels.extend(labels)
-            archaea_added = len(seqs)
-            logger.info("  Archaea windows (legacy stub): %d", archaea_added)
-        else:
-            logger.warning(
-                "No archaea source found. The archaea class will have ZERO training examples.\n"
-                "  Run: python scripts/download_refseq_archaea.py --outdir data/databases/archaea\n"
-                "  Then pass: --archaea-dir data/databases/archaea"
-            )
-    source_stats["archaea"] = archaea_added
 
     # ── Validation ────────────────────────────────────────────────────────────
     if not all_seqs:
@@ -972,7 +942,8 @@ def main() -> None:
 
     lines += [
         "",
-        "Source breakdown:",
+        "Source breakdown (3-class model: plasmid / chromosome / phage):",
+        "Archaea: detected post-classification via DIAMOND taxonomy ORF voting.",
         *[f"  {k:<14}  {v:>8,}" for k, v in source_stats.items()],
     ]
     stats_path.write_text("\n".join(lines) + "\n")

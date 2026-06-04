@@ -649,8 +649,18 @@ def main(ctx: click.Context, verbose: bool) -> None:
     show_default=True,
     help=(
         "Confidence threshold for plasmid calls (default 0.95). "
-        "Higher than --threshold to correct for class-prior imbalance: "
-        "the model trains on ~25% plasmid but real metagenomes have ~2-5% plasmid."
+        "Higher than --threshold to correct for class-prior imbalance."
+    ),
+)
+@click.option(
+    "--archaea-threshold",
+    "archaea_threshold",
+    default=None,
+    type=float,
+    help=(
+        "Confidence threshold for archaea calls. When not set, uses --threshold (0.70). "
+        "Raise to 0.93+ to reduce false-positive archaea calls in non-archaeal environments "
+        "such as wastewater or clinical samples."
     ),
 )
 @click.option(
@@ -803,6 +813,7 @@ def run(
     aro_index: str | None,
     threshold: float,
     plasmid_threshold: float,
+    archaea_threshold: float | None,
     context: str,
     threads: int,
     min_length: int,

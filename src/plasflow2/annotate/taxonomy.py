@@ -650,6 +650,65 @@ def assign_taxonomy(
 
 
 # ---------------------------------------------------------------------------
+# Archaeal contig detection (paper criteria)
+# ---------------------------------------------------------------------------
+
+
+def detect_archaeal_contigs(
+    hits_by_contig: dict[str, list[TaxHit]],
+    min_archaeal_hits: int = 5,
+) -> set[str]:
+    """Identify archaeal contigs using majority-vote ORF taxonomy.
+
+    Implements the method from Chibani et al. / similar gut metagenome papers:
+      (i)  # ORFs with best hit from Archaea > # ORFs with best hit from Bacteria
+      (ii) # ORFs with best hit from Archaea >= min_archaeal_hits (default 5)
+
+    This is applied post-MLP-classification: the 3-class MLP produces
+    plasmid / chromosome / phage.  Any contig labelled chromosome or
+    unclassified that passes these criteria is relabelled 'archaea' by the
+    pipeline.
+
+    Args:
+        hits_by_contig: Output of parse_diamond_taxonomy_output() —
+            contig_id → list of TaxHit (sorted by bitscore desc, one per ORF).
+            Each TaxHit's lineage contains a GTDB-style domain prefix
+            (d__Archaea or d__Bacteria).
+        min_archaeal_hits: Minimum number of archaeal-domain ORF hits required
+            (criterion ii). Default 5 matches the paper.
+
+    Returns:
+        Set of contig_ids classified as archaeal.
+    """
+    archaeal_contigs: set[str] = set()
+
+    for contig_id, hits in hits_by_contig.items():
+        archaea_count = 0
+        bacteria_count = 0
+        for hit in hits:
+            lin = hit.lineage
+            if not lin:
+                continue
+            # Use only the best (first) hit per ORF — hits are bitscore-sorted
+            first_part = lin.split(";")[0].strip()
+            if first_part.startswith("d__Archaea") or "d__Archaea" in lin[:20]:
+                archaea_count += 1
+            elif first_part.startswith("d__Bacteria") or "d__Bacteria" in lin[:20]:
+                bacteria_count += 1
+
+        if archaea_count >= min_archaeal_hits and archaea_count > bacteria_count:
+            archaeal_contigs.add(contig_id)
+
+    logger.info(
+        "Archaeal detection: %d contigs meet criteria "
+        "(archaea_hits > bacteria_hits AND archaea_hits >= %d)",
+        len(archaeal_contigs),
+        min_archaeal_hits,
+    )
+    return archaeal_contigs
+
+
+# ---------------------------------------------------------------------------
 # Summary helper
 # ---------------------------------------------------------------------------
 

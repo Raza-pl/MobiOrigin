@@ -1,36 +1,23 @@
-"""Inference: run classifier on sequences and return predictions with confidence.
+"""Inference: run 3-class MLP classifier on sequences.
 
-Week 2 — Days 11–12 implementation target.
+Classes: plasmid | chromosome | phage
+Archaea is NOT predicted here — it is detected post-classification in the
+pipeline by comparing archaeal vs bacterial ORF hits from DIAMOND taxonomy
+(paper criteria: archaea_hits > bacteria_hits AND archaea_hits >= 5).
 
 Class-specific thresholds
 -------------------------
-The MLP is trained on a balanced dataset (~25 % per class), but real
-metagenome assemblies contain only ~2–5 % plasmid contigs.  Using a single
-confidence threshold therefore overestimates plasmid prevalence because the
-model has never learned that plasmid is a rare class.
-
-To correct for this prior imbalance we apply *class-specific* thresholds:
+The MLP is trained on a balanced dataset (~33 % per class), but real
+metagenome assemblies contain only ~2–5 % plasmid contigs.  We apply
+*class-specific* thresholds to compensate:
 
 * **plasmid** — default 0.95 (high bar; false positives are costly).
-* **chromosome / phage / archaea** — default 0.70 (lower bar; these are
-  abundant and the cost of a missed call is lower).
-
-Users can override these via the CLI flags ``--threshold`` (all non-plasmid
-classes) and ``--plasmid-threshold`` (plasmid only).
+* **chromosome / phage** — default 0.70 (lower bar).
 
 Argmax fallback (--min-confidence)
 ------------------------------------
-When ``argmax_fallback=True`` (activated via ``--min-confidence`` on the CLI),
-sequences that fall below the applicable threshold are assigned the
-**argmax class** (highest-scoring class) rather than "unclassified", with
-their actual confidence retained.  This trades precision for recall — useful
-when the unclassified rate is unacceptably high and you prefer a best-guess
-assignment over no assignment.
-
-Typical use:
-    plasflow2 run ... --min-confidence 0.70
-    # contigs where no class hits 0.95 (plasmid) / 0.70 (others) get the
-    # argmax label instead of 'unclassified'.
+When ``argmax_fallback=True``, sequences below threshold receive the argmax
+class instead of "unclassified".  Activated via ``--min-confidence`` on CLI.
 """
 
 from __future__ import annotations
@@ -47,7 +34,7 @@ from plasflow2.utils.device import IDX_TO_CLASS, get_device
 logger = logging.getLogger(__name__)
 
 # Default confidence thresholds (class-specific)
-DEFAULT_THRESHOLD = 0.70  # chromosome / phage / archaea
+DEFAULT_THRESHOLD = 0.70          # chromosome / phage
 DEFAULT_PLASMID_THRESHOLD = 0.95  # plasmid — higher bar to correct for class-prior imbalance
 
 
@@ -57,8 +44,10 @@ class Prediction:
 
     sequence_id: str
     label: str  # plasmid | chromosome | phage | archaea | unclassified
-    confidence: float  # max softmax probability (after temperature scaling)
-    scores: dict[str, float]  # per-class probabilities
+    # Note: 'archaea' is assigned post-classification by the pipeline,
+    # not by the MLP itself.
+    confidence: float  # max softmax probability
+    scores: dict[str, float]  # per-class probabilities (3-class MLP output)
 
 
 def predict(
@@ -70,31 +59,20 @@ def predict(
     batch_size: int = 512,
     argmax_fallback: bool = False,
 ) -> list[Prediction]:
-    """Classify sequences using a trained MLP with class-specific thresholds.
+    """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
-    For each sequence the model's argmax class is selected, then a
-    *class-specific* confidence threshold is applied:
-
-    * ``plasmid_threshold`` governs plasmid calls (default 0.95).
-    * ``threshold`` governs all other classes (default 0.70).
-
-    Sequences whose winning class falls below the applicable threshold are
-    labelled ``unclassified`` **unless** ``argmax_fallback=True``, in which
-    case they receive the argmax label with their actual (below-threshold)
-    confidence.  Use this to reduce the unclassified rate at the cost of
-    slightly lower precision on borderline contigs.
+    Archaea is not a model output — it is assigned post-classification by
+    the pipeline using DIAMOND taxonomy ORF voting.
 
     Args:
         sequences: DNA strings.
         sequence_ids: Identifiers corresponding to each sequence.
         model_path: Path to saved .pt weights.
-        threshold: Minimum confidence for chromosome / phage / archaea calls.
-        plasmid_threshold: Minimum confidence for plasmid calls (higher than
-            ``threshold`` to compensate for class-prior imbalance).
+        threshold: Minimum confidence for chromosome / phage calls (default 0.70).
+        plasmid_threshold: Minimum confidence for plasmid calls (default 0.95).
         batch_size: Inference batch size.
         argmax_fallback: When True, contigs below threshold receive the argmax
-            class instead of "unclassified".  Activated by ``--min-confidence``
-            on the CLI.
+            class instead of "unclassified".  Activated by ``--min-confidence``.
 
     Returns:
         List of Prediction objects, one per input sequence.
@@ -133,10 +111,11 @@ def predict(
             idx = int(np.argmax(prob_row))
             confidence = float(prob_row[idx])
             best_class = IDX_TO_CLASS[idx]
-            # Apply class-specific threshold: plasmid requires higher confidence
-            # to compensate for class-prior imbalance (model trained ~25% plasmid
-            # but real metagenomes have ~2–5% plasmid).
-            applicable_threshold = plasmid_threshold if best_class == "plasmid" else threshold
+            # Apply class-specific threshold
+            if best_class == "plasmid":
+                applicable_threshold = plasmid_threshold
+            else:
+                applicable_threshold = threshold
             if confidence >= applicable_threshold:
                 label = best_class
             elif argmax_fallback:

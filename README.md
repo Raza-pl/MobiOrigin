@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**PlasFlow v2** classifies metagenomic contigs as plasmid, chromosome, phage, or archaea, then annotates each contig with antibiotic resistance genes (ARGs from CARD + SARG), virulence factors (VFs), mobile genetic elements (MGEs), plasmid mobility class, circular topology detection, and an AMR risk score (0–10). Results are delivered in an interactive 5-page HTML report with plain-English summaries, a gene-level TSV, and a closest-known-plasmid match column.
+**PlasFlow v2** classifies metagenomic contigs as plasmid, chromosome, phage, or archaea using a **hybrid two-stage classifier** (k-mer MLP + marker XGBoost), then annotates each contig with antibiotic resistance genes (ARGs from CARD + SARG + AMRFinderPlus), virulence factors (VFs), mobile genetic elements (MGEs), plasmid mobility class, circular topology detection, and an AMR risk score (0–10). Results are delivered in an interactive HTML report with plain-English summaries, a gene-level TSV, and a closest-known-plasmid match column.
 
 This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow) (Krawczyk et al., *Nucleic Acids Research* 2018) on a modern Python/PyTorch stack.
 
@@ -12,8 +12,16 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 ## Changelog
 
-### June 2026
-- **Model:** retrained MLP on **800,000 sequences** (200k per class) using 5,922 GTDB r220 bacterial genomes + 1,032 archaeal genomes + 72,556 PLSDB plasmids. Validation accuracy 86.18% (up from ~82% on old 400k dataset). Archaeal retraining ongoing with more GTDB genomes.
+### June 2026 (latest)
+- **Architecture overhaul:** dropped archaea from the MLP training classes. The model is now **3-class (plasmid / chromosome / phage)**, retrained on 900k sequences (300k per class) from 5,922 diverse GTDB r220 bacterial genomes + PLSDB/RefSeq/COMPASS plasmids + INPHARED phages. Validation accuracy **87.14%** (up from 86.18% on the imbalanced 4-class model).
+- **Archaea detection:** archaea are now identified **post-classification** using DIAMOND taxonomy ORF voting — the method from Chibani et al.: archaeal ORF hits > bacterial ORF hits AND archaeal hits ≥ 5. This is the correct approach; k-mer profiles of archaea and bacteria are too similar to distinguish reliably at the MLP stage.
+- **Hallmark gate:** short plasmid calls (≤ 5,000 bp) with zero biological evidence (no PLSDB match, no relaxase/MPF gene, no replicon type, no ICE hit) are now demoted to `unclassified`. This directly addresses the plasmid over-classification seen on wastewater assemblies.
+- **Marker XGBoost classifier (stage 2):** new `classify/marker_classifier.py` — a geNomad-inspired XGBoost model that operates on 15 biological marker features (MLP scores, mobility class, PLSDB match, ARG/MGE/ICE hit density, length, GC, coding density). Scores are combined with the MLP via attention-weighting: when marker evidence is present the XGBoost dominates; when absent the MLP is used unchanged. Train with `scripts/build_marker_dataset.py` + `scripts/train_marker_model.py`; auto-activates when `data/models/marker_xgb.pkl` exists.
+- **Kaiju taxonomy:** plasmid contigs now use a dedicated Kaiju FM-index built from NCBI RefSeq plasmid proteins (`bash scripts/setup_kaiju_db.sh --plasmids-only`). Fixed `kaiju-makedb` CLI flags (`-s` for source, `-t` for threads).
+- **Fix:** `setup_kaiju_db.sh` now uses correct `kaiju-makedb` flags (`-s plasmids`, `-t N` instead of `--database`, `--threads`, `--out`).
+
+### June 2026 (earlier)
+- **Model:** retrained MLP on **800,000 sequences** (200k per class) using 5,922 GTDB r220 bacterial genomes + 1,032 archaeal genomes + 72,556 PLSDB plasmids. Validation accuracy 86.18% (up from ~82% on old 400k dataset).
 - **Fix:** `--plasmid-threshold` is now respected independently of `--min-confidence` — previously `min_confidence` was silently overriding the plasmid threshold, causing plasmid over-classification.
 - **Fix:** plasmid DB matcher now auto-detects `plsdb.fasta` in addition to legacy `PLSDB.fna` filename.
 - **Fix:** replicon typing now uses `minimap2 -x asm5` (assembled-to-assembled preset). The previous `-x sr` (short-read) preset produced zero hits — IncP, IncQ, IncF types were missing from all output.
@@ -35,7 +43,9 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 |---|---|---|
 | Python | 3.5 / TensorFlow 0.10 | 3.10+ / PyTorch 2.x |
 | Classes | plasmid vs chromosome | plasmid · chromosome · **phage** · **archaea** · unclassified |
-| Architecture | TF neural net | **4-class MLP** with length feature |
+| Architecture | TF neural net | **3-class MLP** (k-mer) + **marker XGBoost** (biological features) |
+| Archaea detection | ✗ | Post-classification DIAMOND taxonomy ORF voting (archaeal hits > bacterial AND ≥5) |
+| Hallmark gate | ✗ | Short plasmid calls (≤5 kb) require biological evidence or are demoted |
 | ARG annotation | ✗ | DIAMOND + **CARD + SARG + AMRFinderPlus DB** (triple-DB, auto-detected) |
 | Virulence factors | ✗ | DIAMOND + **VFDB set A** (auto-detected) |
 | MGE / IS elements | ✗ | DIAMOND + **Pärnänen MGE database** + IS family/class enrichment (auto-detected) |
@@ -72,8 +82,10 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Report generation | Python | ~30 sec |
 | **Total (with taxonomy)** | | **~45 sec (cached) · ~45–65 min (fresh)** |
 
-**Results (new model, June 2026):** 24,356 plasmids · 208 ARGs · 448 VFs · 1,093 MGEs · 204 BacMet · 4,225 ICE · 18 replicon types · 2,041 pathogenic contigs · 481,219 genes
-> Note: plasmid count elevated due to training imbalance — retraining with more GTDB chromosomal/archaeal genomes in progress.
+**Results (4-class model, June 2026):** 24,356 plasmids · 208 ARGs · 448 VFs · 1,093 MGEs · 204 BacMet · 4,225 ICE · 18 replicon types · 2,041 pathogenic contigs · 481,219 genes
+> Note: plasmid count was elevated due to 4-class training imbalance. The new 3-class model + hallmark gate addresses this — re-run pending.
+
+**Model accuracy:** 3-class MLP (87.14% val acc, trained on 900k sequences from 5,922 GTDB bacterial genomes + PLSDB/RefSeq/COMPASS + INPHARED).
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads · 93 min wall-clock
@@ -390,25 +402,49 @@ plasflow2 run key options:
 
 ## Retrain the model
 
-The current MLP was trained on 40 chromosome genomes — leading to a high unclassified rate on novel chromosomal contigs. Retrain with the 1,998 diverse genomes in `data/chromosomes/`:
+### Stage 1 — 3-class MLP (k-mer features)
 
 ```bash
-# Rebuild dataset
+# Rebuild dataset (3-class: plasmid / chromosome / phage — no archaea)
 python scripts/build_dataset.py \
-    --plasmids data/databases/plasmids/ \
-    --chroms   data/chromosomes/ \
-    --phages   data/databases/inphared/ \
-    --archaea  data/archaea/ \
-    --out-dir  data/
+    --plasmid-dir data/databases/plasmids/ \
+    --chrom-dir   data/gtdb_genomes/bacteria/ \
+    --data-dir    data/databases/ \
+    --max-per-class 300000 \
+    --out         data/
 
-# Train
+# Train MLP
 python scripts/train_model.py \
     --data   data/features.npy \
     --labels data/labels.npy \
-    --mlp --epochs 50 --out data/models
+    --mlp --epochs 50 --out data/models/
 ```
 
-> **Apple Silicon:** MPS is disabled by default (PyTorch ≤ 2.3 segfaults on large float32 ops). Training runs on CPU (~15 min). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
+> **Apple Silicon:** MPS is disabled by default (PyTorch ≤ 2.3 segfaults on large float32 ops). Training runs on CPU (~63 min for 900k × 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
+
+### Stage 2 — Marker XGBoost (biological features)
+
+The XGBoost second stage uses 15 biological marker features and auto-activates when `data/models/marker_xgb.pkl` exists.
+
+```bash
+# Build marker features (~20 min — runs MLP + DIAMOND on samples)
+python scripts/build_marker_dataset.py \
+    --plasmid-dir data/databases/plasmids/ \
+    --chrom-dir   data/gtdb_genomes/bacteria/ \
+    --model       data/models/mlp_v2.pt \
+    --mob-db      data/databases/mob_suite/mob_proteins.dmnd \
+    --max-per-class 30000 --threads 16 \
+    --out         data/marker_features.npz
+
+# Train XGBoost (~2 min)
+python scripts/train_marker_model.py \
+    --features data/marker_features.npz \
+    --out      data/models/
+```
+
+### Archaea detection (no training required)
+
+Archaea are detected post-classification via DIAMOND taxonomy ORF voting. No separate training is needed — it uses the existing taxonomy DIAMOND run automatically.
 
 ---
 

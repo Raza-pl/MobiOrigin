@@ -45,7 +45,12 @@ from plasflow2.annotate.mobility_diamond import (
 )
 from plasflow2.annotate.pathogens import PathogenResult, detect_pathogens
 from plasflow2.annotate.topology import Topology, detect_topologies
-from plasflow2.annotate.taxonomy import TaxResult, assign_taxonomy
+from plasflow2.annotate.taxonomy import (
+    TaxResult,
+    assign_taxonomy,
+    detect_archaeal_contigs,
+    parse_diamond_taxonomy_output,
+)
 from plasflow2.annotate.taxonomy_kaiju import (
     assign_taxonomy_kaiju,
     find_kaiju_db,
@@ -53,6 +58,12 @@ from plasflow2.annotate.taxonomy_kaiju import (
 )
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.predict import Prediction, predict
+from plasflow2.classify.marker_classifier import (
+    MarkerClassifier,
+    aggregate_scores,
+    extract_marker_features,
+    marker_classifier_available,
+)
 from plasflow2.risk.scorer import RiskScore, score_plasmid, score_nonplasmid
 from plasflow2.utils.fasta import load_fasta, write_fasta
 
@@ -278,6 +289,51 @@ def run_pipeline(
         argmax_fallback=argmax_fallback,
     )
     pred_by_id = {p.sequence_id: p for p in predictions}
+
+    # ------------------------------------------------------------------
+    # 2b. Marker XGBoost — aggregate with MLP scores (if model present)
+    # ------------------------------------------------------------------
+    # Auto-detect the marker XGBoost model next to the MLP weights.
+    _marker_model_path = Path(model_path).parent / "marker_xgb.pkl"
+    if _marker_model_path.exists() and marker_classifier_available():
+        try:
+            _marker_clf = MarkerClassifier.load(_marker_model_path)
+            _seq_by_id = dict(zip(seq_ids, sequences))
+            _n_refined = 0
+            for pred in predictions:
+                cid = pred.sequence_id
+                seq = _seq_by_id.get(cid, "")
+                # Extract marker features using only information available
+                # pre-annotation (MLP scores + sequence properties).
+                # Annotation-derived features (mobility, PLSDB) are added
+                # in the hallmark gate below after annotations run.
+                feats = extract_marker_features(
+                    contig_id=cid,
+                    sequence=seq,
+                    mlp_scores=pred.scores,
+                )
+                marker_scores = _marker_clf.predict_scores(feats)
+                agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
+                # Re-apply thresholds on the aggregated scores
+                best_class = max(agg, key=agg.get)
+                best_conf = agg[best_class]
+                thresh = plasmid_threshold if best_class == "plasmid" else confidence_threshold
+                new_label = best_class if best_conf >= thresh else (
+                    best_class if argmax_fallback else "unclassified"
+                )
+                pred_by_id[cid] = Prediction(
+                    sequence_id=cid,
+                    label=new_label,
+                    confidence=best_conf,
+                    scores=agg,
+                )
+                _n_refined += 1
+            logger.info(
+                "Marker XGBoost aggregation applied to %d contigs (model: %s)",
+                _n_refined, _marker_model_path.name,
+            )
+        except Exception as _exc:
+            logger.warning("Marker XGBoost failed: %s — using MLP scores only.", _exc)
 
     # ------------------------------------------------------------------
     # 3. Extract plasmid contigs
@@ -507,48 +563,93 @@ def run_pipeline(
     if not skip_taxonomy:
         reuse_prot = arg_proteins if arg_proteins.exists() else None
 
-        # Resolve engine: "auto" picks Kaiju if installed + DB present, else DIAMOND
+        # Auto-detect Kaiju DBs: plasmids DB for plasmid contigs, refseq_ref for rest
+        _kaiju_dir_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "kaiju"
+        _kaiju_nodes_auto = _kaiju_dir_auto / "nodes.dmp"
+        _kaiju_names_auto = _kaiju_dir_auto / "names.dmp"
+
+        def _find_fmi(name_substr: str) -> Path | None:
+            """Find a .fmi file whose name contains name_substr."""
+            for p in sorted(_kaiju_dir_auto.glob("*.fmi")):
+                if name_substr in p.name:
+                    return p
+            return None
+
+        _kaiju_plasmids_db  = _find_fmi("plasmid")
+        _kaiju_refseq_db    = _find_fmi("refseq") or _find_fmi("nr")
+        _kaiju_nodes        = Path(kaiju_nodes) if kaiju_nodes else (_kaiju_nodes_auto if _kaiju_nodes_auto.exists() else None)
+        _kaiju_names        = Path(kaiju_names) if kaiju_names else (_kaiju_names_auto if _kaiju_names_auto.exists() else None)
+        # Legacy: user-supplied single DB via --kaiju-db
+        _kaiju_db_legacy    = Path(kaiju_db) if kaiju_db else None
+
+        _kaiju_ready = (
+            kaiju_available()
+            and _kaiju_nodes and _kaiju_nodes.exists()
+            and _kaiju_names and _kaiju_names.exists()
+            and reuse_prot
+            and (taxonomy_engine in ("kaiju", "auto"))
+        )
+
         _use_kaiju = False
-        if taxonomy_engine in ("kaiju", "auto"):
-            _kaiju_db   = Path(kaiju_db)   if kaiju_db   else None
-            _kaiju_nodes = Path(kaiju_nodes) if kaiju_nodes else None
-            _kaiju_names = Path(kaiju_names) if kaiju_names else None
-            if (
-                kaiju_available()
-                and _kaiju_db and _kaiju_db.exists()
-                and _kaiju_nodes and _kaiju_nodes.exists()
-                and _kaiju_names and _kaiju_names.exists()
-            ):
-                _use_kaiju = True
-            elif taxonomy_engine == "kaiju":
-                logger.warning(
-                    "taxonomy_engine='kaiju' requested but kaiju binary or DB files "
-                    "not found — falling back to DIAMOND."
-                )
-
-        if _use_kaiju:
-            if not reuse_prot:
-                logger.warning(
-                    "Kaiju requires pre-predicted proteins (proteins.faa) but none found "
-                    "— falling back to DIAMOND."
-                )
-                _use_kaiju = False
-
-        if _use_kaiju:
-            logger.info(
-                "Taxonomy: Kaiju protein k-mer mode on %d ORFs from %d contigs "
-                "(threads=%d, ~20–50× faster than DIAMOND) …",
-                len(all_orfs), len(records), threads,
+        if _kaiju_ready and (_kaiju_plasmids_db or _kaiju_refseq_db or _kaiju_db_legacy):
+            _use_kaiju = True
+        elif taxonomy_engine == "kaiju":
+            logger.warning(
+                "taxonomy_engine='kaiju' requested but kaiju binary or DB files "
+                "not found — falling back to DIAMOND."
             )
+
+        if _use_kaiju:
             try:
-                taxonomy_by_contig = assign_taxonomy_kaiju(
-                    protein_fasta=reuse_prot,
-                    kaiju_db=_kaiju_db,
-                    nodes_dmp=_kaiju_nodes,
-                    names_dmp=_kaiju_names,
-                    work_dir=work_dir / "taxonomy",
-                    threads=threads,
-                )
+                # ── Plasmid contigs: dedicated plasmids DB (fast, targeted) ──
+                if _kaiju_plasmids_db and plasmid_records:
+                    _plasmid_prot = work_dir / "arg_annotation" / "plasmid_proteins.faa"
+                    # Write plasmid-only proteins subset
+                    plasmid_ids = {cr.record.id for cr in plasmid_results}
+                    if reuse_prot and reuse_prot.exists():
+                        from Bio import SeqIO  # type: ignore
+                        with open(_plasmid_prot, "w") as _pf:
+                            for rec in SeqIO.parse(str(reuse_prot), "fasta"):
+                                import re as _re
+                                cid = _re.sub(r"_\d+$", "", rec.id)
+                                if cid in plasmid_ids:
+                                    _pf.write(f">{rec.id}\n{str(rec.seq)}\n")
+                    if _plasmid_prot.exists() and _plasmid_prot.stat().st_size > 0:
+                        logger.info(
+                            "Taxonomy: Kaiju plasmids DB on %d plasmid contigs …",
+                            len(plasmid_records),
+                        )
+                        plasmid_tax = assign_taxonomy_kaiju(
+                            protein_fasta=_plasmid_prot,
+                            kaiju_db=_kaiju_plasmids_db,
+                            nodes_dmp=_kaiju_nodes,
+                            names_dmp=_kaiju_names,
+                            work_dir=work_dir / "taxonomy_plasmids",
+                            threads=threads,
+                        )
+                        taxonomy_by_contig.update(plasmid_tax)
+                        logger.info("Taxonomy (plasmids DB): %d plasmid contigs classified", len(plasmid_tax))
+
+                # ── All contigs: refseq_ref DB (or legacy single DB) ──────────
+                _general_db = _kaiju_refseq_db or _kaiju_db_legacy
+                if _general_db:
+                    logger.info(
+                        "Taxonomy: Kaiju %s on %d contigs (threads=%d) …",
+                        _general_db.name, len(records), threads,
+                    )
+                    general_tax = assign_taxonomy_kaiju(
+                        protein_fasta=reuse_prot,
+                        kaiju_db=_general_db,
+                        nodes_dmp=_kaiju_nodes,
+                        names_dmp=_kaiju_names,
+                        work_dir=work_dir / "taxonomy",
+                        threads=threads,
+                    )
+                    # Plasmid contigs: prefer plasmids DB result if already classified
+                    for cid, tax in general_tax.items():
+                        if cid not in taxonomy_by_contig:
+                            taxonomy_by_contig[cid] = tax
+
             except Exception as exc:
                 logger.warning("Kaiju taxonomy failed: %s — falling back to DIAMOND.", exc)
                 _use_kaiju = False  # trigger DIAMOND fallback below
@@ -583,6 +684,87 @@ def run_pipeline(
                 )
     else:
         logger.info("Taxonomy annotation skipped (skip_taxonomy=True)")
+
+    # ------------------------------------------------------------------
+    # 6b. Archaeal post-classification override
+    # ------------------------------------------------------------------
+    # The 3-class MLP does not output archaea. Instead, we detect archaeal
+    # contigs from DIAMOND taxonomy using the paper criteria:
+    #   (i)  archaeal ORF hits > bacterial ORF hits
+    #   (ii) archaeal ORF hits >= 5
+    # Only contigs labelled chromosome or unclassified are candidates —
+    # plasmid and phage labels are left unchanged.
+    _archaeal_ids: set[str] = set()
+    _diamond_tax_tsv = work_dir / "taxonomy" / "diamond_taxonomy.tsv"
+    if _diamond_tax_tsv.exists() and _diamond_tax_tsv.stat().st_size > 0:
+        try:
+            _raw_hits = parse_diamond_taxonomy_output(_diamond_tax_tsv)
+            # Only consider chromosome/unclassified candidates to avoid
+            # wrongly overriding plasmid or phage calls.
+            _candidates = {
+                cid for cid, pred in pred_by_id.items()
+                if pred.label in ("chromosome", "unclassified")
+            }
+            _raw_hits_candidates = {k: v for k, v in _raw_hits.items() if k in _candidates}
+            _archaeal_ids = detect_archaeal_contigs(_raw_hits_candidates)
+            if _archaeal_ids:
+                # Override predictions in pred_by_id
+                for cid in _archaeal_ids:
+                    old = pred_by_id[cid]
+                    pred_by_id[cid] = Prediction(
+                        sequence_id=old.sequence_id,
+                        label="archaea",
+                        confidence=old.confidence,
+                        scores=old.scores,
+                    )
+                logger.info(
+                    "Archaeal override: %d contigs relabelled archaea "
+                    "(from chromosome/unclassified) using DIAMOND taxonomy",
+                    len(_archaeal_ids),
+                )
+        except Exception as _exc:
+            logger.warning("Archaeal post-classification failed: %s — skipping.", _exc)
+
+    # ------------------------------------------------------------------
+    # 6c. Hallmark gate — filter short plasmid calls lacking biological evidence
+    # ------------------------------------------------------------------
+    # Short contigs (<= hallmark_length_threshold bp) with plasmid-like k-mer
+    # profiles but ZERO biological evidence are almost certainly false positives
+    # — chromosomal fragments with plasmid-like composition.
+    # Required evidence (any one):
+    #   1. PLSDB / RefSeq / COMPASS database match
+    #   2. Mobility gene: relaxase (conjugative or mobilizable)
+    #   3. Replicon type assigned (IncF, IncP, etc.)
+    #   4. ICE hit (integrative conjugative elements are plasmid-like)
+    HALLMARK_LENGTH_THRESHOLD = 5000  # bp — contigs shorter than this need evidence
+    _hallmark_demoted = 0
+    for record in list(plasmid_records):  # iterate a copy so we can mutate pred_by_id
+        cid = record.id
+        if len(record.seq) > HALLMARK_LENGTH_THRESHOLD:
+            continue  # long enough — trust MLP
+        mob = mobility_by_contig.get(cid)
+        has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
+        has_plsdb   = cid in plasmid_db_hits
+        has_replicon = mob is not None and bool(mob.replicon_type)
+        has_ice      = bool(ice_by_contig.get(cid))
+        if not (has_mobility or has_plsdb or has_replicon or has_ice):
+            old = pred_by_id[cid]
+            pred_by_id[cid] = Prediction(
+                sequence_id=old.sequence_id,
+                label="unclassified",
+                confidence=old.confidence,
+                scores=old.scores,
+            )
+            _hallmark_demoted += 1
+    if _hallmark_demoted:
+        logger.info(
+            "Hallmark gate: demoted %d short plasmid calls (<=%d bp, no biological evidence) "
+            "→ unclassified",
+            _hallmark_demoted,
+            HALLMARK_LENGTH_THRESHOLD,
+        )
+        # Rebuild plasmid_records after demotion
+        plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
 
     # ------------------------------------------------------------------
     # 7. Risk scoring + assemble ContigResult list

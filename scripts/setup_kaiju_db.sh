@@ -1,32 +1,34 @@
 #!/usr/bin/env bash
 # PlasFlow v2 — Kaiju taxonomy database setup
 #
-# Kaiju is 20–50× faster than DIAMOND for contig taxonomy annotation.
-# This script sets up the Kaiju FM-index database + NCBI taxonomy files.
+# Builds TWO Kaiju FM-index databases:
+#   1. plasmids   (4 GB RAM)  — used for plasmid contig taxonomy (fast, targeted)
+#   2. refseq_ref (54 GB RAM) — used for chromosome/phage/archaea taxonomy
 #
 # Requirements:
-#   conda install -c bioconda kaiju   (or pip install kaiju-py, or binary download)
-#   ~25 GB disk space for the RefSeq nr_euk+nr_prok database
+#   conda install -c bioconda kaiju
+#   ~10 GB disk space for plasmids DB
+#   ~60 GB disk space for refseq_ref DB
 #   ~50 MB for NCBI taxonomy files
 #
 # Usage:
-#   bash scripts/setup_kaiju_db.sh [--threads 16] [--db refseq|nr|progenomes]
+#   bash scripts/setup_kaiju_db.sh [--threads 16] [--plasmids-only] [--refseq-only]
 #
-# After this script, run:
-#   plasflow2 run --input assembly.fasta --output results/ --taxonomy-engine kaiju
-# or just:
-#   plasflow2 run --input assembly.fasta --output results/
-# (kaiju is auto-detected when data/databases/kaiju/*.fmi exists)
+# After this script, PlasFlow auto-detects and uses both DBs:
+#   plasmid contigs   → kaiju with plasmids DB
+#   all other contigs → kaiju with refseq_ref DB (falls back to DIAMOND)
 
 set -euo pipefail
 
 THREADS=8
-DB_TYPE="refseq"   # refseq | nr | progenomes (refseq is best for environmental metagenomics)
+BUILD_PLASMIDS=true
+BUILD_REFSEQ=true
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --threads) THREADS="$2"; shift 2 ;;
-        --db)      DB_TYPE="$2";  shift 2 ;;
+        --threads)      THREADS="$2";        shift 2 ;;
+        --plasmids-only) BUILD_REFSEQ=false;  shift 1 ;;
+        --refseq-only)  BUILD_PLASMIDS=false; shift 1 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -36,65 +38,66 @@ KAIJU_DIR="$PROJ/data/databases/kaiju"
 mkdir -p "$KAIJU_DIR"
 
 echo "=== Kaiju database setup ==="
-echo "Output dir: $KAIJU_DIR"
-echo "DB type   : $DB_TYPE"
-echo "Threads   : $THREADS"
+echo "Output dir : $KAIJU_DIR"
+echo "Threads    : $THREADS"
+echo "Build      : plasmids=$BUILD_PLASMIDS  refseq_ref=$BUILD_REFSEQ"
 echo ""
 
-# ── Step 1: Download NCBI taxonomy (nodes.dmp + names.dmp) ──────────────────
+# ── Step 1: Download NCBI taxonomy (shared by both DBs) ───────────────────────
 NODES="$KAIJU_DIR/nodes.dmp"
 NAMES="$KAIJU_DIR/names.dmp"
 
 if [[ -f "$NODES" && -f "$NAMES" ]]; then
-    echo "[skip] NCBI taxonomy files already present."
+    echo "[skip] NCBI taxonomy already present."
 else
-    echo "[1/2] Downloading NCBI taxonomy (~50 MB)…"
+    echo "[1] Downloading NCBI taxonomy (~50 MB)…"
     cd "$KAIJU_DIR"
     wget -q --show-progress \
         https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz \
         -O taxdump.tar.gz
     tar xf taxdump.tar.gz nodes.dmp names.dmp
     rm -f taxdump.tar.gz
-    echo "      → nodes.dmp + names.dmp written."
+    echo "    → nodes.dmp + names.dmp written."
 fi
 
-# ── Step 2: Build Kaiju FM-index ─────────────────────────────────────────────
-FMI="$KAIJU_DIR/kaiju_db_${DB_TYPE}.fmi"
+# ── Step 2: plasmids DB (~4 GB RAM, ~10 min) ─────────────────────────────────
+if [[ "$BUILD_PLASMIDS" == "true" ]]; then
+    FMI_PLASMIDS="$KAIJU_DIR/kaiju_db_plasmids.fmi"
+    if [[ -f "$FMI_PLASMIDS" ]]; then
+        echo "[skip] Plasmids FM-index already present: $FMI_PLASMIDS"
+    else
+        echo "[2] Building plasmids DB (~10 min, ~4 GB RAM)…"
+        cd "$KAIJU_DIR"
+        kaiju-makedb \
+            -s plasmids \
+            -t "$THREADS"
+        echo "    → $FMI_PLASMIDS"
+    fi
+fi
 
-if [[ -f "$FMI" ]]; then
-    echo "[skip] Kaiju FM-index already present: $FMI"
-else
-    echo "[2/2] Building Kaiju $DB_TYPE database (~10–60 min depending on DB size)…"
-    echo "      This downloads protein sequences and builds the BWT/FM-index."
-    cd "$KAIJU_DIR"
-    kaiju-makedb \
-        --threads "$THREADS" \
-        --database "$DB_TYPE" \
-        --out "$KAIJU_DIR/kaiju_db_${DB_TYPE}"
-    echo "      → FM-index written: $FMI"
+# ── Step 3: refseq_ref DB (~54 GB RAM, ~30–60 min) ───────────────────────────
+if [[ "$BUILD_REFSEQ" == "true" ]]; then
+    FMI_REFSEQ="$KAIJU_DIR/kaiju_db_refseq_ref.fmi"
+    if [[ -f "$FMI_REFSEQ" ]]; then
+        echo "[skip] refseq_ref FM-index already present: $FMI_REFSEQ"
+    else
+        echo "[3] Building refseq_ref DB (~30–60 min, ~54 GB RAM)…"
+        echo "    NOTE: requires 54 GB free RAM. Skip with --plasmids-only if insufficient."
+        cd "$KAIJU_DIR"
+        kaiju-makedb \
+            -s refseq_ref \
+            -t "$THREADS"
+        echo "    → $FMI_REFSEQ"
+    fi
 fi
 
 echo ""
 echo "=== Done ==="
-echo "Kaiju DB   : $FMI"
-echo "nodes.dmp  : $NODES"
-echo "names.dmp  : $NAMES"
+echo "nodes.dmp        : $NODES"
+echo "names.dmp        : $NAMES"
+[[ "$BUILD_PLASMIDS" == "true" ]] && echo "plasmids DB      : $KAIJU_DIR/kaiju_db_plasmids.fmi"
+[[ "$BUILD_REFSEQ"   == "true" ]] && echo "refseq_ref DB    : $KAIJU_DIR/kaiju_db_refseq_ref.fmi"
 echo ""
-echo "PlasFlow v2 will auto-detect these files."
-echo "Next run:  plasflow2 run --input assembly.fasta --output results/ --threads $THREADS"
-echo "(or add --taxonomy-engine kaiju to force Kaiju even if DIAMOND DB also present)"
-
-# ── Alternative: build from existing taxonomy_proteins.faa ───────────────────
-# If you already have data/databases/taxonomy/taxonomy_proteins.faa and don't
-# want to download the full RefSeq, you can build a smaller custom FM-index:
-#
-#   PROT="$PROJ/data/databases/taxonomy/taxonomy_proteins.faa"
-#   if [[ -f "$PROT" ]]; then
-#       kaiju-mkbwt -n "$THREADS" -a ACDEFGHIKLMNPQRSTVWY \
-#           -o "$KAIJU_DIR/kaiju_custom" "$PROT"
-#       kaiju-mkfmi "$KAIJU_DIR/kaiju_custom"
-#   fi
-#
-# Note: the custom DB will have GTDB-style headers, not NCBI taxids.
-# In that case, use --taxonomy-engine diamond (the GTDB DIAMOND DB is better
-# for GTDB-style lineages).  Kaiju works best with NCBI taxonomy.
+echo "PlasFlow will auto-detect both DBs on next run:"
+echo "  plasmid contigs   → Kaiju plasmids DB"
+echo "  all other contigs → Kaiju refseq_ref DB (falls back to DIAMOND)"
