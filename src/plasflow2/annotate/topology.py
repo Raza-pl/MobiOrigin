@@ -89,11 +89,33 @@ def detect_topology(
     if len(seq) < 2 * window:
         return "too_short"
 
-    # Also accept assembler-supplied topology annotations in the description
-    desc = record.description.lower()
-    if any(tok in desc for tok in ("circular", "topology=circular", "complete sequence")):
+    # ── Header-based detection (assembler annotations) ────────────────────────
+    # Check both description AND id — different assemblers place the annotation
+    # in different fields.
+    header = (record.description + " " + record.id).lower()
+
+    # SPAdes: "NODE_1_length_X_cov_Y_circular" (in id) or "circular" anywhere
+    # Flye:   "contig_1 [topology=circular]" or "circular"
+    # Unicycler: "1 length=X depth=Yx circular=true"
+    # NCBI:   "[topology=circular]"
+    # MEGAHIT: no annotation (always linear output)
+    # Bandage: "topology=circular"
+    # Canu:   "suggestCircular=yes"
+    _CIRCULAR_TOKENS = (
+        "circular",            # covers SPAdes, Flye, Unicycler "circular=true"
+        "topology=circular",   # NCBI/Bandage explicit
+        "complete sequence",   # NCBI complete genomes
+        "complete genome",
+        "suggestcircular=yes", # Canu
+        "closedcircle",        # some custom assemblers
+    )
+    if any(tok in header for tok in _CIRCULAR_TOKENS):
         return "circular"
 
+    # ── DTR-based detection (phage/plasmid terminal repeats) ─────────────────
+    # Only reliable for phage genomes and some plasmids in long-read assemblies.
+    # Short-read assembled metagenomic contigs almost never produce DTRs even
+    # when the underlying molecule is circular — the assembler linearises them.
     return "circular" if _has_dtr(seq, window, min_identity) else "linear"
 
 

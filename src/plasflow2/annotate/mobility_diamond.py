@@ -71,15 +71,14 @@ _INC_RE = re.compile(
 
 def find_mob_diamond_dbs(
     mob_suite_dir: Path,
-) -> tuple[Path | None, Path | None, Path | None]:
-    """Find mob_proteins.dmnd, mpf_proteins.dmnd, rep_db in mob_suite_dir.
-
-    Tries multiple filenames since mob_suite versions differ.
+) -> tuple[Path | None, Path | None, Path | None, Path | None]:
+    """Find mob/mpf/rep DIAMOND databases and rep nucleotide FASTA in mob_suite_dir.
 
     Returns:
-        (mob_dmnd, mpf_dmnd, rep_fasta) — any may be None if not found.
+        (mob_dmnd, mpf_dmnd, rep_protein_dmnd, rep_fasta) — any may be None if not found.
+        rep_protein_dmnd: built by scripts/setup_rep_diamond.sh — used for plasmid
+            hallmark gating (detecting replication proteins on non-mobile plasmids).
     """
-    # DIAMOND indexes (built by setup_mob_diamond.sh)
     mob_dmnd = next(
         (mob_suite_dir / n for n in ("mob_proteins.dmnd",) if (mob_suite_dir / n).exists()),
         None,
@@ -88,13 +87,16 @@ def find_mob_diamond_dbs(
         (mob_suite_dir / n for n in ("mpf_proteins.dmnd",) if (mob_suite_dir / n).exists()),
         None,
     )
-    # Replicon nucleotide FASTA — mob_suite uses rep.dna.fas or rep_db.fasta
+    rep_protein_dmnd = next(
+        (mob_suite_dir / n for n in ("rep_proteins.dmnd",) if (mob_suite_dir / n).exists()),
+        None,
+    )
     rep_fasta = next(
         (mob_suite_dir / n for n in ("rep.dna.fas", "rep_db.fasta", "replicons.fasta")
          if (mob_suite_dir / n).exists()),
         None,
     )
-    return mob_dmnd, mpf_dmnd, rep_fasta
+    return mob_dmnd, mpf_dmnd, rep_protein_dmnd, rep_fasta
 
 
 # ---------------------------------------------------------------------------

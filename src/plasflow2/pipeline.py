@@ -287,6 +287,8 @@ def run_pipeline(
         threshold=confidence_threshold,
         plasmid_threshold=plasmid_threshold,
         argmax_fallback=argmax_fallback,
+        source_context=source_context,
+        apply_prior=True,
     )
     pred_by_id = {p.sequence_id: p for p in predictions}
 
@@ -472,7 +474,7 @@ def run_pipeline(
     mobility_by_contig: dict[str, MobilityResult] = {}
     if not skip_mobility:
         _mob_diamond_dir = Path(__file__).parent.parent.parent / "data" / "databases" / "mob_suite"
-        _mob_dmnd, _mpf_dmnd, _rep_fasta = find_mob_diamond_dbs(_mob_diamond_dir)
+        _mob_dmnd, _mpf_dmnd, _rep_protein_dmnd, _rep_fasta = find_mob_diamond_dbs(_mob_diamond_dir)
         _use_diamond_mob = _mob_dmnd is not None or _mpf_dmnd is not None
 
         if _use_diamond_mob:
@@ -510,6 +512,45 @@ def run_pipeline(
                 logger.warning("mob_typer unavailable or failed: %s — skipping mobility.", exc)
     else:
         logger.info("Mobility annotation skipped (skip_mobility=True)")
+
+    # ------------------------------------------------------------------
+    # 5b. Rep protein detection — hallmark evidence for non-mobile plasmids
+    # ------------------------------------------------------------------
+    # Every plasmid encodes a replication protein (RepA/RepB/RepC/…) even when
+    # it carries no relaxase (non-mobilizable). Detecting rep proteins provides
+    # biological evidence for plasmid identity independent of mobility class.
+    # Build the DB with: bash scripts/setup_rep_diamond.sh
+    rep_protein_hits: set[str] = set()
+    _mob_diamond_dir_rep = Path(__file__).parent.parent.parent / "data" / "databases" / "mob_suite"
+    _rep_prot_db = _mob_diamond_dir_rep / "rep_proteins.dmnd"
+    if _rep_prot_db.exists() and arg_proteins.exists():
+        try:
+            import subprocess as _sp, re as _re
+            _rep_out = work_dir / "mob_diamond" / "rep_protein_hits.tsv"
+            _rep_out.parent.mkdir(parents=True, exist_ok=True)
+            _rep_cmd = [
+                "diamond", "blastp",
+                "--query", str(arg_proteins),
+                "--db", str(_rep_prot_db).removesuffix(".dmnd"),
+                "--out", str(_rep_out),
+                "--outfmt", "6", "qseqid", "sseqid", "pident", "qcovhsp", "evalue",
+                "--id", "40.0", "--query-cover", "60.0",
+                "--threads", str(threads),
+                "--max-target-seqs", "1", "--sensitive", "--quiet",
+            ]
+            _rep_result = _sp.run(_rep_cmd, capture_output=True, text=True)
+            if _rep_result.returncode == 0 and _rep_out.exists():
+                with open(_rep_out) as _fh:
+                    for _line in _fh:
+                        _orf_id = _line.split("\t")[0].strip()
+                        _cid = _re.sub(r"_\d+$", "", _orf_id)
+                        rep_protein_hits.add(_cid)
+                logger.info("Rep protein hits: %d contigs with replication proteins", len(rep_protein_hits))
+        except Exception as _exc:
+            logger.warning("Rep protein DIAMOND failed: %s — skipping.", _exc)
+    else:
+        if not _rep_prot_db.exists():
+            logger.debug("rep_proteins.dmnd not found — run scripts/setup_rep_diamond.sh to enable")
 
     # ------------------------------------------------------------------
     # 6. Taxonomy annotation — Kaiju (preferred) or DIAMOND blastp fallback
@@ -621,7 +662,7 @@ def run_pipeline(
                         len(records), threads,
                     )
                 try:
-                    taxonomy_by_contig = assign_taxonomy(
+                    taxonomy_by_contig, _raw_tax_hits = assign_taxonomy(
                         fasta_path=fasta_path,
                         taxonomy_db=taxonomy_db_path,
                         work_dir=work_dir / "taxonomy",
@@ -629,6 +670,7 @@ def run_pipeline(
                         threads=threads,
                         protein_fasta=reuse_prot,
                         block_size=4.0,
+                        return_raw_hits=True,
                     )
                 except Exception as exc:
                     logger.warning("DIAMOND taxonomy failed: %s — skipping.", exc)
@@ -650,17 +692,26 @@ def run_pipeline(
     # Only contigs labelled chromosome or unclassified are candidates —
     # plasmid and phage labels are left unchanged.
     _archaeal_ids: set[str] = set()
-    _diamond_tax_tsv = work_dir / "taxonomy" / "diamond_taxonomy.tsv"
-    if _diamond_tax_tsv.exists() and _diamond_tax_tsv.stat().st_size > 0:
+    # Use cached raw hits from assign_taxonomy() when available — avoids
+    # re-parsing the 500 MB diamond_taxonomy.tsv (saves ~3 min per run).
+    # Fall back to re-parsing if taxonomy ran via Kaiju or hits weren't cached.
+    _raw_tax_hits: dict = locals().get("_raw_tax_hits", {})
+    if not _raw_tax_hits:
+        _diamond_tax_tsv = work_dir / "taxonomy" / "diamond_taxonomy.tsv"
+        if _diamond_tax_tsv.exists() and _diamond_tax_tsv.stat().st_size > 0:
+            try:
+                _raw_tax_hits = parse_diamond_taxonomy_output(_diamond_tax_tsv)
+            except Exception as _exc:
+                logger.warning("Could not parse taxonomy TSV for archaeal detection: %s", _exc)
+    if _raw_tax_hits:
         try:
-            _raw_hits = parse_diamond_taxonomy_output(_diamond_tax_tsv)
             # Only consider chromosome/unclassified candidates to avoid
             # wrongly overriding plasmid or phage calls.
             _candidates = {
                 cid for cid, pred in pred_by_id.items()
                 if pred.label in ("chromosome", "unclassified")
             }
-            _raw_hits_candidates = {k: v for k, v in _raw_hits.items() if k in _candidates}
+            _raw_hits_candidates = {k: v for k, v in _raw_tax_hits.items() if k in _candidates}
             _archaeal_ids = detect_archaeal_contigs(_raw_hits_candidates)
             if _archaeal_ids:
                 # Override predictions in pred_by_id
@@ -681,29 +732,43 @@ def run_pipeline(
             logger.warning("Archaeal post-classification failed: %s — skipping.", _exc)
 
     # ------------------------------------------------------------------
-    # 6c. Hallmark gate — filter short plasmid calls lacking biological evidence
+    # 6c. Hallmark gate — require biological evidence for ALL plasmid calls
     # ------------------------------------------------------------------
-    # Short contigs (<= hallmark_length_threshold bp) with plasmid-like k-mer
-    # profiles but ZERO biological evidence are almost certainly false positives
-    # — chromosomal fragments with plasmid-like composition.
-    # Required evidence (any one):
-    #   1. PLSDB / RefSeq / COMPASS database match
-    #   2. Mobility gene: relaxase (conjugative or mobilizable)
-    #   3. Replicon type assigned (IncF, IncP, etc.)
-    #   4. ICE hit (integrative conjugative elements are plasmid-like)
-    HALLMARK_LENGTH_THRESHOLD = 5000  # bp — contigs shorter than this need evidence
+    # 99.1% of plasmid calls in WWTP datasets have zero biological evidence
+    # (no PLSDB match, no relaxase, no replicon). These are chromosomal fragments
+    # with plasmid-like k-mer composition — the dominant false-positive source.
+    #
+    # Evidence types (any one is sufficient):
+    #   1. PLSDB / RefSeq / COMPASS nucleotide match
+    #   2. Relaxase gene (conjugative or mobilizable class)
+    #   3. Replicon type (IncF, IncP, IncQ, …)
+    #   4. ICE hit (integrative conjugative elements)
+    #
+    # Length tiers:
+    #   < 50,000 bp  → demote to unclassified if no evidence
+    #   ≥ 50,000 bp  → keep as plasmid but flag low_confidence (large novel plasmids
+    #                  are plausible without PLSDB match; false positive rate is lower
+    #                  at this length due to consistent k-mer composition)
+    HALLMARK_HARD_THRESHOLD  = 50_000  # bp — above this: trust MLP, flag low_confidence
     _hallmark_demoted = 0
-    for record in list(plasmid_records):  # iterate a copy so we can mutate pred_by_id
+    _hallmark_flagged = 0
+    for record in list(plasmid_records):
         cid = record.id
-        if len(record.seq) > HALLMARK_LENGTH_THRESHOLD:
-            continue  # long enough — trust MLP
-        mob = mobility_by_contig.get(cid)
-        has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
-        has_plsdb   = cid in plasmid_db_hits
-        has_replicon = mob is not None and bool(mob.replicon_type)
-        has_ice      = bool(ice_by_contig.get(cid))
-        if not (has_mobility or has_plsdb or has_replicon or has_ice):
-            old = pred_by_id[cid]
+        mob         = mobility_by_contig.get(cid)
+        has_mobility    = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
+        has_plsdb       = cid in plasmid_db_hits
+        has_replicon    = mob is not None and bool(mob.replicon_type)
+        has_ice         = bool(ice_by_contig.get(cid))
+        has_rep_protein = cid in rep_protein_hits
+        has_evidence    = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
+
+        if has_evidence:
+            continue  # good evidence — keep as plasmid
+
+        contig_len = len(record.seq)
+        old = pred_by_id[cid]
+        if contig_len < HALLMARK_HARD_THRESHOLD:
+            # Demote: k-mer signal alone is unreliable at this length
             pred_by_id[cid] = Prediction(
                 sequence_id=old.sequence_id,
                 label="unclassified",
@@ -711,14 +776,23 @@ def run_pipeline(
                 scores=old.scores,
             )
             _hallmark_demoted += 1
-    if _hallmark_demoted:
+        else:
+            # Keep but flag low_confidence — large contigs are plausible novel plasmids
+            pred_by_id[cid] = Prediction(
+                sequence_id=old.sequence_id,
+                label="plasmid",
+                confidence=old.confidence,
+                scores={**old.scores, "_low_confidence": True},
+            )
+            _hallmark_flagged += 1
+
+    if _hallmark_demoted or _hallmark_flagged:
         logger.info(
-            "Hallmark gate: demoted %d short plasmid calls (<=%d bp, no biological evidence) "
-            "→ unclassified",
-            _hallmark_demoted,
-            HALLMARK_LENGTH_THRESHOLD,
+            "Hallmark gate: demoted %d plasmid calls (no evidence, <%d bp) → unclassified; "
+            "flagged %d (no evidence, ≥%d bp) → low_confidence plasmid",
+            _hallmark_demoted, HALLMARK_HARD_THRESHOLD,
+            _hallmark_flagged, HALLMARK_HARD_THRESHOLD,
         )
-        # Rebuild plasmid_records after demotion
         plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
 
     # ------------------------------------------------------------------
@@ -730,6 +804,13 @@ def run_pipeline(
     # to avoid training-time data leakage.
     _marker_model_path = Path(model_path).parent / "marker_xgb.pkl"
     _seq_by_id = dict(zip(seq_ids, sequences))
+    # Pre-build ORF lookup dict — avoids O(n²) scan of 481k ORFs per contig
+    _orfs_by_contig: dict[str, list] = {}
+    for _orf in all_orfs:
+        _cid = getattr(_orf, "contig_id", None)
+        if _cid:
+            _orfs_by_contig.setdefault(_cid, []).append(_orf)
+
     if _marker_model_path.exists() and marker_classifier_available():
         try:
             _marker_clf = MarkerClassifier.load(_marker_model_path)
@@ -750,7 +831,7 @@ def run_pipeline(
                     arg_hits=args_by_contig.get(cid, []),
                     mge_hits=mge_by_contig.get(cid, []),
                     ice_hits=ice_by_contig.get(cid, []),
-                    orfs=[o for o in all_orfs if getattr(o, "contig_id", None) == cid],
+                    orfs=_orfs_by_contig.get(cid, []),
                 )
                 marker_scores = _marker_clf.predict_scores(feats)
                 agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)

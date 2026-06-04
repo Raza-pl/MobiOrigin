@@ -550,7 +550,8 @@ def assign_taxonomy(
     min_agreement: float = TAX_MIN_AGREEMENT,
     block_size: float = 4.0,
     protein_fasta: Path | str | None = None,
-) -> dict[str, TaxResult]:
+    return_raw_hits: bool = False,
+) -> "dict[str, TaxResult] | tuple[dict[str, TaxResult], dict[str, list[TaxHit]]]":
     """End-to-end taxonomy assignment: DIAMOND → parse → LCA per contig.
 
     Args:
@@ -575,8 +576,9 @@ def assign_taxonomy(
                        When provided, mode is forced to 'blastp'.
 
     Returns:
-        Dict mapping contig_id → :class:`TaxResult`.
-        Contigs with no DIAMOND hits are absent from the dict.
+        If return_raw_hits=False (default): dict mapping contig_id → TaxResult.
+        If return_raw_hits=True: tuple of (TaxResult dict, raw hits_by_contig dict).
+        Passing raw hits to detect_archaeal_contigs() avoids re-parsing the TSV.
     """
     fasta_path = Path(fasta_path)
     taxonomy_db = Path(taxonomy_db)
@@ -646,6 +648,8 @@ def assign_taxonomy(
         len(results),
         100 * classified / len(results) if results else 0,
     )
+    if return_raw_hits:
+        return results, hits_by_contig
     return results
 
 

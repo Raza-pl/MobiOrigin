@@ -37,6 +37,42 @@ logger = logging.getLogger(__name__)
 DEFAULT_THRESHOLD = 0.70          # chromosome / phage
 DEFAULT_PLASMID_THRESHOLD = 0.95  # plasmid — higher bar to correct for class-prior imbalance
 
+# Class prior distributions by sample context.
+# The MLP is trained on balanced classes (33%/33%/33%) but real metagenomes
+# are dominated by chromosomal sequences. Bayesian correction:
+#   corrected[c] = mlp_score[c] * prior[c] / sum_k(mlp_score[k] * prior[k])
+# This reduces false-positive plasmid and phage calls substantially.
+CONTEXT_PRIORS: dict[str, dict[str, float]] = {
+    "wastewater":    {"plasmid": 0.030, "chromosome": 0.930, "phage": 0.040},
+    "clinical":      {"plasmid": 0.050, "chromosome": 0.900, "phage": 0.050},
+    "environmental": {"plasmid": 0.020, "chromosome": 0.950, "phage": 0.030},
+    "unspecified":   {"plasmid": 0.333, "chromosome": 0.334, "phage": 0.333},
+}
+
+
+def apply_prior_correction(
+    scores: dict[str, float],
+    context: str = "unspecified",
+) -> dict[str, float]:
+    """Apply Bayesian class-prior correction to MLP softmax scores.
+
+    Multiplies each class score by its expected frequency in the given sample
+    context, then renormalises. For 'unspecified' the prior is uniform (no
+    correction). This is equivalent to geNomad's score calibration step.
+
+    Args:
+        scores:  Dict of class → probability from MLP softmax.
+        context: Sample context — 'wastewater', 'clinical', 'environmental',
+                 or 'unspecified' (default, no correction).
+
+    Returns:
+        Corrected and renormalised score dict.
+    """
+    prior = CONTEXT_PRIORS.get(context, CONTEXT_PRIORS["unspecified"])
+    corrected = {c: scores.get(c, 0.0) * prior.get(c, 1.0) for c in scores}
+    total = sum(corrected.values()) or 1.0
+    return {c: v / total for c, v in corrected.items()}
+
 
 @dataclass
 class Prediction:
@@ -58,6 +94,8 @@ def predict(
     plasmid_threshold: float = DEFAULT_PLASMID_THRESHOLD,
     batch_size: int = 512,
     argmax_fallback: bool = False,
+    source_context: str = "unspecified",
+    apply_prior: bool = True,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
@@ -108,9 +146,14 @@ def predict(
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
 
         for i, prob_row in enumerate(probs):
-            idx = int(np.argmax(prob_row))
-            confidence = float(prob_row[idx])
-            best_class = IDX_TO_CLASS[idx]
+            raw_scores = {IDX_TO_CLASS[j]: float(prob_row[j]) for j in range(len(prob_row))}
+            # Apply Bayesian prior correction before thresholding
+            if apply_prior and source_context != "unspecified":
+                scores = apply_prior_correction(raw_scores, source_context)
+            else:
+                scores = raw_scores
+            best_class = max(scores, key=scores.get)
+            confidence = float(scores[best_class])
             # Apply class-specific threshold
             if best_class == "plasmid":
                 applicable_threshold = plasmid_threshold
@@ -128,7 +171,7 @@ def predict(
                     sequence_id=sequence_ids[start + i],
                     label=label,
                     confidence=confidence,
-                    scores={IDX_TO_CLASS[j]: float(prob_row[j]) for j in range(len(prob_row))},
+                    scores=scores,  # prior-corrected scores
                 )
             )
 
