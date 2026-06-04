@@ -35,6 +35,13 @@ Then train:
 
 from __future__ import annotations
 
+# ── macOS ARM segfault fix: cap BLAS threads before numpy/torch import ───────
+import os as _os
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    _os.environ.setdefault(_v, "1")
+# ─────────────────────────────────────────────────────────────────────────────
+
 import argparse
 import gzip
 import logging
