@@ -75,21 +75,25 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 MARKER_FEATURE_NAMES = [
-    # MLP scores
+    # MLP scores (3)
     "mlp_plasmid_score",
     "mlp_chromosome_score",
     "mlp_phage_score",
-    # Mobility / plasmid markers
+    # Mobility / plasmid markers (5) — note: has_plsdb_match is intentionally
+    # excluded from the model. A PLSDB match is used as a hard rule-based
+    # override AFTER the XGBoost scores, not as a learned feature. Including it
+    # as a training feature causes data leakage (all training plasmids come from
+    # PLSDB so they all get has_plsdb_match=1, teaching the model to ignore all
+    # other evidence).
     "is_conjugative",
     "is_mobilizable",
     "has_replicon",
-    "has_plsdb_match",
     "has_ice",
-    # ARG / MGE density (per kb)
+    # ARG / MGE density (per kb) (3)
     "n_arg_per_kb",
     "n_mge_per_kb",
     "n_ice_per_kb",
-    # Sequence properties
+    # Sequence properties (4) — computed from ORF prediction + raw sequence
     "log10_length",
     "gc_content",
     "coding_density",
@@ -97,8 +101,8 @@ MARKER_FEATURE_NAMES = [
 ]
 
 N_MARKER_FEATURES = len(MARKER_FEATURE_NAMES)
-# Index of the mobility features — used to compute marker_gene_fraction
-_MOBILITY_FEATURE_INDICES = [3, 4, 5, 6, 7]  # conjugative, mobilizable, replicon, plsdb, ice
+# Mobility feature indices — used to compute marker_gene_fraction
+_MOBILITY_FEATURE_INDICES = [3, 4, 5, 6]  # conjugative, mobilizable, replicon, ice
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +125,9 @@ class ContigMarkerFeatures:
     is_conjugative: float = 0.0
     is_mobilizable: float = 0.0
     has_replicon: float = 0.0
-    has_plsdb_match: float = 0.0
     has_ice: float = 0.0
+    # Note: has_plsdb_match is NOT a model feature — it is used as a hard
+    # override rule after XGBoost scoring (see aggregate_scores / pipeline).
 
     # ARG / MGE density
     n_arg_per_kb: float = 0.0
@@ -136,7 +141,7 @@ class ContigMarkerFeatures:
     n_orfs_per_kb: float = 1.0
 
     def to_array(self) -> NDArray[np.float32]:
-        """Return feature vector as float32 array."""
+        """Return feature vector as float32 array (14 features, no has_plsdb_match)."""
         return np.array([
             self.mlp_plasmid_score,
             self.mlp_chromosome_score,
@@ -144,7 +149,6 @@ class ContigMarkerFeatures:
             self.is_conjugative,
             self.is_mobilizable,
             self.has_replicon,
-            self.has_plsdb_match,
             self.has_ice,
             self.n_arg_per_kb,
             self.n_mge_per_kb,
@@ -159,13 +163,10 @@ class ContigMarkerFeatures:
     def marker_gene_fraction(self) -> float:
         """Fraction of biological marker features that are positive.
 
-        Used as the attention weight α: high when markers are present
-        (trust marker XGBoost more), low when absent (trust MLP more).
+        Used as the attention weight α: high when markers present →
+        trust XGBoost more. Low when absent → trust MLP more.
         """
-        vals = [
-            self.is_conjugative, self.is_mobilizable, self.has_replicon,
-            self.has_plsdb_match, self.has_ice,
-        ]
+        vals = [self.is_conjugative, self.is_mobilizable, self.has_replicon, self.has_ice]
         return float(sum(vals) / len(vals))
 
 
@@ -179,7 +180,6 @@ def extract_marker_features(
     sequence: str,
     mlp_scores: dict[str, float],
     mobility=None,          # MobilityResult | None
-    plasmid_db_hit=None,    # PlasmidDBHit | None
     arg_hits: list = None,  # list[ARGHit]
     mge_hits: list = None,  # list[MGEHit]
     ice_hits: list = None,  # list[ICEHit]
@@ -195,7 +195,6 @@ def extract_marker_features(
         sequence: Nucleotide sequence string.
         mlp_scores: Dict of class → probability from MLP (e.g. {'plasmid': 0.9, ...}).
         mobility: MobilityResult from mobility_diamond.
-        plasmid_db_hit: PlasmidDBHit from plasmid_db.
         arg_hits: ARGHit list for this contig.
         mge_hits: MGEHit list for this contig.
         ice_hits: ICEHit list for this contig.
@@ -237,8 +236,7 @@ def extract_marker_features(
         is_mob  = 1.0 if mc == "mobilizable" else 0.0
         has_rep = 1.0 if getattr(mobility, "replicon_type", None) else 0.0
 
-    has_plsdb = 1.0 if plasmid_db_hit is not None else 0.0
-    has_ice   = 1.0 if ice_hits else 0.0
+    has_ice = 1.0 if ice_hits else 0.0
 
     # Density features
     n_arg = len(arg_hits) / length_kb
@@ -267,7 +265,6 @@ def extract_marker_features(
         is_conjugative=is_conj,
         is_mobilizable=is_mob,
         has_replicon=has_rep,
-        has_plsdb_match=has_plsdb,
         has_ice=has_ice,
         n_arg_per_kb=n_arg,
         n_mge_per_kb=n_mge,

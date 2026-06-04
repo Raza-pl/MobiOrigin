@@ -291,51 +291,6 @@ def run_pipeline(
     pred_by_id = {p.sequence_id: p for p in predictions}
 
     # ------------------------------------------------------------------
-    # 2b. Marker XGBoost — aggregate with MLP scores (if model present)
-    # ------------------------------------------------------------------
-    # Auto-detect the marker XGBoost model next to the MLP weights.
-    _marker_model_path = Path(model_path).parent / "marker_xgb.pkl"
-    if _marker_model_path.exists() and marker_classifier_available():
-        try:
-            _marker_clf = MarkerClassifier.load(_marker_model_path)
-            _seq_by_id = dict(zip(seq_ids, sequences))
-            _n_refined = 0
-            for pred in predictions:
-                cid = pred.sequence_id
-                seq = _seq_by_id.get(cid, "")
-                # Extract marker features using only information available
-                # pre-annotation (MLP scores + sequence properties).
-                # Annotation-derived features (mobility, PLSDB) are added
-                # in the hallmark gate below after annotations run.
-                feats = extract_marker_features(
-                    contig_id=cid,
-                    sequence=seq,
-                    mlp_scores=pred.scores,
-                )
-                marker_scores = _marker_clf.predict_scores(feats)
-                agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
-                # Re-apply thresholds on the aggregated scores
-                best_class = max(agg, key=agg.get)
-                best_conf = agg[best_class]
-                thresh = plasmid_threshold if best_class == "plasmid" else confidence_threshold
-                new_label = best_class if best_conf >= thresh else (
-                    best_class if argmax_fallback else "unclassified"
-                )
-                pred_by_id[cid] = Prediction(
-                    sequence_id=cid,
-                    label=new_label,
-                    confidence=best_conf,
-                    scores=agg,
-                )
-                _n_refined += 1
-            logger.info(
-                "Marker XGBoost aggregation applied to %d contigs (model: %s)",
-                _n_refined, _marker_model_path.name,
-            )
-        except Exception as _exc:
-            logger.warning("Marker XGBoost failed: %s — using MLP scores only.", _exc)
-
-    # ------------------------------------------------------------------
     # 3. Extract plasmid contigs
     # ------------------------------------------------------------------
     plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
@@ -764,6 +719,82 @@ def run_pipeline(
             HALLMARK_LENGTH_THRESHOLD,
         )
         # Rebuild plasmid_records after demotion
+        plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
+
+    # ------------------------------------------------------------------
+    # 6d. Marker XGBoost — post-annotation rescoring of plasmid candidates
+    # ------------------------------------------------------------------
+    # Runs AFTER all annotations so every feature has a real value:
+    # mobility class, ARG/MGE/ICE hit density, ORF coding density.
+    # PLSDB match is used as a hard override RULE (not a model feature)
+    # to avoid training-time data leakage.
+    _marker_model_path = Path(model_path).parent / "marker_xgb.pkl"
+    _seq_by_id = dict(zip(seq_ids, sequences))
+    if _marker_model_path.exists() and marker_classifier_available():
+        try:
+            _marker_clf = MarkerClassifier.load(_marker_model_path)
+            _n_xgb_promoted = 0
+            _n_xgb_demoted = 0
+
+            # Rescore all current plasmid predictions using real annotation data
+            for record in list(plasmid_records):
+                cid = record.id
+                pred = pred_by_id[cid]
+                seq = _seq_by_id.get(cid, "")
+
+                feats = extract_marker_features(
+                    contig_id=cid,
+                    sequence=seq,
+                    mlp_scores=pred.scores,
+                    mobility=mobility_by_contig.get(cid),
+                    arg_hits=args_by_contig.get(cid, []),
+                    mge_hits=mge_by_contig.get(cid, []),
+                    ice_hits=ice_by_contig.get(cid, []),
+                    orfs=[o for o in orfs if getattr(o, "contig_id", None) == cid],
+                )
+                marker_scores = _marker_clf.predict_scores(feats)
+                agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
+
+                # PLSDB match: hard override — confirmed plasmid identity
+                if cid in plasmid_db_hits:
+                    agg = {k: (0.97 if k == "plasmid" else (1 - 0.97) / 2) for k in agg}
+
+                best_class = max(agg, key=agg.get)
+                best_conf = agg[best_class]
+                thresh = plasmid_threshold if best_class == "plasmid" else confidence_threshold
+                new_label = best_class if best_conf >= thresh else (
+                    best_class if argmax_fallback else "unclassified"
+                )
+
+                if new_label != pred.label:
+                    if new_label == "plasmid":
+                        _n_xgb_promoted += 1
+                    else:
+                        _n_xgb_demoted += 1
+                    pred_by_id[cid] = Prediction(
+                        sequence_id=cid,
+                        label=new_label,
+                        confidence=best_conf,
+                        scores=agg,
+                    )
+
+            logger.info(
+                "Marker XGBoost: promoted %d → plasmid, demoted %d → other",
+                _n_xgb_promoted, _n_xgb_demoted,
+            )
+            # Rebuild plasmid_records after XGBoost rescoring
+            plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
+        except Exception as _exc:
+            logger.warning("Marker XGBoost failed: %s — using MLP + hallmark gate only.", _exc)
+    elif plasmid_db_hits:
+        # No XGBoost model: still apply PLSDB hard override for confirmed matches
+        for cid in plasmid_db_hits:
+            if cid in pred_by_id and pred_by_id[cid].label != "plasmid":
+                old = pred_by_id[cid]
+                pred_by_id[cid] = Prediction(
+                    sequence_id=cid, label="plasmid",
+                    confidence=0.97, scores={**old.scores, "plasmid": 0.97},
+                )
         plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
 
     # ------------------------------------------------------------------

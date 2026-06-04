@@ -123,38 +123,38 @@ def sample_sequences(
     return reservoir
 
 
-def run_diamond_mob(
+def run_diamond_db(
     proteins_faa: Path,
-    mob_db: Path,
+    db: Path,
     out_tsv: Path,
     threads: int = 8,
-) -> dict[str, bool]:
-    """Run DIAMOND against mob_proteins, return contig_id → has_relaxase."""
+    min_id: float = 40.0,
+    min_cov: float = 60.0,
+) -> set[str]:
+    """Run DIAMOND blastp against db, return set of contig_ids with hits."""
+    import re
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "diamond", "blastp",
         "--query", str(proteins_faa),
-        "--db", str(mob_db).removesuffix(".dmnd"),
+        "--db", str(db).removesuffix(".dmnd"),
         "--out", str(out_tsv),
         "--outfmt", "6", "qseqid", "sseqid", "pident", "qcovhsp", "evalue",
-        "--id", "40.0", "--query-cover", "60.0",
+        "--id", str(min_id), "--query-cover", str(min_cov),
         "--threads", str(threads),
         "--max-target-seqs", "1",
         "--sensitive", "--quiet",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        logger.warning("DIAMOND mob failed: %s", result.stderr[:200])
-        return {}
-
-    import re
-    hits: dict[str, bool] = {}
+        logger.warning("DIAMOND failed (%s): %s", db.name, result.stderr[:200])
+        return set()
+    hits: set[str] = set()
     with open(out_tsv) as fh:
         for line in fh:
             orf_id = line.split("\t")[0].strip()
             contig_id = re.sub(r"_\d+$", "", orf_id)
-            hits[contig_id] = True
-    logger.info("  MOB DIAMOND hits: %d contigs", len(hits))
+            hits.add(contig_id)
     return hits
 
 
@@ -182,10 +182,24 @@ def build_class_features(
     samples: list[tuple[str, str]],
     model_path: Path,
     mob_db: Path | None,
+    mpf_db: Path | None,
     threads: int,
     work_dir: Path,
 ) -> NDArray:
-    """Build (N, N_MARKER_FEATURES) matrix for one class."""
+    """Build (N, N_MARKER_FEATURES) matrix for one class with real computed features.
+
+    Features computed here:
+      - MLP scores (real, from model inference)
+      - coding_density, n_orfs_per_kb (real, from pyrodigal ORF prediction)
+      - is_mobilizable (real: relaxase hit from mob_proteins DIAMOND)
+      - is_conjugative (real: relaxase + MPF hit from both mob + mpf DIAMOND)
+      - gc_content, log10_length (real, from sequence)
+      - has_replicon, has_ice, n_arg/mge/ice_per_kb: 0 (not available here)
+        — XGBoost learns these don't discriminate in training; at inference
+          they carry real signal from actual annotations.
+    """
+    import re
+
     seq_ids = [s[0] for s in samples]
     sequences = [s[1] for s in samples]
     n = len(sequences)
@@ -195,43 +209,73 @@ def build_class_features(
     logger.info("  Running MLP …")
     mlp_by_id = predict_mlp(sequences, seq_ids, model_path)
 
-    # 2. MOB DIAMOND (relaxase markers — key for plasmid detection)
-    mob_hits: dict[str, bool] = {}
-    if mob_db and mob_db.exists():
-        try:
-            import pyrodigal  # type: ignore[import]
+    # 2. ORF prediction + MOB DIAMOND
+    # Per-contig ORF stats (coding_density, n_orfs_per_kb)
+    orfs_per_contig: dict[str, int] = {}
+    covered_per_contig: dict[str, int] = {}  # total bp covered by ORFs
+    relaxase_hits: set[str] = set()
+    mpf_hits: set[str] = set()
 
-            proteins_faa = work_dir / f"{label}_proteins.faa"
-            logger.info("  Predicting ORFs for MOB DIAMOND …")
-            with open(proteins_faa, "w") as fh:
-                gene_pred = pyrodigal.GeneFinder(meta=True)
-                for sid, seq in zip(seq_ids, sequences):
-                    try:
-                        for i, gene in enumerate(gene_pred.find_genes(seq.encode()), 1):
-                            fh.write(f">{sid}_{i}\n{gene.translate()}\n")
-                    except Exception:
-                        pass
+    try:
+        import pyrodigal  # type: ignore[import]
 
-            mob_tsv = work_dir / f"{label}_mob_hits.tsv"
-            mob_hits = run_diamond_mob(proteins_faa, mob_db, mob_tsv, threads)
-        except ImportError:
-            logger.warning("  pyrodigal not available — skipping ORF-based MOB features")
-    else:
-        logger.info("  MOB DB not provided — mobility features will be 0")
+        proteins_faa = work_dir / f"{label}_proteins.faa"
+        logger.info("  Predicting ORFs …")
+        gene_pred = pyrodigal.GeneFinder(meta=True)
+        with open(proteins_faa, "w") as fh:
+            for sid, seq in zip(seq_ids, sequences):
+                try:
+                    genes = gene_pred.find_genes(seq.encode())
+                    orfs_per_contig[sid] = len(genes)
+                    covered_per_contig[sid] = sum(
+                        abs(g.end - g.begin) for g in genes
+                    )
+                    for i, gene in enumerate(genes, 1):
+                        fh.write(f">{sid}_{i}\n{gene.translate()}\n")
+                except Exception:
+                    orfs_per_contig[sid] = 0
+                    covered_per_contig[sid] = 0
+
+        if mob_db and mob_db.exists():
+            logger.info("  DIAMOND vs relaxase (mob_proteins) …")
+            relaxase_hits = run_diamond_db(
+                proteins_faa, mob_db,
+                work_dir / f"{label}_relaxase_hits.tsv", threads,
+            )
+            logger.info("    Relaxase hits: %d contigs", len(relaxase_hits))
+
+        if mpf_db and mpf_db.exists():
+            logger.info("  DIAMOND vs MPF (mpf_proteins) …")
+            mpf_hits = run_diamond_db(
+                proteins_faa, mpf_db,
+                work_dir / f"{label}_mpf_hits.tsv", threads,
+            )
+            logger.info("    MPF hits: %d contigs", len(mpf_hits))
+
+    except ImportError:
+        logger.warning("  pyrodigal not available — ORF features will be 0")
 
     # 3. Assemble feature matrix
     X = np.zeros((n, N_MARKER_FEATURES), dtype=np.float32)
     for i, (sid, seq) in enumerate(zip(seq_ids, sequences)):
         mlp_scores = mlp_by_id.get(sid, {"plasmid": 0.33, "chromosome": 0.33, "phage": 0.34})
-        has_mob = mob_hits.get(sid, False)
-
-        # For plasmid training examples, assume conjugative if mob hit
-        is_conj = 1.0 if (has_mob and label == "plasmid") else 0.0
-        is_mob_only = 1.0 if (has_mob and label != "plasmid") else 0.0
 
         length_bp = max(len(seq), 1)
+        length_kb = length_bp / 1000.0
         seq_upper = seq.upper()
         gc = (seq_upper.count("G") + seq_upper.count("C")) / length_bp
+
+        # Coding density from ORFs
+        n_orfs = orfs_per_contig.get(sid, 0)
+        covered = covered_per_contig.get(sid, 0)
+        coding_density = min(covered / length_bp, 1.0) if length_bp > 0 else 0.85
+        n_orfs_kb = n_orfs / length_kb if length_kb > 0 else 1.0
+
+        # Mobility: relaxase only → mobilizable; relaxase + MPF → conjugative
+        has_relaxase = sid in relaxase_hits
+        has_mpf = sid in mpf_hits
+        is_conj = 1.0 if (has_relaxase and has_mpf) else 0.0
+        is_mob  = 1.0 if (has_relaxase and not has_mpf) else 0.0
 
         feat = ContigMarkerFeatures(
             contig_id=sid,
@@ -239,17 +283,16 @@ def build_class_features(
             mlp_chromosome_score=mlp_scores.get("chromosome", 0.0),
             mlp_phage_score=mlp_scores.get("phage", 0.0),
             is_conjugative=is_conj,
-            is_mobilizable=is_mob_only,
-            has_replicon=0.0,     # not available at dataset-build time
-            has_plsdb_match=1.0 if label == "plasmid" else 0.0,
-            has_ice=0.0,
-            n_arg_per_kb=0.0,
-            n_mge_per_kb=0.0,
-            n_ice_per_kb=0.0,
+            is_mobilizable=is_mob,
+            has_replicon=0.0,    # not computed at training time
+            has_ice=0.0,         # not computed at training time
+            n_arg_per_kb=0.0,    # not computed at training time
+            n_mge_per_kb=0.0,    # not computed at training time
+            n_ice_per_kb=0.0,    # not computed at training time
             log10_length=float(np.log10(length_bp)),
             gc_content=gc,
-            coding_density=0.85,  # prior; no ORF prediction here
-            n_orfs_per_kb=1.0,
+            coding_density=coding_density,
+            n_orfs_per_kb=n_orfs_kb,
         )
         X[i] = feat.to_array()
 
@@ -264,7 +307,9 @@ def main() -> None:
     parser.add_argument("--model",       type=Path, required=True,
                         help="Trained MLP weights (.pt)")
     parser.add_argument("--mob-db",      type=Path, default=None,
-                        help="MOB proteins DIAMOND DB (.dmnd)")
+                        help="Relaxase proteins DIAMOND DB (mob_proteins.dmnd)")
+    parser.add_argument("--mpf-db",      type=Path, default=None,
+                        help="MPF proteins DIAMOND DB (mpf_proteins.dmnd)")
     parser.add_argument("--max-per-class", type=int, default=30_000)
     parser.add_argument("--threads",     type=int, default=8)
     parser.add_argument("--out",         type=Path, default=Path("data/marker_features.npz"))
@@ -274,13 +319,20 @@ def main() -> None:
     work_dir = args.out.parent / "marker_work"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Auto-detect MOB DB
+    # Auto-detect MOB / MPF DBs
     mob_db = args.mob_db
     if mob_db is None:
         mob_db = args.data_dir / "mob_suite" / "mob_proteins.dmnd"
         if not mob_db.exists():
             mob_db = None
             logger.info("MOB DB not found — relaxase features will be 0")
+
+    mpf_db = args.mpf_db
+    if mpf_db is None:
+        mpf_db = args.data_dir / "mob_suite" / "mpf_proteins.dmnd"
+        if not mpf_db.exists():
+            mpf_db = None
+            logger.info("MPF DB not found — conjugative feature will be 0")
 
     all_X: list[NDArray] = []
     all_y: list[int] = []
@@ -292,7 +344,7 @@ def main() -> None:
         files = _fasta_files(plasmid_dir)
         samples = sample_sequences(files, args.max_per_class, seed=args.seed)
         X_plas = build_class_features(
-            "plasmid", samples, args.model, mob_db, args.threads, work_dir
+            "plasmid", samples, args.model, mob_db, mpf_db, args.threads, work_dir
         )
         all_X.append(X_plas)
         all_y.extend([CLASS_TO_IDX["plasmid"]] * len(samples))
@@ -307,7 +359,7 @@ def main() -> None:
         files = _fasta_files(chrom_dir)
         samples = sample_sequences(files, args.max_per_class, seed=args.seed + 1)
         X_chrom = build_class_features(
-            "chromosome", samples, args.model, mob_db, args.threads, work_dir
+            "chromosome", samples, args.model, mob_db, mpf_db, args.threads, work_dir
         )
         all_X.append(X_chrom)
         all_y.extend([CLASS_TO_IDX["chromosome"]] * len(samples))
@@ -325,7 +377,7 @@ def main() -> None:
     if inphared:
         samples = sample_sequences([inphared], args.max_per_class, seed=args.seed + 2)
         X_phage = build_class_features(
-            "phage", samples, args.model, mob_db, args.threads, work_dir
+            "phage", samples, args.model, mob_db, mpf_db, args.threads, work_dir
         )
         all_X.append(X_phage)
         all_y.extend([CLASS_TO_IDX["phage"]] * len(samples))
