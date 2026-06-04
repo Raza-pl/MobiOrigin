@@ -750,7 +750,7 @@ def run_pipeline(
                     arg_hits=args_by_contig.get(cid, []),
                     mge_hits=mge_by_contig.get(cid, []),
                     ice_hits=ice_by_contig.get(cid, []),
-                    orfs=[o for o in orfs if getattr(o, "contig_id", None) == cid],
+                    orfs=[o for o in all_orfs if getattr(o, "contig_id", None) == cid],
                 )
                 marker_scores = _marker_clf.predict_scores(feats)
                 agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
