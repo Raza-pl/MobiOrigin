@@ -300,7 +300,7 @@ def annotate_mobility_diamond(
     work_dir      = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    mob_dmnd, mpf_dmnd, rep_fasta = find_mob_diamond_dbs(mob_suite_dir)
+    mob_dmnd, mpf_dmnd, _rep_protein_dmnd, rep_fasta = find_mob_diamond_dbs(mob_suite_dir)
 
     if mob_dmnd is None and mpf_dmnd is None:
         logger.warning(
