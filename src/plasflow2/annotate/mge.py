@@ -72,7 +72,8 @@ _IS_FAMILY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Transposons
     (re.compile(r"\bTn3\b|\bTn903\b|\bTn1000\b", re.I), "Tn3"),
     (re.compile(r"\bTn10\b|\bTn5\b|\bTn7\b|\bTn916\b", re.I), "Complex Tn"),
-    (re.compile(r"\btniA\b|\btniB\b|\btnpA\b|\btnpR\b", re.I), "Transposon"),
+    # tnpA/tniA/tnpR + optional digit suffix (tnpA1, tnpA2, tniB3, etc.)
+    (re.compile(r"\btni[AB]\d*\b|\btnp[AR]\d*\b|\btransposase\b", re.I), "Transposon"),
     # Integrons (intI1/intI2 integrase, istA/istB cassette genes)
     (re.compile(r"\bintegron\b|\bintI\b|\bintI1\b|\bintI2\b", re.I), "Integron"),
     (re.compile(r"\bistA\b|\bistB\b", re.I), "Integron"),
@@ -82,15 +83,42 @@ _IS_FAMILY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
+def _extract_gene_name_from_sseqid(sseqid: str) -> str:
+    """Extract the gene_name component from a Pärnänen-format sseqid.
+
+    Pärnänen database headers use: {row_id}_{gene_name}_{NCBI_accession}
+    e.g. "904_tnpA_CP000353.2" → "tnpA"
+         "2597_IS91_MNXT01000023.1" → "IS91"
+         "1818_tnpA_7_10_LN890520.1" → "tnpA_7_10"
+
+    Also handles plain ISfinder names: "ISAba1", "IS26", "intI1".
+    """
+    # Already a clean name (ISfinder style) — no leading digits
+    if not re.match(r"^\d+_", sseqid):
+        return sseqid
+    # Strip leading row_id: "904_tnpA_CP000353.2" → "tnpA_CP000353.2"
+    without_id = re.sub(r"^\d+_", "", sseqid)
+    # Strip trailing NCBI accession: ends with _LETTERS+DIGITS+.DIGITS or _LETTERS+DIGITS
+    without_accession = re.sub(r"_[A-Z]{1,6}\d{5,}(\.\d+)?$", "", without_id, flags=re.I)
+    return without_accession if without_accession else without_id
+
+
 def _infer_is_family(name: str, description: str) -> str:
     """Infer the IS/MGE family from element name and description.
 
     Handles both ISfinder-style names (ISAba1, IS26) and Pärnänen database
-    NCBI-style gene names (intI1_1, tniA_5, IS1_3).
+    NCBI-style gene names embedded in sseqids (904_tnpA_CP000353.2).
+
+    Key fix: replace underscores with spaces before pattern matching, because
+    `_` is a `\\w` character so `\\b` word boundaries don't fire around
+    `_tnpA_` — making `\\btnpA\\b` fail on "904_tnpA_CP000353.2".
     """
-    # Strip trailing _<number> suffix common in Pärnänen headers (e.g. "IS1_3" → "IS1")
-    clean_name = re.sub(r"_\d+$", "", name)
-    text = f"{clean_name} {description}"
+    # Extract just the gene_name component from Pärnänen-format IDs
+    gene = _extract_gene_name_from_sseqid(name)
+    # Strip trailing _<number> suffix (e.g. "IS1_3" → "IS1", "tnpA1" stays)
+    clean_name = re.sub(r"_\d+$", "", gene)
+    # Replace underscores with spaces so \b word boundaries work correctly
+    text = f"{clean_name.replace('_', ' ')} {description.replace('_', ' ')}"
     for pattern, family in _IS_FAMILY_PATTERNS:
         if pattern.search(text):
             return family
@@ -114,11 +142,24 @@ def load_mge_metadata(tsv_path: Path | str) -> dict[str, dict]:  # type: ignore
     with open(tsv_path, newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
         for row in reader:
-            gene = row.get("gene_name", "").strip().lower()
             sub  = row.get("Sub_class", "").strip()
             cls  = row.get("Class", "").strip()
+            entry = {"sub_class": sub, "mge_class": cls}
+
+            # Index by gene_name (e.g. "tnpA") — primary lookup key
+            gene = row.get("gene_name", "").strip().lower()
             if gene:
-                meta[gene] = {"sub_class": sub, "mge_class": cls}
+                meta[gene] = entry
+
+            # Also index by cleaned gene_name without trailing digits ("tnpA1" → "tnpA")
+            gene_base = re.sub(r"\d+$", "", gene)
+            if gene_base and gene_base != gene:
+                meta.setdefault(gene_base, entry)
+
+            # Also index by full ID for exact sseqid matching (fallback)
+            full_id = row.get("ID", "").strip().lower()
+            if full_id:
+                meta.setdefault(full_id, entry)
     logger.info("Loaded %d MGE family entries from %s", len(meta), tsv_path)
     return meta
 
@@ -232,13 +273,27 @@ def parse_mge_hits(
         for row in reader:
             if len(row) < 6:
                 continue
-            qseqid, _sseqid, pident, qcovhsp, evalue, stitle = row[:6]
+            qseqid, sseqid, pident, qcovhsp, evalue, stitle = row[:6]
             contig_id = "_".join(qseqid.rsplit("_", 1)[:-1]) if "_" in qseqid else qseqid
-            is_name, description = _parse_isfinder_stitle(stitle)
 
-            # Enrich from mge_database.xlsx if available
-            entry = meta.get(is_name.lower(), {})
-            is_family = entry.get("sub_class") or _infer_is_family(is_name, description)
+            # Extract the gene name from the subject sequence ID.
+            # The Pärnänen database uses headers like "904_tnpA_CP000353.2";
+            # the stitle column just repeats the sseqid without a real description.
+            # We parse gene_name from sseqid for both metadata lookup and family
+            # inference — this is more reliable than parsing the stitle.
+            gene_name = _extract_gene_name_from_sseqid(sseqid)
+            is_name = gene_name  # human-readable element name shown in reports
+            description = stitle.strip()
+
+            # Metadata lookup: try progressively simpler keys
+            gene_key_exact = gene_name.lower()
+            gene_key_no_suffix = re.sub(r"_\d+$", "", gene_name).lower()
+            gene_key_no_digits = re.sub(r"\d+$", "", gene_name).lower()
+            entry = (meta.get(gene_key_exact)
+                     or meta.get(gene_key_no_suffix)
+                     or meta.get(gene_key_no_digits)
+                     or {})
+            is_family = entry.get("sub_class") or _infer_is_family(gene_name, description)
             mge_class = entry.get("mge_class", "")
 
             hits.append(
