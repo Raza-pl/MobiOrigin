@@ -105,19 +105,23 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 **Model accuracy:** MLP 87.14% val acc · XGBoost 91.7% val acc (16 biological features).
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
-205,645 contigs · Apple Silicon CPU · 16 threads · 93 min wall-clock
+205,645 contigs · Apple Silicon CPU · 16 threads
 
-| Metric | Old model | New model (June 2026) |
+| Metric | Old 4-class model | New 3-class model |
 |---|---|---|
-| Plasmid contigs | 22,409 | 16,229 |
-| Chromosome contigs | 138,589 | 154,393 |
-| Phage contigs | 20,182 | 10,477 |
-| Archaea contigs | 24,465 | 24,546 |
-| ARGs (CARD+SARG+AMRProt) | 182 | 185 |
-| BacMet hits | — | 39 |
-| ICE hits | — | 1,376 |
+| Plasmid contigs | 16,229 (7.9%) | **1,156 (0.56%)** |
+| Chromosome contigs | 154,393 | 200,278 |
+| Phage contigs | 10,477 | 4,211 |
+| Archaea contigs | 24,546 (k-mer) | **592 (taxonomy-verified)** |
+| ARGs (CARD+SARG+AMRProt) | 185 | 185 |
+| BacMet hits | 39 | 39 |
+| ICE hits | 1,376 | 1,376 |
+| Rep protein hits | — | 1,413 |
 | Pathogenic contigs | 589 | 589 |
-| Wall-clock time | 93 min | 93 min |
+| Circular contigs detected | 0 | **1** |
+| Wall-clock time | 93 min | ~100 min |
+
+> Plasmid reduction (7.9% → 0.56%) and archaea reduction (24,546 k-mer guesses → 592 taxonomy-verified) confirm that previous models were over-calling both classes dramatically on WWTP metagenomes.
 
 ---
 
