@@ -13,12 +13,15 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 ## Changelog
 
 ### June 2026 (latest)
-- **Architecture overhaul:** dropped archaea from the MLP training classes. The model is now **3-class (plasmid / chromosome / phage)**, retrained on 900k sequences (300k per class) from 5,922 diverse GTDB r220 bacterial genomes + PLSDB/RefSeq/COMPASS plasmids + INPHARED phages. Validation accuracy **87.14%** (up from 86.18% on the imbalanced 4-class model).
-- **Archaea detection:** archaea are now identified **post-classification** using DIAMOND taxonomy ORF voting — the method from Chibani et al.: archaeal ORF hits > bacterial ORF hits AND archaeal hits ≥ 5. This is the correct approach; k-mer profiles of archaea and bacteria are too similar to distinguish reliably at the MLP stage.
-- **Hallmark gate:** short plasmid calls (≤ 5,000 bp) with zero biological evidence (no PLSDB match, no relaxase/MPF gene, no replicon type, no ICE hit) are now demoted to `unclassified`. This directly addresses the plasmid over-classification seen on wastewater assemblies.
-- **Marker XGBoost classifier (stage 2):** new `classify/marker_classifier.py` — a geNomad-inspired XGBoost model that operates on 15 biological marker features (MLP scores, mobility class, PLSDB match, ARG/MGE/ICE hit density, length, GC, coding density). Scores are combined with the MLP via attention-weighting: when marker evidence is present the XGBoost dominates; when absent the MLP is used unchanged. Train with `scripts/build_marker_dataset.py` + `scripts/train_marker_model.py`; auto-activates when `data/models/marker_xgb.pkl` exists.
-- **Kaiju taxonomy:** plasmid contigs now use a dedicated Kaiju FM-index built from NCBI RefSeq plasmid proteins (`bash scripts/setup_kaiju_db.sh --plasmids-only`). Fixed `kaiju-makedb` CLI flags (`-s` for source, `-t` for threads).
-- **Fix:** `setup_kaiju_db.sh` now uses correct `kaiju-makedb` flags (`-s plasmids`, `-t N` instead of `--database`, `--threads`, `--out`).
+- **Architecture:** 3-class MLP (plasmid/chromosome/phage, 87.14% val acc) retrained on **900k sequences** from 5,922 GTDB r220 bacterial genomes + PLSDB/RefSeq/COMPASS + INPHARED. Archaea removed from model — detected post-classification via DIAMOND taxonomy ORF voting (archaeal ORF hits > bacterial AND ≥5), following the Chibani et al. method.
+- **Hallmark gate (all contigs):** ALL plasmid calls now require biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein). Contigs <50 kb with no evidence → `unclassified`. Contigs ≥50 kb with no evidence → `low_confidence`. Reduced plasmid over-classification from 14.3% → 1.2% on WWTP metagenomes.
+- **Class prior correction:** Bayesian correction applied before thresholding. Context-specific priors: `wastewater` (plasmid=3%, chromosome=93%, phage=4%), `clinical` (5%/90%/5%), `environmental` (2%/95%/3%). Activated via `--context wastewater` on CLI.
+- **Rep protein detection:** new `scripts/setup_rep_diamond.sh` translates `mob_suite/rep.dna.fas` → `rep_proteins.dmnd`. DIAMOND run added to pipeline; rep protein hit is hallmark evidence for non-mobile plasmids.
+- **Marker XGBoost (stage 2):** 16-feature XGBoost (91.7% val acc) combining MLP scores with biological markers — `is_conjugative`, `is_mobilizable`, `has_rep_protein`, `has_ice`, `n_ice/rep_per_kb`, `coding_density`, `gc_content`. Scores aggregated with MLP via attention-weighting. Auto-activates from `data/models/marker_xgb.pkl`.
+- **Kraken2 fallback taxonomy:** `annotate/taxonomy_kraken2.py` + `scripts/setup_kraken2_db.sh`. Classifies the ~56% of contigs DIAMOND misses (no ORFs / short contigs) in ~30 sec using pre-built 8 GB k-mer index. DIAMOND always takes priority.
+- **Performance fixes:** O(n²) ORF lookup → O(1) dict; taxonomy TSV parsed once (saves ~3 min per run); DIAMOND mobility tuple unpack fixed (was causing 2-hour mob_typer fallback).
+- **Circular topology:** expanded header matching to cover SPAdes (`_circular`), Flye, Unicycler (`circular=true`), Canu (`suggestCircular=yes`), NCBI (`[topology=circular]`), Bandage.
+- **Kaiju taxonomy:** Kaiju plasmids FM-index built from NCBI RefSeq plasmid proteins. Fixed `kaiju-makedb` CLI flags.
 
 ### June 2026 (earlier)
 - **Model:** retrained MLP on **800,000 sequences** (200k per class) using 5,922 GTDB r220 bacterial genomes + 1,032 archaeal genomes + 72,556 PLSDB plasmids. Validation accuracy 86.18% (up from ~82% on old 400k dataset).
@@ -45,7 +48,10 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Classes | plasmid vs chromosome | plasmid · chromosome · **phage** · **archaea** · unclassified |
 | Architecture | TF neural net | **3-class MLP** (k-mer) + **marker XGBoost** (biological features) |
 | Archaea detection | ✗ | Post-classification DIAMOND taxonomy ORF voting (archaeal hits > bacterial AND ≥5) |
-| Hallmark gate | ✗ | Short plasmid calls (≤5 kb) require biological evidence or are demoted |
+| Hallmark gate | ✗ | **All** plasmid calls require biological evidence — contigs <50 kb with none → unclassified |
+| Class prior correction | ✗ | Bayesian correction by context (wastewater / clinical / environmental) |
+| Rep protein detection | ✗ | DIAMOND vs translated `rep.dna.fas` — evidence for non-mobile plasmids |
+| Kraken2 fallback taxonomy | ✗ | Fast nucleotide k-mer taxonomy for contigs DIAMOND misses (~30 sec, pre-built 8 GB DB) |
 | ARG annotation | ✗ | DIAMOND + **CARD + SARG + AMRFinderPlus DB** (triple-DB, auto-detected) |
 | Virulence factors | ✗ | DIAMOND + **VFDB set A** (auto-detected) |
 | MGE / IS elements | ✗ | DIAMOND + **Pärnänen MGE database** + IS family/class enrichment (auto-detected) |
@@ -82,10 +88,21 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | Report generation | Python | ~30 sec |
 | **Total (with taxonomy)** | | **~45 sec (cached) · ~45–65 min (fresh)** |
 
-**Results (4-class model, June 2026):** 24,356 plasmids · 208 ARGs · 448 VFs · 1,093 MGEs · 204 BacMet · 4,225 ICE · 18 replicon types · 2,041 pathogenic contigs · 481,219 genes
-> Note: plasmid count was elevated due to 4-class training imbalance. The new 3-class model + hallmark gate addresses this — re-run pending.
+**Results (3-class model + priors + hallmark gate, June 2026):**
 
-**Model accuracy:** 3-class MLP (87.14% val acc, trained on 900k sequences from 5,922 GTDB bacterial genomes + PLSDB/RefSeq/COMPASS + INPHARED).
+| Metric | Old 4-class model | New 3-class model |
+|---|---|---|
+| Plasmid contigs | 24,356 (14.3%) | **1,968 (1.2%)** |
+| Chromosome contigs | 136,642 | 166,793 |
+| Phage contigs | 5,115 | 1,329 |
+| Archaea contigs | 3,994 (k-mer) | **101 (taxonomy-verified)** |
+| ARGs (CARD+SARG+AMRProt) | 208 | 208 |
+| Rep protein hits | — | 1,134 |
+| Pathogenic contigs | 2,041 | 2,041 |
+
+> Plasmid reduction (14.3% → 1.2%) reflects removal of false positives: chromosomal fragments with plasmid-like k-mer composition. All 1,968 retained plasmids have at least one piece of biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein).
+
+**Model accuracy:** MLP 87.14% val acc · XGBoost 91.7% val acc (16 biological features).
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads · 93 min wall-clock
@@ -422,19 +439,24 @@ python scripts/train_model.py \
 
 > **Apple Silicon:** MPS is disabled by default (PyTorch ≤ 2.3 segfaults on large float32 ops). Training runs on CPU (~63 min for 900k × 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
 
-### Stage 2 — Marker XGBoost (biological features)
+### Stage 2 — Marker XGBoost (16 biological features)
 
-The XGBoost second stage uses 15 biological marker features and auto-activates when `data/models/marker_xgb.pkl` exists.
+The XGBoost second stage uses 16 biological marker features and auto-activates when `data/models/marker_xgb.pkl` exists. Features include: MLP scores, `is_conjugative`, `is_mobilizable`, `has_rep_protein`, `has_ice`, `n_ice/rep_per_kb`, `coding_density`, `gc_content`, `log10_length`. Build the rep protein database first:
 
 ```bash
-# Build marker features (~20 min — runs MLP + DIAMOND on samples)
+# One-time: build rep protein DIAMOND DB
+bash scripts/setup_rep_diamond.sh
+
+# Build marker features (~25 min — MLP inference + DIAMOND vs mob/mpf/rep/ICE)
 python scripts/build_marker_dataset.py \
     --plasmid-dir data/databases/plasmids/ \
     --chrom-dir   data/gtdb_genomes/bacteria/ \
     --model       data/models/mlp_v2.pt \
     --mob-db      data/databases/mob_suite/mob_proteins.dmnd \
+    --mpf-db      data/databases/mob_suite/mpf_proteins.dmnd \
     --max-per-class 30000 --threads 16 \
     --out         data/marker_features.npz
+# Auto-detects: rep_proteins.dmnd and ice.dmnd
 
 # Train XGBoost (~2 min)
 python scripts/train_marker_model.py \
@@ -442,9 +464,17 @@ python scripts/train_marker_model.py \
     --out      data/models/
 ```
 
+### Kraken2 fallback taxonomy (optional, recommended)
+
+Provides taxonomy for contigs DIAMOND misses (no ORFs). Pre-built database, no training required.
+
+```bash
+bash scripts/setup_kraken2_db.sh   # ~8 GB download, auto-detected at runtime
+```
+
 ### Archaea detection (no training required)
 
-Archaea are detected post-classification via DIAMOND taxonomy ORF voting. No separate training is needed — it uses the existing taxonomy DIAMOND run automatically.
+Archaea are detected post-classification via DIAMOND taxonomy ORF voting. No separate training is needed — uses the existing taxonomy DIAMOND run automatically.
 
 ---
 

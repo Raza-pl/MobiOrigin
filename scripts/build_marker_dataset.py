@@ -130,9 +130,10 @@ def run_diamond_db(
     threads: int = 8,
     min_id: float = 40.0,
     min_cov: float = 60.0,
-) -> set[str]:
-    """Run DIAMOND blastp against db, return set of contig_ids with hits."""
+) -> dict[str, int]:
+    """Run DIAMOND blastp against db, return contig_id → hit count dict."""
     import re
+    from collections import Counter
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "diamond", "blastp",
@@ -148,14 +149,14 @@ def run_diamond_db(
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logger.warning("DIAMOND failed (%s): %s", db.name, result.stderr[:200])
-        return set()
-    hits: set[str] = set()
+        return {}
+    contig_hits: Counter = Counter()
     with open(out_tsv) as fh:
         for line in fh:
             orf_id = line.split("\t")[0].strip()
             contig_id = re.sub(r"_\d+$", "", orf_id)
-            hits.add(contig_id)
-    return hits
+            contig_hits[contig_id] += 1
+    return dict(contig_hits)
 
 
 def predict_mlp(
@@ -183,6 +184,8 @@ def build_class_features(
     model_path: Path,
     mob_db: Path | None,
     mpf_db: Path | None,
+    rep_db: Path | None,
+    ice_db: Path | None,
     threads: int,
     work_dir: Path,
 ) -> NDArray:
@@ -213,8 +216,10 @@ def build_class_features(
     # Per-contig ORF stats (coding_density, n_orfs_per_kb)
     orfs_per_contig: dict[str, int] = {}
     covered_per_contig: dict[str, int] = {}  # total bp covered by ORFs
-    relaxase_hits: set[str] = set()
-    mpf_hits: set[str] = set()
+    relaxase_hits: dict[str, int] = {}
+    mpf_hits: dict[str, int] = {}
+    rep_hits: dict[str, int] = {}
+    ice_hits_train: dict[str, int] = {}
 
     try:
         import pyrodigal  # type: ignore[import]
@@ -252,6 +257,24 @@ def build_class_features(
             )
             logger.info("    MPF hits: %d contigs", len(mpf_hits))
 
+        if rep_db and rep_db.exists():
+            logger.info("  DIAMOND vs rep proteins (rep_proteins) …")
+            rep_hits = run_diamond_db(
+                proteins_faa, rep_db,
+                work_dir / f"{label}_rep_hits.tsv", threads,
+                min_id=40.0, min_cov=60.0,
+            )
+            logger.info("    Rep protein hits: %d contigs", len(rep_hits))
+
+        if ice_db and ice_db.exists():
+            logger.info("  DIAMOND vs ICE proteins …")
+            ice_hits_train = run_diamond_db(
+                proteins_faa, ice_db,
+                work_dir / f"{label}_ice_hits.tsv", threads,
+                min_id=70.0, min_cov=70.0,
+            )
+            logger.info("    ICE hits: %d contigs", len(ice_hits_train))
+
     except ImportError:
         logger.warning("  pyrodigal not available — ORF features will be 0")
 
@@ -272,10 +295,12 @@ def build_class_features(
         n_orfs_kb = n_orfs / length_kb if length_kb > 0 else 1.0
 
         # Mobility: relaxase only → mobilizable; relaxase + MPF → conjugative
-        has_relaxase = sid in relaxase_hits
-        has_mpf = sid in mpf_hits
-        is_conj = 1.0 if (has_relaxase and has_mpf) else 0.0
-        is_mob  = 1.0 if (has_relaxase and not has_mpf) else 0.0
+        n_relaxase = relaxase_hits.get(sid, 0)
+        n_mpf      = mpf_hits.get(sid, 0)
+        n_rep      = rep_hits.get(sid, 0)
+        n_ice      = ice_hits_train.get(sid, 0)
+        is_conj    = 1.0 if (n_relaxase > 0 and n_mpf > 0) else 0.0
+        is_mob     = 1.0 if (n_relaxase > 0 and n_mpf == 0) else 0.0
 
         feat = ContigMarkerFeatures(
             contig_id=sid,
@@ -284,11 +309,13 @@ def build_class_features(
             mlp_phage_score=mlp_scores.get("phage", 0.0),
             is_conjugative=is_conj,
             is_mobilizable=is_mob,
-            has_replicon=0.0,    # not computed at training time
-            has_ice=0.0,         # not computed at training time
-            n_arg_per_kb=0.0,    # not computed at training time
-            n_mge_per_kb=0.0,    # not computed at training time
-            n_ice_per_kb=0.0,    # not computed at training time
+            has_replicon=0.0,          # not computed at training time
+            has_ice=1.0 if n_ice > 0 else 0.0,
+            has_rep_protein=1.0 if n_rep > 0 else 0.0,
+            n_arg_per_kb=0.0,          # not computed at training time
+            n_mge_per_kb=0.0,          # not computed at training time
+            n_ice_per_kb=n_ice / max(length_kb, 0.001),
+            n_rep_per_kb=n_rep / max(length_kb, 0.001),
             log10_length=float(np.log10(length_bp)),
             gc_content=gc,
             coding_density=coding_density,
@@ -319,7 +346,7 @@ def main() -> None:
     work_dir = args.out.parent / "marker_work"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Auto-detect MOB / MPF DBs
+    # Auto-detect MOB / MPF / rep / ICE DBs
     mob_db = args.mob_db
     if mob_db is None:
         mob_db = args.data_dir / "mob_suite" / "mob_proteins.dmnd"
@@ -334,6 +361,16 @@ def main() -> None:
             mpf_db = None
             logger.info("MPF DB not found — conjugative feature will be 0")
 
+    rep_db = args.data_dir / "mob_suite" / "rep_proteins.dmnd"
+    if not rep_db.exists():
+        rep_db = None
+        logger.info("rep_proteins.dmnd not found — run scripts/setup_rep_diamond.sh first")
+
+    ice_db = args.data_dir / "ice" / "ice.dmnd"
+    if not ice_db.exists():
+        ice_db = None
+        logger.info("ice.dmnd not found — ICE feature will be 0 at training time")
+
     all_X: list[NDArray] = []
     all_y: list[int] = []
 
@@ -344,7 +381,7 @@ def main() -> None:
         files = _fasta_files(plasmid_dir)
         samples = sample_sequences(files, args.max_per_class, seed=args.seed)
         X_plas = build_class_features(
-            "plasmid", samples, args.model, mob_db, mpf_db, args.threads, work_dir
+            "plasmid", samples, args.model, mob_db, mpf_db, rep_db, ice_db, args.threads, work_dir
         )
         all_X.append(X_plas)
         all_y.extend([CLASS_TO_IDX["plasmid"]] * len(samples))
@@ -359,7 +396,7 @@ def main() -> None:
         files = _fasta_files(chrom_dir)
         samples = sample_sequences(files, args.max_per_class, seed=args.seed + 1)
         X_chrom = build_class_features(
-            "chromosome", samples, args.model, mob_db, mpf_db, args.threads, work_dir
+            "chromosome", samples, args.model, mob_db, mpf_db, rep_db, ice_db, args.threads, work_dir
         )
         all_X.append(X_chrom)
         all_y.extend([CLASS_TO_IDX["chromosome"]] * len(samples))
@@ -377,7 +414,7 @@ def main() -> None:
     if inphared:
         samples = sample_sequences([inphared], args.max_per_class, seed=args.seed + 2)
         X_phage = build_class_features(
-            "phage", samples, args.model, mob_db, mpf_db, args.threads, work_dir
+            "phage", samples, args.model, mob_db, mpf_db, rep_db, ice_db, args.threads, work_dir
         )
         all_X.append(X_phage)
         all_y.extend([CLASS_TO_IDX["phage"]] * len(samples))

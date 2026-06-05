@@ -683,6 +683,61 @@ def run_pipeline(
         logger.info("Taxonomy annotation skipped (skip_taxonomy=True)")
 
     # ------------------------------------------------------------------
+    # 5d. Kraken2 fallback taxonomy — classify contigs missing from DIAMOND
+    # ------------------------------------------------------------------
+    # DIAMOND classifies ~44% of contigs (those with detectable proteins at
+    # ≥1000 bp). Kraken2 covers the remaining ~56% using nucleotide k-mers:
+    # short contigs, repetitive regions, and sequences with no ORFs.
+    # DIAMOND result always takes priority — Kraken2 only fills gaps.
+    _kaiju_dir_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "kaiju"
+    from plasflow2.annotate.taxonomy_kraken2 import (
+        assign_taxonomy_kraken2,
+        find_kraken2_db,
+        kraken2_available,
+    )
+    _kraken2_db = find_kraken2_db()
+    _kraken2_nodes = _kaiju_dir_auto / "nodes.dmp"
+    _kraken2_names = _kaiju_dir_auto / "names.dmp"
+
+    if (
+        not skip_taxonomy
+        and _kraken2_db is not None
+        and kraken2_available()
+        and _kraken2_nodes.exists()
+        and _kraken2_names.exists()
+    ):
+        try:
+            logger.info(
+                "Kraken2 fallback taxonomy: classifying contigs missing from DIAMOND "
+                "(%d / %d without taxonomy) …",
+                len(records) - len(taxonomy_by_contig),
+                len(records),
+            )
+            _kraken2_new = assign_taxonomy_kraken2(
+                fasta_path=all_contigs_fasta,
+                db_dir=_kraken2_db,
+                nodes_dmp=_kraken2_nodes,
+                names_dmp=_kraken2_names,
+                work_dir=work_dir / "taxonomy_kraken2",
+                threads=threads,
+                confidence=0.1,
+                existing_taxonomy=taxonomy_by_contig,
+            )
+            taxonomy_by_contig.update(_kraken2_new)
+            logger.info(
+                "Kraken2: added %d new taxonomy assignments (total now %d / %d contigs)",
+                len(_kraken2_new),
+                len(taxonomy_by_contig),
+                len(records),
+            )
+        except Exception as _exc:
+            logger.warning("Kraken2 fallback taxonomy failed: %s — skipping.", _exc)
+    elif not skip_taxonomy and _kraken2_db is None:
+        logger.debug(
+            "Kraken2 DB not found — run scripts/setup_kraken2_db.sh for fallback taxonomy"
+        )
+
+    # ------------------------------------------------------------------
     # 6b. Archaeal post-classification override
     # ------------------------------------------------------------------
     # The 3-class MLP does not output archaea. Instead, we detect archaeal
@@ -832,6 +887,9 @@ def run_pipeline(
                     mge_hits=mge_by_contig.get(cid, []),
                     ice_hits=ice_by_contig.get(cid, []),
                     orfs=_orfs_by_contig.get(cid, []),
+                    has_rep_protein=cid in rep_protein_hits,
+                    n_rep_hits=len([h for h in _orfs_by_contig.get(cid, [])
+                                    if cid in rep_protein_hits]),
                 )
                 marker_scores = _marker_clf.predict_scores(feats)
                 agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)

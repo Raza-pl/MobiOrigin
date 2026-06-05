@@ -79,20 +79,19 @@ MARKER_FEATURE_NAMES = [
     "mlp_plasmid_score",
     "mlp_chromosome_score",
     "mlp_phage_score",
-    # Mobility / plasmid markers (5) — note: has_plsdb_match is intentionally
+    # Mobility / plasmid markers (6) — note: has_plsdb_match is intentionally
     # excluded from the model. A PLSDB match is used as a hard rule-based
-    # override AFTER the XGBoost scores, not as a learned feature. Including it
-    # as a training feature causes data leakage (all training plasmids come from
-    # PLSDB so they all get has_plsdb_match=1, teaching the model to ignore all
-    # other evidence).
+    # override AFTER the XGBoost scores, not as a learned feature.
     "is_conjugative",
     "is_mobilizable",
     "has_replicon",
     "has_ice",
-    # ARG / MGE density (per kb) (3)
+    "has_rep_protein",    # replication protein hit (RepA/RepB/RepC) — non-mobile plasmids
+    # ARG / MGE / rep density (per kb) (4)
     "n_arg_per_kb",
     "n_mge_per_kb",
     "n_ice_per_kb",
+    "n_rep_per_kb",       # rep protein hits per kb — density signal
     # Sequence properties (4) — computed from ORF prediction + raw sequence
     "log10_length",
     "gc_content",
@@ -102,7 +101,7 @@ MARKER_FEATURE_NAMES = [
 
 N_MARKER_FEATURES = len(MARKER_FEATURE_NAMES)
 # Mobility feature indices — used to compute marker_gene_fraction
-_MOBILITY_FEATURE_INDICES = [3, 4, 5, 6]  # conjugative, mobilizable, replicon, ice
+_MOBILITY_FEATURE_INDICES = [3, 4, 5, 6, 7]  # conjugative, mobilizable, replicon, ice, rep_protein
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +125,14 @@ class ContigMarkerFeatures:
     is_mobilizable: float = 0.0
     has_replicon: float = 0.0
     has_ice: float = 0.0
-    # Note: has_plsdb_match is NOT a model feature — it is used as a hard
-    # override rule after XGBoost scoring (see aggregate_scores / pipeline).
+    has_rep_protein: float = 0.0  # replication protein (RepA/B/C) — key non-mobile plasmid marker
+    # Note: has_plsdb_match is NOT a model feature — used as a hard override rule.
 
-    # ARG / MGE density
+    # ARG / MGE / rep density
     n_arg_per_kb: float = 0.0
     n_mge_per_kb: float = 0.0
     n_ice_per_kb: float = 0.0
+    n_rep_per_kb: float = 0.0
 
     # Sequence properties
     log10_length: float = 3.0    # default: 1 kb
@@ -141,7 +141,7 @@ class ContigMarkerFeatures:
     n_orfs_per_kb: float = 1.0
 
     def to_array(self) -> NDArray[np.float32]:
-        """Return feature vector as float32 array (14 features, no has_plsdb_match)."""
+        """Return feature vector as float32 array (16 features, no has_plsdb_match)."""
         return np.array([
             self.mlp_plasmid_score,
             self.mlp_chromosome_score,
@@ -150,9 +150,11 @@ class ContigMarkerFeatures:
             self.is_mobilizable,
             self.has_replicon,
             self.has_ice,
+            self.has_rep_protein,
             self.n_arg_per_kb,
             self.n_mge_per_kb,
             self.n_ice_per_kb,
+            self.n_rep_per_kb,
             self.log10_length,
             self.gc_content,
             self.coding_density,
@@ -166,7 +168,10 @@ class ContigMarkerFeatures:
         Used as the attention weight α: high when markers present →
         trust XGBoost more. Low when absent → trust MLP more.
         """
-        vals = [self.is_conjugative, self.is_mobilizable, self.has_replicon, self.has_ice]
+        vals = [
+            self.is_conjugative, self.is_mobilizable, self.has_replicon,
+            self.has_ice, self.has_rep_protein,
+        ]
         return float(sum(vals) / len(vals))
 
 
@@ -179,11 +184,13 @@ def extract_marker_features(
     contig_id: str,
     sequence: str,
     mlp_scores: dict[str, float],
-    mobility=None,          # MobilityResult | None
-    arg_hits: list = None,  # list[ARGHit]
-    mge_hits: list = None,  # list[MGEHit]
-    ice_hits: list = None,  # list[ICEHit]
-    orfs: list = None,      # list[ORF]
+    mobility=None,                    # MobilityResult | None
+    arg_hits: list = None,            # list[ARGHit]
+    mge_hits: list = None,            # list[MGEHit]
+    ice_hits: list = None,            # list[ICEHit]
+    orfs: list = None,                # list[ORF]
+    has_rep_protein: bool = False,    # from rep_protein_hits set in pipeline
+    n_rep_hits: int = 0,              # raw rep protein hit count for this contig
 ) -> ContigMarkerFeatures:
     """Build a ContigMarkerFeatures from pipeline annotation objects.
 
@@ -266,9 +273,11 @@ def extract_marker_features(
         is_mobilizable=is_mob,
         has_replicon=has_rep,
         has_ice=has_ice,
+        has_rep_protein=1.0 if has_rep_protein else 0.0,
         n_arg_per_kb=n_arg,
         n_mge_per_kb=n_mge,
         n_ice_per_kb=n_ice,
+        n_rep_per_kb=n_rep_hits / max(length_kb, 0.001),
         log10_length=log10_len,
         gc_content=gc,
         coding_density=cod_density,
