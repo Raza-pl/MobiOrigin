@@ -13,6 +13,7 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 ## Changelog
 
 ### June 2026 (latest)
+- **geNomad integration (Phase 1):** `genomad annotate` now runs on benchmark sequences to produce per-gene SPM (Specificity Profile Measure) scores from 227,897 geNomad protein family profiles. `scripts/extract_genomad_features.py` aggregates these into 12 per-contig features (`p_marker_freq`, `pp_marker_freq`, `median_p_spm`, `p_vs_c_logistic`, strand switch rate, RBS features, etc.) that feed the marker XGBoost as a second geNomad channel alongside MOB-suite. Combined feature set: **26 features** (14 MOB-suite + 12 geNomad SPM). `scripts/annotate_sequences.py` updated with `--genomad-genes` to merge both feature sets in one run.
 - **Architecture:** 3-class MLP (plasmid/chromosome/phage, 87.14% val acc) retrained on **900k sequences** from 5,922 GTDB r220 bacterial genomes + PLSDB/RefSeq/COMPASS + INPHARED. Archaea removed from model — detected post-classification via DIAMOND taxonomy ORF voting (archaeal ORF hits > bacterial AND ≥5), following the Chibani et al. method.
 - **Hallmark gate (all contigs):** ALL plasmid calls now require biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein). Contigs <50 kb with no evidence → `unclassified`. Contigs ≥50 kb with no evidence → `low_confidence`. Reduced plasmid over-classification from 14.3% → 1.2% on WWTP metagenomes.
 - **Class prior correction:** Bayesian correction applied before thresholding. Context-specific priors: `wastewater` (plasmid=3%, chromosome=93%, phage=4%), `clinical` (5%/90%/5%), `environmental` (2%/95%/3%). Activated via `--context wastewater` on CLI.
@@ -58,6 +59,7 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 | BacMet (biocide/metal) | ✗ | DIAMOND + **BacMet2 experimentally confirmed** (auto-detected) |
 | ICE elements | ✗ | DIAMOND + **ICEberg3 experimental** (auto-detected) |
 | Mobility typing | ✗ | **MOB-suite + DIAMOND** per-contig (conjugative / mobilizable / non-mobilizable) |
+| geNomad SPM features | ✗ | **227,897-profile MMseqs2 search** — 12 per-contig SPM features combined with MOB-suite in XGBoost stage 2 |
 | Contig taxonomy | ✗ | **DIAMOND blastp + GTDB/RefSeq LCA** — reuses ORFs from ARG step |
 | Plasmid-DB match | ✗ | **minimap2** vs PLSDB + RefSeq + COMPASS — closest known plasmid + ANI |
 | Circular topology | ✗ | **DTR detection** (500 bp terminal window, ≥90 % identity) |
@@ -169,6 +171,7 @@ pip install -e .
 | [DIAMOND](https://github.com/bbuchfink/diamond) | ARG (CARD+SARG+AMRProt) / VF / MGE / taxonomy | `conda install -c bioconda diamond` |
 | [MOB-suite](https://github.com/phac-nml/mob-suite) | Plasmid mobility typing | `conda install -c conda-forge -c bioconda mob_suite` |
 | [minimap2](https://github.com/lh3/minimap2) | Plasmid-DB nucleotide match | `conda install -c bioconda minimap2` |
+| [geNomad](https://github.com/apcamargo/genomad) | 227k-profile SPM gene annotation (stage 2 features) | `conda install -c conda-forge -c bioconda genomad` |
 
 > **Apple Silicon (MOB-suite):** If conda fails on ARM: `pip install mob-suite && mob_init`
 
@@ -201,6 +204,24 @@ Builds all databases at their auto-detected paths:
 5. **Pärnänen MGE database** (`data/databases/mge/isfinder.dmnd`)
 6. **Plasmid databases** — PLSDB + RefSeq + COMPASS (`data/databases/plasmids/`)
 7. MOB-suite reference data (`mob_init`)
+
+### Optional: geNomad database (~3 GB, recommended for best accuracy)
+
+```bash
+genomad download-database data/databases/genomad_db/
+```
+
+Then run gene annotation on your FASTA before annotating:
+
+```bash
+genomad annotate \
+    assembly.fasta \
+    data/benchmark/genomad_ann/ \
+    data/databases/genomad_db/ \
+    --threads 16
+```
+
+This produces `*_genes.tsv` with per-gene SPM scores. Pass it to `annotate_sequences.py` via `--genomad-genes` for the full 26-feature combined annotation.
 
 ### Optional: taxonomy database (~2 GB)
 
@@ -421,6 +442,66 @@ plasflow2 run key options:
 
 ---
 
+## Hybrid two-stage pipeline
+
+PlasFlow v2 uses a two-stage architecture that combines k-mer sequence composition with biological evidence:
+
+**Stage 1 — 3-class MLP (k-mer features):** Classifies contigs as plasmid / chromosome / phage using 1,493-dimensional features (k=1–5 k-mers + k=6 PCA 128 dims + log-length). Achieves 87.14% validation accuracy on 900k sequences. Fast — classifies 200k contigs in ~15 seconds on CPU.
+
+**Stage 2 — Marker XGBoost (biological features):** Refines MLP scores using up to 26 biological marker features. Auto-activates when `data/models/marker_xgb.pkl` exists. Without it, a per-length threshold on raw MLP scores is applied. The combined feature vector includes:
+
+| Feature group | Source | Features |
+|---|---|---|
+| MLP scores | Stage 1 | `plasmid_score`, `chromosome_score`, `phage_score` |
+| MOB-suite DIAMOND | mob_proteins, mpf_proteins, rep_proteins | `is_conjugative`, `is_mobilizable`, `has_replicon`, `has_ice`, `has_rep_protein`, `n_mge_per_kb`, `n_ice_per_kb`, `n_rep_per_kb` |
+| ORF statistics | pyrodigal | `coding_density`, `n_orfs_per_kb`, `gc_content` |
+| geNomad SPM | 227,897-profile MMseqs2 | `p_marker_freq`, `pp_marker_freq`, `median_p_spm`, `median_c_spm`, `median_v_spm`, `p_vs_c_logistic`, `strand_switch_rate`, `no_rbs_freq`, `canonical_sd_freq` |
+
+### Running the combined annotation pipeline
+
+```bash
+# Step 1 — geNomad gene annotation (run once per dataset, ~1-2 hours)
+genomad annotate \
+    data/benchmark/benchmark.fna \
+    data/benchmark/genomad_ann/ \
+    data/databases/genomad_db/ \
+    --threads 16
+
+# Step 2 — MOB-suite + geNomad SPM combined annotation (26 features)
+python scripts/annotate_sequences.py \
+    --fasta         data/benchmark/benchmark.fna \
+    --genomad-genes data/benchmark/genomad_ann/benchmark_annotate/benchmark_genes.tsv \
+    --out           data/benchmark/annotations.tsv \
+    --threads 16
+
+# Step 3 — Extract geNomad features standalone (optional, if merging separately)
+python scripts/extract_genomad_features.py \
+    --genes     data/benchmark/genomad_ann/benchmark_annotate/benchmark_genes.tsv \
+    --merge-tsv data/benchmark/annotations.tsv \
+    --out       data/benchmark/annotations_with_genomad.tsv
+
+# Step 4 — Predict with marker XGBoost
+plasflow2 predict \
+    --annotation-tsv data/benchmark/annotations.tsv \
+    --marker-model   data/models/marker_xgb.pkl \
+    --input          data/benchmark/benchmark.fna \
+    --output         results/benchmark/
+```
+
+### Utility scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts/annotate_sequences.py` | MOB-suite DIAMOND annotation + optional geNomad SPM merge (`--genomad-genes`) |
+| `scripts/extract_genomad_features.py` | Parse `genomad annotate` output → 12 per-contig SPM features |
+| `scripts/predict_sequences.py` | Run PlasFlow v2 classify + marker XGBoost on a FASTA |
+| `scripts/compare_with_genomad.py` | Compare PlasFlow v2 predictions against geNomad pseudo-labels |
+| `scripts/retrain_marker_pipeline.sh` | End-to-end retrain: annotate → extract features → train XGBoost |
+| `scripts/fit_k6_pca.py` | Fit PCA on k=6 k-mer spectrum for feature compression |
+| `scripts/retrain_k6.sh` | Full MLP retrain with k=6 PCA features |
+
+---
+
 ## Retrain the model
 
 ### Stage 1 — 3-class MLP (k-mer features)
@@ -443,29 +524,40 @@ python scripts/train_model.py \
 
 > **Apple Silicon:** MPS is disabled by default (PyTorch ≤ 2.3 segfaults on large float32 ops). Training runs on CPU (~63 min for 900k × 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
 
-### Stage 2 — Marker XGBoost (16 biological features)
+### Stage 2 — Marker XGBoost (up to 26 features)
 
-The XGBoost second stage uses 16 biological marker features and auto-activates when `data/models/marker_xgb.pkl` exists. Features include: MLP scores, `is_conjugative`, `is_mobilizable`, `has_rep_protein`, `has_ice`, `n_ice/rep_per_kb`, `coding_density`, `gc_content`, `log10_length`. Build the rep protein database first:
+The XGBoost second stage uses up to 26 biological marker features and auto-activates when `data/models/marker_xgb.pkl` exists. Features include: MLP scores, `is_conjugative`, `is_mobilizable`, `has_rep_protein`, `has_ice`, `n_ice/rep_per_kb`, `coding_density`, `gc_content`, `log10_length`, plus 12 geNomad SPM features when `--genomad-genes` is provided. Build the rep protein database and run geNomad annotation first:
 
 ```bash
 # One-time: build rep protein DIAMOND DB
 bash scripts/setup_rep_diamond.sh
 
-# Build marker features (~25 min — MLP inference + DIAMOND vs mob/mpf/rep/ICE)
-python scripts/build_marker_dataset.py \
-    --plasmid-dir data/databases/plasmids/ \
-    --chrom-dir   data/gtdb_genomes/bacteria/ \
-    --model       data/models/mlp_v2.pt \
-    --mob-db      data/databases/mob_suite/mob_proteins.dmnd \
-    --mpf-db      data/databases/mob_suite/mpf_proteins.dmnd \
-    --max-per-class 30000 --threads 16 \
-    --out         data/marker_features.npz
-# Auto-detects: rep_proteins.dmnd and ice.dmnd
+# One-time: download geNomad DB (~3 GB)
+genomad download-database data/databases/genomad_db/
 
-# Train XGBoost (~2 min)
+# Annotate sequences: MOB-suite + geNomad SPM (26 combined features)
+python scripts/annotate_sequences.py \
+    --fasta         data/benchmark/benchmark.fna \
+    --genomad-genes data/benchmark/genomad_ann/benchmark_annotate/benchmark_genes.tsv \
+    --out           data/benchmark/annotations.tsv \
+    --threads 16
+# MOB-suite DBs auto-detected from data/databases/mob_suite/
+
+# Train XGBoost on combined features (~2 min)
 python scripts/train_marker_model.py \
-    --features data/marker_features.npz \
+    --features data/benchmark/annotations.tsv \
+    --labels   data/benchmark/labels.tsv \
     --out      data/models/
+```
+
+Or use the end-to-end retrain script:
+
+```bash
+bash scripts/retrain_marker_pipeline.sh \
+    --fasta     data/benchmark/benchmark.fna \
+    --labels    data/benchmark/labels.tsv \
+    --genomad-genes data/benchmark/genomad_ann/benchmark_annotate/benchmark_genes.tsv \
+    --threads   16
 ```
 
 ### Kraken2 fallback taxonomy (optional, recommended)
