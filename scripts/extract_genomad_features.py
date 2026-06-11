@@ -61,6 +61,11 @@ def _detect_columns(header: list[str]) -> dict[str, str]:
 
     geNomad has renamed some columns across versions, so we search
     flexibly. Returns a dict: role → actual_col_name.
+
+    NOTE: `genomad annotate` does NOT output SPM (score-per-marker) values.
+    It only outputs binary `plasmid_hallmark` / `virus_hallmark` flags.
+    SPM-based columns (plasmid_hallmark_score etc.) only exist in the full
+    `genomad end-to-end` pipeline. We therefore use the binary flags directly.
     """
     h = {c.lower(): c for c in header}
 
@@ -71,13 +76,17 @@ def _detect_columns(header: list[str]) -> dict[str, str]:
         return None
 
     return {
-        "gene":     find("gene", "gene_id", "id") or header[0],
-        "strand":   find("strand") or "",
-        "rbs":      find("rbs_motif", "rbs") or "",
-        "marker":   find("marker", "marker_id") or "",
-        "p_spm":    find("plasmid_hallmark_score", "plasmid_score", "p_spm") or "",
-        "c_spm":    find("chromosome_hallmark_score", "chromosome_score", "c_spm") or "",
-        "v_spm":    find("virus_hallmark_score", "virus_score", "v_spm") or "",
+        "gene":          find("gene", "gene_id", "id") or header[0],
+        "strand":        find("strand") or "",
+        "rbs":           find("rbs_motif", "rbs") or "",
+        "marker":        find("marker", "marker_id") or "",
+        # Binary hallmark flags (present in genomad annotate output)
+        "plasmid_hall":  find("plasmid_hallmark") or "",
+        "virus_hall":    find("virus_hallmark") or "",
+        # Continuous SPM scores (only in genomad end-to-end; absent → empty string)
+        "p_spm":         find("plasmid_hallmark_score", "plasmid_score", "p_spm") or "",
+        "c_spm":         find("chromosome_hallmark_score", "chromosome_score", "c_spm") or "",
+        "v_spm":         find("virus_hallmark_score", "virus_score", "v_spm") or "",
     }
 
 
@@ -110,13 +119,43 @@ def load_genes_tsv(path: Path) -> dict[str, list[dict]]:
                 except ValueError:
                     return 0.0
 
+            def _b(col: str) -> int:
+                """Read a binary 0/1 hallmark flag."""
+                if not col:
+                    return 0
+                v = row.get(col, "0").strip()
+                try:
+                    return int(float(v)) if v and v not in ("NA", "None", "") else 0
+                except (ValueError, TypeError):
+                    return 0
+
+            # Use binary hallmark flags when SPM scores are unavailable
+            p_hall = _b(cols["plasmid_hall"])
+            v_hall = _b(cols["virus_hall"])
+            p_spm  = _f(cols["p_spm"])
+            c_spm  = _f(cols["c_spm"])
+            v_spm  = _f(cols["v_spm"])
+
+            # If we have binary flags but no SPM scores, synthesize pseudo-SPM:
+            #   plasmid hallmark → p_spm=1.0, c_spm=0.0, v_spm=0.0
+            #   virus hallmark   → p_spm=0.0, c_spm=0.0, v_spm=1.0
+            # This lets compute_features() work identically regardless of geNomad mode.
+            if p_spm == 0.0 and c_spm == 0.0 and v_spm == 0.0:
+                if p_hall:
+                    p_spm = 1.0
+                elif v_hall:
+                    v_spm = 1.0
+                # else: no hallmark → all zeros (neutral)
+
             contigs[contig].append({
-                "strand":  row.get(cols["strand"], "").strip(),
-                "rbs":     row.get(cols["rbs"], "").strip(),
-                "marker":  row.get(cols["marker"], "").strip(),
-                "p_spm":   _f(cols["p_spm"]),
-                "c_spm":   _f(cols["c_spm"]),
-                "v_spm":   _f(cols["v_spm"]),
+                "strand":      row.get(cols["strand"], "").strip(),
+                "rbs":         row.get(cols["rbs"], "").strip(),
+                "marker":      row.get(cols["marker"], "").strip(),
+                "plasmid_hall": p_hall,
+                "virus_hall":   v_hall,
+                "p_spm":        p_spm,
+                "c_spm":        c_spm,
+                "v_spm":        v_spm,
             })
 
     return dict(contigs)
@@ -136,18 +175,39 @@ def compute_features(genes: list[dict]) -> dict[str, float]:
             "n_plasmid_markers": 0,
         }
 
-    # SPM arrays
+    # SPM arrays (0.0 when genomad annotate was used without end-to-end scoring)
     p_spms = [g["p_spm"] for g in genes]
     c_spms = [g["c_spm"] for g in genes]
     v_spms = [g["v_spm"] for g in genes]
 
-    # Marker presence
-    has_marker  = [1 if g["marker"] else 0 for g in genes]
-    # Classify markers by dominant SPM class
-    p_markers   = [1 if g["marker"] and g["p_spm"] >= g["c_spm"] and g["p_spm"] >= g["v_spm"] else 0 for g in genes]
-    c_markers   = [1 if g["marker"] and g["c_spm"] > g["p_spm"] and g["c_spm"] >= g["v_spm"] else 0 for g in genes]
-    v_markers   = [1 if g["marker"] and g["v_spm"] > g["p_spm"] and g["v_spm"] > g["c_spm"] else 0 for g in genes]
-    pp_markers  = [1 if g["p_spm"] > 0.5 else 0 for g in genes]
+    # Marker classification:
+    # Prefer explicit binary hallmark flags (plasmid_hall, virus_hall) when present.
+    # Fall back to SPM-based tie-breaking for full genomad end-to-end output.
+    def _is_p_marker(g: dict) -> int:
+        if "plasmid_hall" in g:
+            return int(g["plasmid_hall"])
+        # SPM-based: plasmid dominant
+        return 1 if (g["marker"] and g["p_spm"] > 0.0
+                     and g["p_spm"] >= g["c_spm"] and g["p_spm"] >= g["v_spm"]) else 0
+
+    def _is_v_marker(g: dict) -> int:
+        if "virus_hall" in g:
+            return int(g["virus_hall"])
+        return 1 if (g["marker"] and g["v_spm"] > 0.0
+                     and g["v_spm"] > g["p_spm"] and g["v_spm"] > g["c_spm"]) else 0
+
+    def _is_c_marker(g: dict) -> int:
+        # Chromosome marker = has a marker annotation but NOT plasmid or virus specific
+        pm = _is_p_marker(g)
+        vm = _is_v_marker(g)
+        if pm or vm:
+            return 0
+        return 1 if g["marker"] and g["marker"] not in ("NA", "") else 0
+
+    p_markers  = [_is_p_marker(g) for g in genes]
+    c_markers  = [_is_c_marker(g) for g in genes]
+    v_markers  = [_is_v_marker(g) for g in genes]
+    pp_markers = [1 if g["p_spm"] > 0.5 else 0 for g in genes]
 
     # Strand switch rate
     strands = [g["strand"] for g in genes]
