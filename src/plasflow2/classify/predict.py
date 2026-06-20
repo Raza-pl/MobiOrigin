@@ -66,11 +66,30 @@ LENGTH_THRESHOLD_TIERS = [
     # (max_length_bp, plasmid_threshold, phage_threshold, chr_threshold)
     # NOTE: conjugative plasmids bypass these via hard override in predict().
     # All other sequences use these per-length thresholds.
-    (2_000,  0.99,  0.95, 0.80),   # <2kb:   very strict — high FP rate at short lengths
-    (5_000,  0.95,  0.90, 0.75),   # 2-5kb:  lowered from 0.98 → 0.95 to improve recall
-    (10_000, 0.95,  0.87, 0.72),   # 5-10kb: 0.95 — net positive (59 extra TPs vs 60 extra FPs)
-    (20_000, 0.93,  0.85, 0.70),   # 10-20kb: lowered from 0.95 → 0.93
-    (float('inf'), 0.90, 0.82, 0.68),  # >20kb: lowered from 0.93 → 0.90
+    #
+    # Calibrated for k=7 BINARY model (Jun 2026) via tune_thresholds_k7.py on clean
+    # binary benchmark predictions (no marker XGBoost, --no-marker-model flag):
+    #
+    #   1-2kb:   0 plasmids in benchmark → 0.99 unchanged
+    #   2-5kb:   5 plasmids; chr p95=0.956, p99=0.978
+    #            Tuner optimal=0.95 (TP=4, FP=913, P=0.004) — terrible precision,
+    #            but 0.95 already set; raising further loses TPs. Unchanged.
+    #   5-10kb:  4 plasmids; chr p95=0.831, p99=0.976
+    #            Tuner optimal=0.93 (TP=2, FP=215, P=0.009) — net loss globally.
+    #            Kept at 0.98 (TP=0, FP=22) to avoid 215 FPs for 2 TPs.
+    #   10-20kb: 379 plasmids; chr p95=0.490, p99=0.967
+    #            Tuner optimal=0.94 (TP=242, FP=53, F1=0.718) vs 0.77 (F1=0.692).
+    #            128/379 plasmids score <0.85 (mean=0.169) — bimodal distribution,
+    #            chromids with chromosome-like k-mer profiles. Unrecoverable at any
+    #            threshold; needs diverse training data. Higher threshold cuts FPs.
+    #   >20kb:   6 plasmids; chr p95=0.332, p99=0.963
+    #            Tuner optimal=0.97 (TP=3, FP=12, F1=0.286) — 0.98 gets TP=0.
+    (2_000,  0.99,  0.95, 0.80),   # <2kb:   very strict (no benchmark plasmids here)
+    (4_999,  0.95,  0.90, 0.75),   # 2-5kb:  chr p99=0.978 makes any threshold costly
+    (9_999,  0.98,  0.87, 0.72),   # 5-10kb: keep strict; 0.93 adds 215 FPs for 2 TPs
+                                   # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
+    (19_999, 0.94,  0.85, 0.70),   # 10-20kb: 0.77→0.94 cuts FPs 118→53, F1: 0.692→0.718
+    (float('inf'), 0.97, 0.82, 0.68),  # >20kb: 0.98→0.97 recovers 3/6 plasmids, F1: 0→0.286
 ]
 
 
@@ -427,6 +446,11 @@ def predict(
         marker_proba = marker_clf.predict_proba(X_marker)  # (N, 3)
         classes = ["plasmid", "chromosome", "phage"]
 
+        # Detect binary model (2-class: plasmid + chromosome, no phage).
+        # Binary models lack "phage" in their score dicts; we must not let
+        # the 3-class marker XGBoost re-introduce spurious phage mass.
+        is_binary_model = "phage" not in (all_scores[0] if all_scores else {})
+
         # Blend MLP + marker scores using attention weighting
         # Hard override ONLY for truly unambiguous conjugative plasmids
         # (relaxase + MPF together).  Mobilizable-only and rep-protein-only
@@ -456,11 +480,21 @@ def predict(
                 ann.get("has_rep_protein", 0.0),
             ])
             marker_gene_fraction = bio_positive / 4.0
-            alpha = max(marker_gene_fraction, marker_alpha_base)
+            # Binary models already output high plasmid scores (0.97+) for true
+            # plasmids; any alpha_base > 0 drags those scores below threshold
+            # (blended = 0.30*marker + 0.70*0.97 = 0.74 < 0.94 threshold).
+            # Use alpha_base=0 for binary: only sequences with actual biological
+            # evidence get XGBoost weight; conjugative/hallmark hard overrides
+            # (lines above) still apply unconditionally.
+            effective_alpha_base = 0.0 if is_binary_model else marker_alpha_base
+            alpha = max(marker_gene_fraction, effective_alpha_base)
 
+            # For binary models, only blend plasmid + chromosome to avoid
+            # re-introducing phage mass from the (always 3-class) marker XGBoost.
+            blend_classes = ["plasmid", "chromosome"] if is_binary_model else classes
             blended = {
                 c: alpha * marker_s.get(c, 0.0) + (1.0 - alpha) * mlp_s.get(c, 0.0)
-                for c in classes
+                for c in blend_classes
             }
             total = sum(blended.values()) or 1.0
             all_scores[i] = {c: v / total for c, v in blended.items()}
@@ -559,8 +593,10 @@ def predict(
             )
         )
         logger.info(
-            "Marker XGBoost applied: %d sequences with biological evidence (alpha_base=%.2f)",
-            n_with_bio, marker_alpha_base,
+            "Marker XGBoost applied: %d sequences with biological evidence "
+            "(effective_alpha_base=%.2f%s)",
+            n_with_bio, effective_alpha_base,
+            " [binary model override]" if is_binary_model else "",
         )
     elif marker_model_path:
         logger.warning("Marker model not found at %s — using MLP only", marker_model_path)

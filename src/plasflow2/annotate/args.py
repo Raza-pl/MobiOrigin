@@ -242,7 +242,7 @@ def call_orfs(
 
     orfs: list[ORF] = []
     with open(out_proteins, "w") as fh:
-        for contig_id, seq in zip(contig_ids, sequences, strict=True):
+        for contig_id, seq in zip(contig_ids, sequences):
             try:
                 genes = gene_finder.find_genes(seq)
             except Exception as exc:

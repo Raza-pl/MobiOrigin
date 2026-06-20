@@ -106,6 +106,8 @@ def _train_mlp_mmap(
     lr: float = 1e-3,
     patience: int = 10,
     out_path: Path = Path("data/models/mlp_v2.pt"),
+    num_classes: int = 3,
+    use_class_weights: bool = True,
 ) -> None:
     from sklearn.metrics import accuracy_score  # type: ignore[import]
 
@@ -119,8 +121,8 @@ def _train_mlp_mmap(
     input_dim = X_mmap_meta.shape[1]
     del X_mmap_meta
 
-    model = PlasFlowMLP(input_dim=input_dim).to(device)
-    logger.info("Model: input_dim=%d  device=%s", input_dim, device)
+    model = PlasFlowMLP(input_dim=input_dim, num_classes=num_classes).to(device)
+    logger.info("Model: input_dim=%d  num_classes=%d  device=%s", input_dim, num_classes, device)
 
     # Validation tensor — 40k rows ≈ 0.21 GB, loaded once
     X_v = torch.tensor(X_va, dtype=torch.float32).to(device)
@@ -139,7 +141,25 @@ def _train_mlp_mmap(
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = torch.nn.CrossEntropyLoss()
+
+    # Class weights: inverse frequency so minority classes get equal gradient.
+    # NOTE: use_class_weights=True was tested for the binary model (2.25:1
+    # imbalance) but caused FP explosion — chromosomes' plasmid scores inflated
+    # above the threshold. Disabled by default; use --no-class-weights flag.
+    if use_class_weights:
+        class_counts = np.bincount(y_tr, minlength=num_classes).astype(np.float32)
+        class_counts = np.where(class_counts == 0, 1, class_counts)  # avoid /0
+        class_weights = 1.0 / class_counts
+        class_weights = class_weights / class_weights.sum() * num_classes  # normalise to mean=1
+        weight_tensor = torch.tensor(class_weights, dtype=torch.float32).to(device)
+        logger.info(
+            "Class weights (inverse-freq, normalised): %s",
+            {i: f"{w:.3f}" for i, w in enumerate(class_weights)},
+        )
+        criterion = torch.nn.CrossEntropyLoss(weight=weight_tensor, label_smoothing=0.05)
+    else:
+        logger.info("Class weights: DISABLED (--no-class-weights) — using uniform weights")
+        criterion = torch.nn.CrossEntropyLoss(label_smoothing=0.05)
 
     best_val_acc = 0.0
     best_state: dict = {}
@@ -206,6 +226,8 @@ def main() -> None:
     parser.add_argument("--rf",     action="store_true", help="Train Random Forest")
     parser.add_argument("--mlp",    action="store_true", help="Train MLP")
     parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--no-class-weights", action="store_true",
+                        help="Disable inverse-frequency class weighting (use uniform weights)")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -244,6 +266,9 @@ def main() -> None:
         n = len(y_all)
         logger.info("Total samples: %d", n)
 
+        num_classes = int(len(np.unique(y_all)))
+        logger.info("Unique labels: %s  (num_classes=%d)", np.unique(y_all).tolist(), num_classes)
+
         idx_all = np.arange(n)
         idx_trainval, idx_te, y_trainval, _ = train_test_split(
             idx_all, y_all, test_size=0.10, stratify=y_all, random_state=_SEED,
@@ -278,6 +303,8 @@ def main() -> None:
             lr=1e-3,
             patience=10,
             out_path=out_dir / "mlp_v2.pt",
+            num_classes=num_classes,
+            use_class_weights=not args.no_class_weights,
         )
 
 

@@ -1,25 +1,36 @@
 """k-mer frequency feature extraction.
 
-Vectorised numpy implementation (rev 2 — ~100x faster than pure-Python loops).
+Vectorised numpy implementation (rev 4 — k=7 canonical).
 
-Algorithm per sequence:
-  1. Encode DNA string once via ASCII lookup table → uint8 array.
-  2. Build reverse-complement array: complement(base) = 3 - base, then flip.
-  3. For each strand, create a zero-copy sliding-window view with
-     np.lib.stride_tricks.sliding_window_view (no data copied).
-  4. Map each window to an integer k-mer ID via matrix-multiply with
-     base-4 power weights (big-endian: leftmost base is most significant).
-     This preserves the same ordering as itertools.product("ACGT", repeat=k).
-  5. Count IDs with np.bincount (one C-level pass over the data).
-  6. Sum forward + RC counts, then L2-normalise.
+Feature vector layout
+---------------------
+  k=1  :    4 dims  — GC content signal
+  k=2  :   16 dims  — dinucleotide composition
+  k=3  :   64 dims  — trinucleotide patterns
+  k=4  :  256 dims  — tetranucleotide (classic plasmid signal)
+  k=5  : 1024 dims  — pentanucleotide
+  k=7  : 8192 dims  — heptanucleotide canonical (PlasFlow v1 approach)
+  len  :    1 dim   — log10(length) scaled to [0,1]
 
-Feature vector: k=4 (256 dims) + k=5 (1024 dims) = 1280 dims, L2-normalised.
-Strand-invariant: forward and reverse-complement strands are merged before
-normalisation so classifying a contig on either strand gives identical features.
+k=7 canonical features (8192 dims)
+-----------------------------------
+For odd k there are no palindromes, so each k-mer pairs uniquely with its
+reverse complement.  We use the CANONICAL form (lexicographically smaller of
+the pair) to halve the feature dimension with no information loss.
 
-Speedup over pure Python:
-  Pure Python (rev 1): ~5M string-slice + dict-lookup ops/sec → hours for 183K seqs.
-  Numpy vectorised (rev 2): all hot paths in C → typically <2 min for 183K seqs.
+At k=7, organism-specific codon-usage patterns manifest as distinctive 7-mer
+frequencies.  These are sufficiently fine-grained to separate secondary
+chromosomes (chromids) from plasmids of the same organism — the key failure
+mode of the k=5-only model.  This mirrors PlasFlow v1's k=7 approach which
+achieves F1=0.939 vs our k=5 ceiling of ~0.376 (PR curve max).
+
+Why canonical instead of raw (16384 dims):
+  kmer_vector() already sums forward + reverse-complement strands, so
+  kmer_vector[i] == kmer_vector[rc(i)] always.  Canonical folding removes
+  this exact redundancy, halving the feature dimension and training time
+  with zero information loss.
+
+Total: 1364 + 8192 + 1 = 9557 dims.
 """
 
 from __future__ import annotations
@@ -33,8 +44,8 @@ from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
-# k-mer sizes to use
-KMER_SIZES = (4, 5)
+# k-mer sizes to use for the k=1–5 block.
+KMER_SIZES = (1, 2, 3, 4, 5)
 
 # Complement mapping — kept for _reverse_complement (used by tests and CLI)
 _COMPLEMENT: dict[str, str] = {"A": "T", "T": "A", "C": "G", "G": "C"}
@@ -46,41 +57,90 @@ def _all_kmers(k: int) -> list[str]:
 
 
 def _reverse_complement(seq: str) -> str:
-    """Return the reverse complement of a DNA string.
-
-    Non-ACGT characters are dropped (treated as absent).
-    Kept for backward compatibility and tests.
-    """
+    """Return the reverse complement of a DNA string."""
     return "".join(_COMPLEMENT.get(b, "") for b in reversed(seq.upper()))
 
 
-# Pre-build k-mer vocabularies and index maps (used by callers that need string k-mers)
+# Pre-build k-mer vocabularies and index maps
 _VOCAB: dict[int, list[str]] = {k: _all_kmers(k) for k in KMER_SIZES}
 _KMER_TO_IDX: dict[int, dict[str, int]] = {
     k: {km: i for i, km in enumerate(vocab)} for k, vocab in _VOCAB.items()
 }
 
-_KMER_DIM = sum(len(_VOCAB[k]) for k in KMER_SIZES)  # 256 + 1024 = 1280
-FEATURE_DIM = _KMER_DIM + 1  # +1 for log10(length) feature
+_KMER_DIM = sum(len(_VOCAB[k]) for k in KMER_SIZES)  # 4+16+64+256+1024 = 1364
+
+# k=7 canonical dimensions.
+# For odd k there are no palindromes, so each k-mer pairs with a different
+# reverse complement.  The canonical set has exactly 4^7 / 2 = 8192 members.
+K7_VOCAB_SIZE  = 4 ** 7   # 16384 total k=7 words
+K7_CANON_SIZE  = K7_VOCAB_SIZE // 2   # 8192 canonical k=7 words
+
+# Feature dimension with k=7 canonical block
+FEATURE_DIM_BASE = _KMER_DIM + 1              # k=1–5 + length (no k=7)  = 1365
+FEATURE_DIM      = _KMER_DIM + K7_CANON_SIZE + 1  # k=1–5 + k=7 + length = 9557
+
+# Backward-compat aliases for legacy code that references these names
+K6_PCA_COMPONENTS = 128        # still referenced by older scripts
+K6_RAW_DIM = 4 ** 6            # = 4096; referenced by fit_k6_pca.py
+FEATURE_DIM_WITH_K6 = _KMER_DIM + 1 + K6_PCA_COMPONENTS  # = 1493
 
 # ---------------------------------------------------------------------------
 # Vectorised internals
 # ---------------------------------------------------------------------------
 
-# ASCII lookup table: byte value → base index
-#   A/a = 0, C/c = 1, G/g = 2, T/t = 3, N/other = 0
-# This matches the alphabetical ordering of itertools.product("ACGT", repeat=k)
-# so k-mer IDs produced below are identical to the _KMER_TO_IDX index above.
+# ASCII lookup table: byte value → base index (A=0, C=1, G=2, T=3)
 _ASCII_TO_BASE: NDArray[np.uint8] = np.zeros(256, dtype=np.uint8)
 for _ch, _val in [("A", 0), ("C", 1), ("G", 2), ("T", 3), ("a", 0), ("c", 1), ("g", 2), ("t", 3)]:
     _ASCII_TO_BASE[ord(_ch)] = _val
 
 # Pre-computed base-4 power vectors for k-mer ID computation.
-# big-endian: leftmost base is the most significant digit, e.g.
-#   ACGT → 0*64 + 1*16 + 2*4 + 3 = 27  (matches _KMER_TO_IDX["ACGT"] for k=4)
 _POWERS: dict[int, NDArray[np.int64]] = {
-    k: (4 ** np.arange(k - 1, -1, -1, dtype=np.int64)) for k in KMER_SIZES
+    k: (4 ** np.arange(k - 1, -1, -1, dtype=np.int64)) for k in (*KMER_SIZES, 6, 7)
 }
+
+# ---------------------------------------------------------------------------
+# k=7 canonical lookup table (built once at import time, ~0.05 s)
+# ---------------------------------------------------------------------------
+# Maps each of the 16384 k=7 raw IDs to its canonical index in [0, 8191].
+# Two raw IDs (kmer and its rc) map to the same canonical index.
+# The canonical representative is the one with the smaller raw ID.
+#
+# Build algorithm:
+#   1. For each raw ID i (0..16383), compute rc_id.
+#   2. Assign the pair (min(i, rc_id)) a monotonically increasing index.
+#   3. Both i and rc_id receive that index in _K7_CANON_MAP.
+#
+def _build_k7_canon_map() -> NDArray[np.int16]:
+    k = 7
+    vocab = 4 ** k          # 16384
+    powers = np.array([4 ** (k - 1 - j) for j in range(k)], dtype=np.int64)
+    comp = np.array([3, 2, 1, 0], dtype=np.int64)   # A↔T, C↔G complement indices
+
+    # Decode each raw ID into its base sequence, compute rc ID
+    ids = np.arange(vocab, dtype=np.int64)
+    # Extract 7 bases for each id: base[j] = (id // 4^(6-j)) % 4
+    bases = np.zeros((vocab, k), dtype=np.int64)
+    for j in range(k):
+        bases[:, j] = (ids // powers[j]) % 4
+    # Reverse-complement: complement each base, reverse the sequence
+    rc_bases = comp[bases[:, ::-1]]   # shape (16384, 7)
+    rc_ids = (rc_bases * powers).sum(axis=1)   # shape (16384,)
+
+    # Assign canonical indices: iterate in raw ID order; each pair gets the
+    # same index when first encountered via the smaller member.
+    canon_map = np.full(vocab, -1, dtype=np.int16)
+    idx = 0
+    for i in range(vocab):
+        if canon_map[i] == -1:
+            j = int(rc_ids[i])
+            canon_map[i] = idx
+            canon_map[j] = idx
+            idx += 1
+    assert idx == K7_CANON_SIZE, f"Expected {K7_CANON_SIZE} canonical k=7 mers, got {idx}"
+    return canon_map
+
+
+_K7_CANON_MAP: NDArray[np.int16] = _build_k7_canon_map()
 
 
 def _encode_seq(seq: str) -> NDArray[np.uint8]:
@@ -151,38 +211,135 @@ def kmer_vector(seq: str, k: int) -> NDArray[np.float32]:
     return counts
 
 
-def extract_features(sequences: list[str]) -> NDArray[np.float32]:
-    """Extract concatenated k-mer + length feature matrix for a list of sequences.
+# ---------------------------------------------------------------------------
+# k=6 PCA stubs (deprecated — kept so existing scripts don't break on import)
+# ---------------------------------------------------------------------------
 
-    Feature layout (FEATURE_DIM = 1281 columns):
-      cols 0–255   : normalised 4-mer frequencies (strand-invariant)
-      cols 256–1279: normalised 5-mer frequencies (strand-invariant)
-      col  1280    : log10(sequence length), scaled to [0, 1] over [1 kb, 1 Mb]
+def fit_k6_pca(*args, **kwargs):  # type: ignore[no-untyped-def]
+    """Deprecated.  The k=7 canonical architecture does not use PCA."""
+    raise NotImplementedError(
+        "fit_k6_pca is no longer used.  "
+        "PlasFlow v2 rev-4 uses k=7 canonical features (8192 dims) instead of k=6 PCA."
+    )
 
-    The length feature lets the MLP learn that a 1 kb fragment carries less
-    classification signal than a 10 kb fragment, which dramatically reduces
-    the mis-classification of short metagenomic contigs (the root cause of
-    the train/inference distribution mismatch when training on 5 k/10 k only).
+
+def load_k6_pca(*args, **kwargs):  # type: ignore[no-untyped-def]
+    """Deprecated.  Returns None so callers that guard on None still work."""
+    return None
+
+
+def k6_pca_vector(*args, **kwargs):  # type: ignore[no-untyped-def]
+    """Deprecated."""
+    raise NotImplementedError("k=6 PCA features are no longer used.")
+
+
+# ---------------------------------------------------------------------------
+# k=7 canonical feature vector
+# ---------------------------------------------------------------------------
+
+def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
+    """Compute normalised k=7 canonical k-mer frequency vector (8192 dims).
+
+    Each of the 16384 raw k=7 IDs is folded to its canonical representative
+    (the smaller of the kmer/rc pair) using the precomputed _K7_CANON_MAP.
+    Because forward and reverse-complement windows are summed, this is
+    equivalent to counting canonical occurrences with multiplicity 1.
 
     Args:
-        sequences: List of DNA strings.
+        seq: DNA string (any case; non-ACGT treated as A).
 
     Returns:
-        Float32 array of shape (N, FEATURE_DIM).
+        Float32 array of shape (8192,), L2-normalised.
+        Returns a zero vector if the sequence is shorter than 7.
     """
+    k = 7
+    seq = seq.upper()
+
+    if len(seq) < k:
+        return np.zeros(K7_CANON_SIZE, dtype=np.float32)
+
+    encoded: NDArray[np.uint8] = _encode_seq(seq)
+    powers = _POWERS[k]
+
+    # Count raw k=7 k-mer occurrences (forward strand only — canonical folding
+    # via the map already handles both strands simultaneously because each
+    # kmer ID and its rc map to the SAME canonical index).
+    windows = np.lib.stride_tricks.sliding_window_view(encoded, k).astype(np.int64)
+    raw_ids: NDArray[np.int64] = windows @ powers     # shape (L-6,)
+
+    # Map raw IDs → canonical IDs
+    canon_ids = _K7_CANON_MAP[raw_ids]               # shape (L-6,), dtype int16
+
+    # Also do the reverse-complement strand so counts from both strands are
+    # summed (mirrors kmer_vector behaviour for k=1–5).
+    rc_encoded: NDArray[np.uint8] = (3 - encoded.astype(np.int16)).astype(np.uint8)[::-1]
+    rc_windows = np.lib.stride_tricks.sliding_window_view(rc_encoded, k).astype(np.int64)
+    rc_raw_ids: NDArray[np.int64] = rc_windows @ powers
+    rc_canon_ids = _K7_CANON_MAP[rc_raw_ids]
+
+    counts = (
+        np.bincount(canon_ids.astype(np.int64), minlength=K7_CANON_SIZE)
+        + np.bincount(rc_canon_ids.astype(np.int64), minlength=K7_CANON_SIZE)
+    ).astype(np.float32)
+
+    norm = float(np.linalg.norm(counts))
+    if norm > 0:
+        counts /= norm
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# Main feature extraction
+# ---------------------------------------------------------------------------
+
+def extract_features(sequences: list[str],
+                     k6_pca_path: Path | str | None = None) -> NDArray[np.float32]:
+    """Extract k=1–5 + k=7-canonical k-mer features + length feature.
+
+    Feature layout (9557 dims total):
+      cols    0–3      : k=1 (4 dims)
+      cols    4–19     : k=2 (16 dims)
+      cols   20–83     : k=3 (64 dims)
+      cols   84–339    : k=4 (256 dims)
+      cols  340–1363   : k=5 (1024 dims)
+      cols 1364–9555   : k=7 canonical (8192 dims)
+      col  9556        : log10(length) scaled to [0, 1]
+
+    The `k6_pca_path` argument is accepted for API compatibility but ignored.
+
+    Args:
+        sequences:   List of DNA strings.
+        k6_pca_path: Ignored (kept for backward compat).
+
+    Returns:
+        Float32 array of shape (N, 9557).
+    """
+    if k6_pca_path is not None:
+        logger.debug("k6_pca_path ignored — k=7 canonical architecture does not use PCA")
+
     n = len(sequences)
-    X = np.zeros((n, FEATURE_DIM), dtype=np.float32)
+    dim = FEATURE_DIM   # 9557
+    X = np.zeros((n, dim), dtype=np.float32)
+
+    # k=1–5 block (1364 dims)
     offset = 0
     for k in KMER_SIZES:
-        dim = 4**k
+        k_dim = 4 ** k
         for i, seq in enumerate(sequences):
-            X[i, offset : offset + dim] = kmer_vector(seq, k)
-            if (i + 1) % 10_000 == 0:
-                logger.info("  k=%d: %d / %d sequences processed", k, i + 1, n)
-        offset += dim
+            X[i, offset : offset + k_dim] = kmer_vector(seq, k)
+        if n >= 10_000:
+            logger.info("  k=%d done (%d sequences)", k, n)
+        offset += k_dim
 
-    # Length feature: log10(len) scaled to [0, 1] where 0 = 1 kb, 1 = 1 Mb
-    # Clipped so sequences outside [1 kb, 1 Mb] don't produce out-of-range values.
+    # k=7 canonical block (8192 dims)
+    logger.info("  Computing k=7 canonical features (%d dims) …", K7_CANON_SIZE)
+    for i, seq in enumerate(sequences):
+        X[i, offset : offset + K7_CANON_SIZE] = kmer_vector_k7_canonical(seq)
+        if (i + 1) % 10_000 == 0:
+            logger.info("  k=7: %d / %d sequences", i + 1, n)
+    offset += K7_CANON_SIZE
+
+    # Length feature (1 dim)
     log_min, log_max = np.log10(1_000), np.log10(1_000_000)
     for i, seq in enumerate(sequences):
         log_len = np.log10(max(1, len(seq)))

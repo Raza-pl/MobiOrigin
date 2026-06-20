@@ -295,7 +295,9 @@ def fragment_sequences(
     frag_seqs: list[str] = []
     frag_ids: list[str] = []
 
-    for parent_id, seq in zip(ids, seqs, strict=True):
+    if len(ids) != len(seqs):
+        raise ValueError(f"ids/seqs length mismatch: {len(ids)} vs {len(seqs)}")
+    for parent_id, seq in zip(ids, seqs):
         for w in window_sizes:
             if w > len(seq):
                 continue
@@ -345,32 +347,71 @@ def load_chrom_dir(
         logger.warning("No FASTA files found in chromosome directory: %s", directory)
         return [], [], []
 
+    # Shuffle files so we get diverse species even when we stop early.
+    rng_files = random.Random(seed)
+    rng_files.shuffle(files)
+
     logger.info("Loading chromosomes from %s  (%d assembly files)", directory, len(files))
-    all_chrom_seqs: list[str] = []
-    all_chrom_ids: list[str] = []
+
+    # Process files one at a time and tile on-the-fly.  Stop as soon as we
+    # have enough fragments — avoids loading all 1000 genomes into RAM at once
+    # (1000 × 4 MB avg = 4 GB before any tiling).
+    frag_seqs: list[str] = []
+    frag_ids:  list[str] = []
+    files_used = 0
 
     for fpath in files:
+        batch_seqs: list[str] = []
+        batch_ids:  list[str] = []
         for rec in _open_fasta(fpath):
             seq = str(rec.seq).upper()
+            # Skip plasmid sequences — genomic FNA files from RefSeq contain
+            # both chromosomes and plasmids; we only want chromosomal sequences.
+            desc = (rec.id + " " + getattr(rec, "description", "")).lower()
+            if "plasmid" in desc:
+                continue
             if len(seq) >= min_length:
-                all_chrom_seqs.append(seq)
-                all_chrom_ids.append(rec.id)
+                batch_seqs.append(seq)
+                batch_ids.append(rec.id)
+
+        if not batch_seqs:
+            continue
+
+        batch_frags, batch_fids = fragment_sequences(
+            batch_seqs, batch_ids,
+            window_sizes=window_sizes,
+            step_fraction=step_fraction,
+            max_fragments=None,   # cap applied globally below
+            seed=seed,
+        )
+        frag_seqs.extend(batch_frags)
+        frag_ids.extend(batch_fids)
+        files_used += 1
+
+        if max_fragments and len(frag_seqs) >= max_fragments * 2:
+            # Have at least 2× what we need — no point loading more genomes
+            logger.info(
+                "  Reached %.0fx fragment target after %d / %d files — stopping early",
+                len(frag_seqs) / max_fragments, files_used, len(files),
+            )
+            break
 
     logger.info(
-        "  Loaded %d chromosome sequences from %d assemblies", len(all_chrom_seqs), len(files)
+        "  Loaded %d chromosome windows from %d / %d assembly files",
+        len(frag_seqs), files_used, len(files),
     )
 
-    if not all_chrom_seqs:
+    if not frag_seqs:
         return [], [], []
 
-    frag_seqs, frag_ids = fragment_sequences(
-        all_chrom_seqs,
-        all_chrom_ids,
-        window_sizes=window_sizes,
-        step_fraction=step_fraction,
-        max_fragments=max_fragments,
-        seed=seed,
-    )
+    # Global downsample to max_fragments
+    if max_fragments and len(frag_seqs) > max_fragments:
+        rng = random.Random(seed)
+        indices = rng.sample(range(len(frag_seqs)), max_fragments)
+        frag_seqs = [frag_seqs[i] for i in indices]
+        frag_ids  = [frag_ids[i]  for i in indices]
+
+    logger.info("  Final chromosome windows: %d", len(frag_seqs))
     chr_label = CLASS_TO_IDX["chromosome"]
     return frag_seqs, frag_ids, [chr_label] * len(frag_seqs)
 
@@ -445,6 +486,7 @@ def load_windowed_streaming(
     label: str,
     max_total: int,
     min_length: int = 1000,
+    max_source_length: int | None = None,
     window_sizes: tuple[int, ...] = (1000, 2000, 5000, 10_000),
     step_fraction: float = 0.5,
     seed: int = 42,
@@ -466,6 +508,8 @@ def load_windowed_streaming(
         label: Class label — must be a key in CLASS_TO_IDX.
         max_total: Reservoir size = maximum windows returned.
         min_length: Source sequences shorter than this are skipped entirely.
+        max_source_length: Source sequences longer than this are skipped (None = no cap).
+            Useful for filtering out bacterial chromosome contamination from phage DBs.
         window_sizes: Tile each source sequence at these lengths.
         step_fraction: Step = window × step_fraction  (0.5 = 50 % overlap).
         seed: RNG seed for reservoir sampling.
@@ -474,8 +518,20 @@ def load_windowed_streaming(
         (sequences, seq_ids, labels) as parallel lists, length ≤ max_total.
     """
     rng = random.Random(seed)
-    reservoir: list[tuple[str, str]] = []  # (seq_id, fragment)
-    n_seen = 0  # total windows considered so far (for reservoir probability)
+    n_sizes = len(window_sizes)
+
+    # ── Length-stratified reservoir sampling ──────────────────────────────
+    # The original single-reservoir approach produces 56% 1kb fragments
+    # because shorter windows tile more densely (a 5Mb chromosome produces
+    # 10× more 1kb windows than 10kb windows).  This causes the model to
+    # over-optimise for short-sequence k-mer patterns.
+    #
+    # Fix: maintain a SEPARATE reservoir per window size, each capped at
+    # max_total // n_sizes.  The final merged set is then balanced across
+    # all window sizes (equal representation).
+    per_size_cap = max_total // n_sizes
+    reservoirs: dict[int, list[tuple[str, str]]] = {w: [] for w in window_sizes}
+    n_seen_per_size: dict[int, int] = {w: 0 for w in window_sizes}
 
     for fpath in files:
         logger.info("  Streaming %s …", fpath.name)
@@ -484,44 +540,153 @@ def load_windowed_streaming(
             seq = str(rec.seq).upper()
             if len(seq) < min_length:
                 continue
-            # Generate and immediately reservoir-sample windows for this record.
-            # The full `seq` string is referenced only inside this inner loop;
-            # once the loop exits the GC can reclaim it.
+            if max_source_length is not None and len(seq) > max_source_length:
+                continue
             for w in window_sizes:
                 if w > len(seq):
                     continue
                 step = max(1, int(w * step_fraction))
                 for start in range(0, len(seq) - w + 1, step):
                     fragment = seq[start : start + w]
-                    n_seen += 1
+                    n_seen_per_size[w] += 1
                     n_file += 1
-                    if len(reservoir) < max_total:
-                        reservoir.append((f"{rec.id}_w{w}_s{start}", fragment))
+                    res = reservoirs[w]
+                    cap = per_size_cap
+                    if len(res) < cap:
+                        res.append((f"{rec.id}_w{w}_s{start}", fragment))
                     else:
-                        # Replace a random existing element with probability
-                        # max_total / n_seen — preserves uniform sampling.
-                        j = rng.randint(0, n_seen - 1)
-                        if j < max_total:
-                            reservoir[j] = (f"{rec.id}_w{w}_s{start}", fragment)
+                        j = rng.randint(0, n_seen_per_size[w] - 1)
+                        if j < cap:
+                            res[j] = (f"{rec.id}_w{w}_s{start}", fragment)
         logger.info(
-            "    %s: %d source windows generated  (reservoir now %d)",
-            fpath.name,
-            n_file,
-            len(reservoir),
+            "    %s: %d source windows generated  (reservoirs: %s)",
+            fpath.name, n_file,
+            {w: len(r) for w, r in reservoirs.items()},
         )
 
+    # Merge and shuffle all per-size reservoirs
+    merged: list[tuple[str, str]] = []
+    for w in window_sizes:
+        merged.extend(reservoirs[w])
+    rng.shuffle(merged)
+
+    n_total_seen = sum(n_seen_per_size.values())
     label_idx = CLASS_TO_IDX[label]
-    ids = [r[0] for r in reservoir]
-    seqs = [r[1] for r in reservoir]
+    ids = [r[0] for r in merged]
+    seqs = [r[1] for r in merged]
     labels_list = [label_idx] * len(seqs)
+
+    # Log window-size balance for diagnostics
+    size_counts = {w: len(reservoirs[w]) for w in window_sizes}
     logger.info(
-        "  → '%s' total: %d windows (from %d total windows seen, cap=%d)",
-        label,
-        len(seqs),
-        n_seen,
-        max_total,
+        "  → '%s' total: %d windows (balanced: %s, from %d total seen)",
+        label, len(seqs), size_counts, n_total_seen,
     )
     return seqs, ids, labels_list
+
+
+# ── GTDB genome selection ─────────────────────────────────────────────────────
+
+
+def select_gtdb_genomes(
+    gtdb_dir: Path,
+    n: int = 300,
+    seed: int = 42,
+    summary_tsv: Path | None = None,
+) -> list[Path]:
+    """Select a phylum-balanced random subset of GTDB genome files.
+
+    Reads download_summary.tsv (expected one level up from gtdb_dir, or at
+    gtdb_dir.parent / 'download_summary.tsv') to get taxonomy, then samples
+    proportionally across phyla so no single phylum dominates.
+
+    Args:
+        gtdb_dir:    Directory with .fna.gz genome files.
+        n:           Total number of genomes to select.
+        seed:        RNG seed for reproducibility.
+        summary_tsv: Path to GTDB download_summary.tsv. Auto-detected if None.
+
+    Returns:
+        List of Path objects for selected .fna.gz files (up to n).
+    """
+    import csv
+    import math
+
+    rng = random.Random(seed)
+
+    # Locate summary TSV
+    if summary_tsv is None:
+        candidates = [
+            gtdb_dir.parent / "download_summary.tsv",
+            gtdb_dir.parent.parent / "download_summary.tsv",
+        ]
+        summary_tsv = next((p for p in candidates if p.exists()), None)
+
+    # Build accession → file mapping
+    available_files: dict[str, Path] = {}
+    for f in gtdb_dir.glob("*.fna.gz"):
+        acc = f.stem.replace(".fna", "")   # GCA_000010565.1
+        available_files[acc] = f
+    # Also try without .fna in stem
+    for f in gtdb_dir.glob("*.fna.gz"):
+        acc2 = f.name.split(".fna.gz")[0]
+        available_files.setdefault(acc2, f)
+
+    logger.info("GTDB: %d .fna.gz files found in %s", len(available_files), gtdb_dir)
+
+    if not available_files:
+        logger.warning("No .fna.gz files found in GTDB dir: %s", gtdb_dir)
+        return []
+
+    if summary_tsv and summary_tsv.exists():
+        # Phylum-balanced selection
+        phylum_to_accs: dict[str, list[str]] = {}
+        with open(summary_tsv) as fh:
+            reader = csv.DictReader(fh, delimiter="\t")
+            for row in reader:
+                tax = row.get("taxonomy", "")
+                phylum = next(
+                    (p.strip() for p in tax.split(";") if p.strip().startswith("p__")),
+                    "p__unknown",
+                )
+                acc = row.get("accession", "").replace("RS_", "").replace("GB_", "")
+                if acc in available_files:
+                    phylum_to_accs.setdefault(phylum, []).append(acc)
+
+        # Sample proportionally — each phylum contributes at least 1 genome
+        n_phyla = len(phylum_to_accs)
+        selected_accs: list[str] = []
+        if n_phyla == 0:
+            selected_accs = rng.sample(list(available_files.keys()),
+                                       min(n, len(available_files)))
+        else:
+            per_phylum = max(1, n // n_phyla)
+            for phylum, accs in phylum_to_accs.items():
+                k = min(per_phylum, len(accs))
+                selected_accs.extend(rng.sample(accs, k))
+            # Top up to n from unselected, if needed
+            if len(selected_accs) < n:
+                all_accs = set(available_files.keys())
+                remaining = list(all_accs - set(selected_accs))
+                rng.shuffle(remaining)
+                selected_accs.extend(remaining[: n - len(selected_accs)])
+            # Trim to n
+            if len(selected_accs) > n:
+                selected_accs = rng.sample(selected_accs, n)
+
+        selected = [available_files[a] for a in selected_accs if a in available_files]
+        logger.info(
+            "GTDB: selected %d/%d genomes across %d phyla (target=%d)",
+            len(selected), len(available_files), n_phyla, n,
+        )
+    else:
+        # No taxonomy — random selection
+        logger.warning("GTDB: download_summary.tsv not found — using random selection")
+        all_files = list(available_files.values())
+        selected = rng.sample(all_files, min(n, len(all_files)))
+        logger.info("GTDB: randomly selected %d/%d genomes", len(selected), len(all_files))
+
+    return selected
 
 
 # ── Legacy chromosome download ────────────────────────────────────────────────
@@ -590,10 +755,42 @@ def main() -> None:
         default=None,
         metavar="DIR",
         help=(
-            "Directory containing PlasmidScope FASTA files "
-            "(PLSDB.fna, RefSeq.fna, COMPASS.fna, etc.). "
-            "All .fna/.fa/.fasta files in this directory are merged as 'plasmid'. "
+            "Directory containing plasmid FASTA files "
+            "(PLSDB.fna, COMPASS.fna, etc.). "
+            "All .fna/.fa/.fasta files in this directory are merged as 'plasmid', "
+            "UNLESS --plasmid-files is specified. "
             "Falls back to --data-dir/plsdb.fna if not provided."
+        ),
+    )
+    parser.add_argument(
+        "--plasmid-files",
+        default=None,
+        metavar="FILE[,FILE...]",
+        help=(
+            "Comma-separated list of specific plasmid FASTA files to use. "
+            "Overrides --plasmid-dir glob. "
+            "Example: 'data/databases/plasmids/plsdb.fasta,data/databases/plasmids/COMPASS.fna' "
+            "(excludes RefSeq.fna which overlaps heavily with PLSDB)."
+        ),
+    )
+    parser.add_argument(
+        "--phage-min-length",
+        type=int,
+        default=5000,
+        help=(
+            "Minimum phage sequence length in bp (default: 5000). "
+            "Filters out incomplete phage genomes from INPHARED. "
+            "15%% of INPHARED sequences are <5kb and are likely fragments."
+        ),
+    )
+    parser.add_argument(
+        "--phage-max-length",
+        type=int,
+        default=300000,
+        help=(
+            "Maximum phage sequence length in bp (default: 300000). "
+            "Filters out likely bacterial chromosome contamination. "
+            "Real phage genomes are almost always <300kb."
         ),
     )
     parser.add_argument(
@@ -668,6 +865,34 @@ def main() -> None:
         help="Minimum contig length in bp (default: 1000).",
     )
     parser.add_argument(
+        "--window-sizes",
+        default="1000,2000,5000,10000,20000",
+        help=(
+            "Comma-separated contig window sizes in bp for chromosome/plasmid/phage "
+            "fragmentation (default: '1000,2000,5000,10000,20000'). "
+            "Include 20000 to cover long assembled contigs."
+        ),
+    )
+    parser.add_argument(
+        "--gtdb-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of GTDB-representative bacterial genome .fna.gz files "
+            "(e.g. data/gtdb_genomes/bacteria/). "
+            "A phylum-balanced random subset of --gtdb-n-genomes genomes is selected "
+            "and used as the primary chromosome source, supplementing --chrom-dir. "
+            "Requires data/gtdb_genomes/download_summary.tsv for taxonomy."
+        ),
+    )
+    parser.add_argument(
+        "--gtdb-n-genomes",
+        type=int,
+        default=300,
+        help="Number of GTDB genomes to select (phylum-balanced, default: 300).",
+    )
+    parser.add_argument(
         "--skip-download",
         action="store_true",
         help="Skip NCBI legacy chromosome download (use existing chromosomes.fna).",
@@ -678,7 +903,79 @@ def main() -> None:
         default=42,
         help="Random seed for reproducibility (default: 42).",
     )
+    parser.add_argument(
+        "--binary-plasmid",
+        action="store_true",
+        default=False,
+        help=(
+            "Remap phage labels to chromosome before saving, training a binary "
+            "plasmid-vs-chromosome MLP instead of the 3-class model. "
+            "Phage suppression at inference still uses biological markers in predict.py. "
+            "Use with retrain_k7_binary.sh."
+        ),
+    )
+    parser.add_argument(
+        "--k6-pca-path",
+        type=Path,
+        default=None,
+        help="Path to a custom k=6 PCA pickle (default: data/models/k6_pca.pkl). "
+             "Use to experiment with different PCA dimensionalities.",
+    )
+    parser.add_argument(
+        "--hard-negative-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of FASTA files (.fna/.fa/.fasta) to inject as GUARANTEED "
+            "chromosome hard negatives. Windows from these genomes are appended AFTER "
+            "the per-class cap so they are never downsampled away. "
+            "Use for organisms whose secondary chromosomes or genomic islands score "
+            "as plasmid (e.g. Burkholderia, Enterobacter). "
+            "Example: data/hard_negatives/"
+        ),
+    )
+    parser.add_argument(
+        "--hard-negative-max",
+        type=int,
+        default=10_000,
+        help=(
+            "Maximum number of windows to draw from --hard-negative-dir "
+            "(default: 10000). Spread evenly across all window sizes."
+        ),
+    )
+    parser.add_argument(
+        "--hard-negative-window-sizes",
+        default="10000",
+        help=(
+            "Comma-separated window sizes (bp) to use when tiling hard-negative genomes "
+            "(default: '10000'). "
+            "Deliberately narrower than --window-sizes: injecting 5-10kb windows from "
+            "secondary chromosomes hurts 5-10kb plasmid recall because those windows "
+            "look compositionally plasmid-like at short scales. "
+            "Use only 10kb (the bin where FPs are concentrated) to avoid this."
+        ),
+    )
     args = parser.parse_args()
+
+    # Parse window sizes
+    try:
+        window_sizes = tuple(int(w.strip()) for w in args.window_sizes.split(","))
+    except ValueError:
+        logger.error("--window-sizes must be comma-separated integers, got: %s", args.window_sizes)
+        raise SystemExit(1)
+    logger.info("Window sizes: %s bp", list(window_sizes))
+
+    # Parse hard-negative window sizes (separate from main window_sizes)
+    try:
+        hn_window_sizes = tuple(int(w.strip()) for w in args.hard_negative_window_sizes.split(","))
+    except ValueError:
+        logger.error(
+            "--hard-negative-window-sizes must be comma-separated integers, got: %s",
+            args.hard_negative_window_sizes,
+        )
+        raise SystemExit(1)
+    logger.info("Hard-negative window sizes: %s bp", list(hn_window_sizes))
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.out)
@@ -695,10 +992,26 @@ def main() -> None:
     logger.info("=" * 60)
 
     # Plasmids: stream-window to avoid OOM.
-    # PLSDB + RefSeq together are ~12 GB of FASTA; loading all sequences as
-    # Python strings before windowing exhausts RAM.  load_windowed_streaming()
-    # windows each sequence immediately and holds only the reservoir (≤ 750 MB).
-    if args.plasmid_dir and args.plasmid_dir.is_dir():
+    # Use --plasmid-files to specify exact files (recommended: PLSDB + COMPASS only,
+    # exclude RefSeq which overlaps ~70% with PLSDB and adds <2kb fragment noise).
+    if args.plasmid_files:
+        plasmid_files = [Path(f.strip()) for f in args.plasmid_files.split(",") if f.strip()]
+        missing = [f for f in plasmid_files if not f.exists()]
+        if missing:
+            logger.warning("Plasmid files not found: %s", missing)
+            plasmid_files = [f for f in plasmid_files if f.exists()]
+        logger.info("Streaming 'plasmid' from %d explicit files: %s",
+                    len(plasmid_files), [f.name for f in plasmid_files])
+        seqs, ids, labels = load_windowed_streaming(
+            plasmid_files,
+            label="plasmid",
+            max_total=args.max_per_class,
+            min_length=args.min_length,
+            window_sizes=window_sizes,
+            step_fraction=0.5,
+            seed=args.seed,
+        )
+    elif args.plasmid_dir and args.plasmid_dir.is_dir():
         plasmid_files = _fasta_files_in_dir(args.plasmid_dir, recursive=True)
         logger.info(
             "Streaming 'plasmid' from directory: %s  (%d files)",
@@ -710,7 +1023,7 @@ def main() -> None:
             label="plasmid",
             max_total=args.max_per_class,
             min_length=args.min_length,
-            window_sizes=(1000, 2000, 5000, 10_000),
+            window_sizes=window_sizes,
             step_fraction=0.5,
             seed=args.seed,
         )
@@ -736,7 +1049,7 @@ def main() -> None:
         else:
             logger.warning(
                 "No plasmid source found. "
-                "Provide --plasmid-dir or place plsdb.fna in --data-dir."
+                "Provide --plasmid-files, --plasmid-dir, or place plsdb.fna in --data-dir."
             )
             seqs, ids, labels = [], [], []
 
@@ -761,13 +1074,21 @@ def main() -> None:
     ]
     inphared_path = next((p for p in inphared_candidates if p.exists()), None)
     if inphared_path is not None:
-        logger.info("Streaming INPHARED file: %s", inphared_path)
+        phage_min = args.phage_min_length
+        phage_max = args.phage_max_length
+        logger.info("Streaming INPHARED file: %s  (length filter: %d–%d bp)",
+                    inphared_path, phage_min, phage_max)
+        # Pre-filter INPHARED by sequence length before windowing.
+        # 15% of INPHARED sequences are <5kb (incomplete genomes / prophage fragments).
+        # ~40 sequences are >300kb (likely misassembled bacterial chromosomes).
+        # Keeping only 5kb–300kb reduces phage false positives substantially.
         seqs, ids, labels = load_windowed_streaming(
             [inphared_path],
             label="phage",
             max_total=args.max_per_class,
-            min_length=args.min_length,
-            window_sizes=(1000, 2000, 5000, 10_000),
+            min_length=phage_min,       # filter short/incomplete phage sequences
+            max_source_length=phage_max, # filter very large contaminating sequences
+            window_sizes=window_sizes,
             step_fraction=0.5,
             seed=args.seed,
         )
@@ -788,19 +1109,27 @@ def main() -> None:
     chrom_ids: list[str] = []
     chrom_labels: list[int] = []
 
+    # Decide per-source caps based on what's available
+    has_metagenome = bool(args.metagenome_dir and args.metagenome_dir.is_dir())
+    has_gtdb       = bool(args.gtdb_dir and args.gtdb_dir.is_dir())
+    n_chrom_sources = sum([
+        bool(args.chrom_dir and args.chrom_dir.is_dir()),
+        has_gtdb,
+        has_metagenome,
+    ])
+    per_source_cap = max(1, args.max_per_class // max(n_chrom_sources, 1))
+
     if args.chrom_dir and args.chrom_dir.is_dir():
-        # Reserve up to 60% of max_per_class for RefSeq chromosomes;
-        # remaining 40% goes to metagenome contigs (if provided).
-        refseq_cap = int(args.max_per_class * 0.60) if args.metagenome_dir else args.max_per_class
-        # Use streaming loader — loads one genome at a time into a reservoir.
-        # load_chrom_dir() loads all genomes at once and OOM-kills on 1000+ genomes.
         chrom_files = _fasta_files_in_dir(args.chrom_dir)
+        refseq_cap = per_source_cap if (has_gtdb or has_metagenome) else args.max_per_class
         logger.info("CHROMOSOME CLASS — RefSeq genomes (%d files, streaming)", len(chrom_files))
         seqs, ids, labels = load_windowed_streaming(
             chrom_files,
             label="chromosome",
             max_total=refseq_cap,
             min_length=args.min_length,
+            window_sizes=window_sizes,
+            step_fraction=0.5,
             seed=args.seed,
         )
         chrom_seqs.extend(seqs)
@@ -810,19 +1139,20 @@ def main() -> None:
     else:
         # Legacy: single chromosomes.fna in data_dir
         chr_path = data_dir / "chromosomes.fna"
-        if not args.skip_download:
+        if not args.skip_download and not has_gtdb:
             download_chromosomes(CHROMOSOME_ACCESSIONS, chr_path)
         if chr_path.exists():
             seqs, ids, _ = load_and_subsample(
                 chr_path, "chromosome", max_per_class=10_000_000, min_length=args.min_length
             )
             if seqs:
+                legacy_cap = per_source_cap if has_gtdb else args.max_per_class
                 frag_seqs, frag_ids = fragment_sequences(
                     seqs,
                     ids,
-                    window_sizes=(1000, 2000, 5000, 10_000),
+                    window_sizes=window_sizes,
                     step_fraction=0.5,
-                    max_fragments=args.max_per_class,
+                    max_fragments=legacy_cap,
                     seed=args.seed,
                 )
                 chr_label = CLASS_TO_IDX["chromosome"]
@@ -830,13 +1160,41 @@ def main() -> None:
                 chrom_ids.extend(frag_ids)
                 chrom_labels.extend([chr_label] * len(frag_seqs))
                 logger.info(
-                    "  Legacy chromosome fragments: %d (from %d seqs)", len(frag_seqs), len(seqs)
+                    "  Legacy chromosomes.fna fragments: %d (from %d seqs)",
+                    len(frag_seqs), len(seqs),
                 )
-        else:
+        elif not has_gtdb:
             logger.warning(
                 "No chromosome source found. "
-                "Provide --chrom-dir or run download_refseq_chromosomes.py."
+                "Provide --chrom-dir, --gtdb-dir, or run download_refseq_chromosomes.py."
             )
+
+    # ── Chromosomes: GTDB bacteria (primary diversity source) ────────────────
+    if has_gtdb:
+        logger.info("=" * 60)
+        logger.info("CHROMOSOME CLASS — GTDB bacteria (%d target genomes)", args.gtdb_n_genomes)
+        logger.info("=" * 60)
+        gtdb_files = select_gtdb_genomes(
+            args.gtdb_dir,
+            n=args.gtdb_n_genomes,
+            seed=args.seed,
+        )
+        if gtdb_files:
+            gtdb_cap = per_source_cap if (args.chrom_dir or has_metagenome) else args.max_per_class
+            seqs, ids, labels = load_windowed_streaming(
+                gtdb_files,
+                label="chromosome",
+                max_total=gtdb_cap,
+                min_length=args.min_length,
+                window_sizes=window_sizes,
+                step_fraction=0.5,
+                seed=args.seed,
+            )
+            chrom_seqs.extend(seqs)
+            chrom_ids.extend(ids)
+            chrom_labels.extend(labels)
+            logger.info("  GTDB chromosome fragments: %d (from %d genomes)",
+                        len(seqs), len(gtdb_files))
 
     # ── Chromosomes: Metagenomic assemblies (supplementary) ──────────────────
     logger.info("=" * 60)
@@ -869,6 +1227,40 @@ def main() -> None:
         chrom_ids = [chrom_ids[i] for i in indices]
         chrom_labels = [chrom_labels[i] for i in indices]
         logger.info("  Combined chromosome class capped to %d", args.max_per_class)
+
+    # ── Hard-negative injection (guaranteed to survive cap) ───────────────────
+    # These windows are appended AFTER the cap so they are never downsampled away.
+    # Intended for organisms whose secondary chromosomes or genomic islands score
+    # as plasmid in evaluation (e.g. Burkholderia vietnamiensis, Enterobacter cloacae).
+    if args.hard_negative_dir and args.hard_negative_dir.is_dir():
+        hn_files = _fasta_files_in_dir(args.hard_negative_dir)
+        if hn_files:
+            logger.info("=" * 60)
+            logger.info("CHROMOSOME CLASS — Hard-negative genomes (%d files)", len(hn_files))
+            logger.info("  Source: %s", args.hard_negative_dir)
+            logger.info("  Max windows: %d", args.hard_negative_max)
+            logger.info("=" * 60)
+            hn_seqs, hn_ids, hn_labels = load_windowed_streaming(
+                hn_files,
+                label="chromosome",
+                max_total=args.hard_negative_max,
+                min_length=args.min_length,
+                window_sizes=hn_window_sizes,   # narrower than main window_sizes
+                step_fraction=0.5,
+                seed=args.seed,
+            )
+            chrom_seqs.extend(hn_seqs)
+            chrom_ids.extend(hn_ids)
+            chrom_labels.extend(hn_labels)
+            logger.info(
+                "  Hard-negative windows injected: %d (from %d genome files)",
+                len(hn_seqs), len(hn_files),
+            )
+        else:
+            logger.warning("--hard-negative-dir provided but no FASTA files found: %s",
+                           args.hard_negative_dir)
+    elif args.hard_negative_dir:
+        logger.warning("--hard-negative-dir not found: %s", args.hard_negative_dir)
 
     all_seqs.extend(chrom_seqs)
     all_ids.extend(chrom_ids)
@@ -904,7 +1296,7 @@ def main() -> None:
     logger.info("FEATURE EXTRACTION")
     logger.info("=" * 60)
     logger.info("Extracting k-mer features for %d sequences …", len(all_seqs))
-    X = extract_features(all_seqs)
+    X = extract_features(all_seqs, k6_pca_path=args.k6_pca_path)
     y = np.array(all_labels, dtype=np.int64)
 
     # ── Save outputs ──────────────────────────────────────────────────────────
@@ -912,6 +1304,24 @@ def main() -> None:
     label_path = out_dir / "labels.npy"
     ids_path = out_dir / "seq_ids.txt"
     stats_path = out_dir / "dataset_stats.txt"
+
+    # Binary mode: remap phage (class 2) → chromosome (class 1)
+    # Rationale: binary plasmid/chromosome classification eliminates the
+    # 3-class softmax problem where phage probability bleeds into chromosome
+    # scores, depressing the plasmid/chromosome discrimination boundary.
+    # Phage sequences are detected at inference via biological markers
+    # (v_marker_freq, viral hallmark genes) in the existing phage suppression
+    # logic in predict.py — no information is lost.
+    if getattr(args, "binary_plasmid", False):
+        phage_idx = CLASS_TO_IDX.get("phage", 2)
+        chr_idx   = CLASS_TO_IDX.get("chromosome", 1)
+        n_remapped = int((y == phage_idx).sum())
+        y[y == phage_idx] = chr_idx
+        logger.info(
+            "Binary mode: remapped %d phage labels → chromosome (class %d)",
+            n_remapped, chr_idx,
+        )
+        logger.info("Binary label distribution: %s", dict(zip(*np.unique(y, return_counts=True))))
 
     np.save(str(feat_path), X)
     np.save(str(label_path), y)

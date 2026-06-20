@@ -1,7 +1,8 @@
-"""PyTorch MLP classifier for 4-class sequence classification.
+"""PyTorch MLP classifier for 3-class sequence classification.
 
-Week 2 — Day 11 implementation target.
-Architecture: 2-layer MLP (input→512→128→4) with BatchNorm, GELU, Dropout.
+Rev 4 — k=7 canonical architecture.
+Input: 9557 dims (k=1–5 + k=7 canonical + length)
+Architecture: MLP (9557→2048→512→128→3) with BatchNorm, GELU, Dropout.
 """
 
 from __future__ import annotations
@@ -16,11 +17,13 @@ from plasflow2.utils.device import NUM_CLASSES
 
 logger = logging.getLogger(__name__)
 
-INPUT_DIM = 1281  # 256 (4-mer) + 1024 (5-mer) + 1 (log10 length)
+INPUT_DIM = 9557  # 1364 (k=1–5) + 8192 (k=7 canonical) + 1 (length)
 
 
 class PlasFlowMLP(nn.Module):
-    """Two-hidden-layer MLP for plasmid/chromosome/phage/archaea classification.
+    """Three-hidden-layer MLP for plasmid/chromosome/phage classification.
+
+    Wider first layer (2048) to handle the expanded k=7 canonical input.
 
     Note:
         All inputs must be float32 (MPS does not support float64).
@@ -30,10 +33,14 @@ class PlasFlowMLP(nn.Module):
     def __init__(self, input_dim: int = INPUT_DIM, num_classes: int = NUM_CLASSES) -> None:
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(input_dim, 2048),
+            nn.BatchNorm1d(2048),
             nn.GELU(),
             nn.Dropout(0.3),
+            nn.Linear(2048, 512),
+            nn.BatchNorm1d(512),
+            nn.GELU(),
+            nn.Dropout(0.25),
             nn.Linear(512, 128),
             nn.GELU(),
             nn.Dropout(0.2),
@@ -75,10 +82,12 @@ def load_model(path: Path | str, device: torch.device | None = None) -> PlasFlow
     # Infer input_dim from the saved first-layer weight rather than hardcoding
     # INPUT_DIM — this survives feature-dimension changes without manual updates.
     input_dim = state["net.0.weight"].shape[1]
-    model = PlasFlowMLP(input_dim=input_dim)
+    # Infer num_classes from final-layer — supports 3-class and binary models
+    num_classes = state["net.11.weight"].shape[0]
+    model = PlasFlowMLP(input_dim=input_dim, num_classes=num_classes)
     model.load_state_dict(state)
     model.eval()
     if device is not None:
         model = model.to(device)
-    logger.info("Loaded MLP from %s  (input_dim=%d)", path, input_dim)
+    logger.info("Loaded MLP from %s  (input_dim=%d, num_classes=%d)", path, input_dim, num_classes)
     return model

@@ -62,7 +62,10 @@ def main() -> None:
     data = np.load(args.features, allow_pickle=True)
     X = data["X"].astype(np.float32)
     y = data["y"].astype(np.int64)
+    feat_names = [str(f) for f in data["feature_names"]] if "feature_names" in data else None
     logger.info("Loaded features: X=%s  y=%s", X.shape, y.shape)
+    if feat_names:
+        logger.info("Feature names (%d): %s", len(feat_names), feat_names)
 
     # Class distribution
     for idx, name in IDX_TO_CLASS.items():
@@ -79,12 +82,14 @@ def main() -> None:
     )
     logger.info("Validation accuracy: %.4f", result["val_accuracy"])
 
-    # Feature importance report
+    # Feature importance report — use NPZ feature names when available
     importances = result["feature_importances"]
+    if feat_names and len(feat_names) == len(importances):
+        importances = dict(zip(feat_names, clf._model.feature_importances_))
     ranked = sorted(importances.items(), key=lambda x: x[1], reverse=True)
     logger.info("Feature importances:")
     for feat, imp in ranked:
-        logger.info("  %-30s  %.4f", feat, imp)
+        logger.info("  %-35s  %.4f", feat, imp)
 
     # Save
     args.out.mkdir(parents=True, exist_ok=True)

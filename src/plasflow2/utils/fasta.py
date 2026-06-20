@@ -103,6 +103,6 @@ def split_by_label(
     TODO (Week 4 — Day 20): integrate with full output writer.
     """
     bins: dict[str, list[SeqRecord]] = {}
-    for record, label in zip(records, labels, strict=True):
+    for record, label in zip(records, labels):
         bins.setdefault(label, []).append(record)
     return bins

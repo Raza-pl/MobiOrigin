@@ -33,25 +33,27 @@ GENOMAD_DB=""
 SEED=42
 FORCE=0
 MIN_GENOMES=20   # re-download if fewer than this many genomes in genome_list.tsv
+MARKER_MODEL=""
+ANNOTATION_TSV=""
+NO_MARKER_MODEL=0   # set by --no-marker-model; disables auto-detect
 
 # ── Argument parsing ──────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --benchmark-dir) BENCHMARK_DIR="$2"; shift 2 ;;
-        --model)         MODEL="$2";         shift 2 ;;
-        --threads)       THREADS="$2";       shift 2 ;;
-        --genomad-db)    GENOMAD_DB="$2";    shift 2 ;;
-        --seed)          SEED="$2";          shift 2 ;;
-        --force)         FORCE=1;            shift   ;;
-        --marker-model)  MARKER_MODEL="$2"; shift 2 ;;
-        --annotation-tsv) ANNOTATION_TSV="$2"; shift 2 ;;
+        --benchmark-dir)   BENCHMARK_DIR="$2"; shift 2 ;;
+        --model)           MODEL="$2";         shift 2 ;;
+        --threads)         THREADS="$2";       shift 2 ;;
+        --genomad-db)      GENOMAD_DB="$2";    shift 2 ;;
+        --seed)            SEED="$2";          shift 2 ;;
+        --force)           FORCE=1;            shift   ;;
+        --marker-model)    MARKER_MODEL="$2";  shift 2 ;;
+        --annotation-tsv)  ANNOTATION_TSV="$2"; shift 2 ;;
+        --no-marker-model) NO_MARKER_MODEL=1;  shift   ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
 RESULTS_DIR="${BENCHMARK_DIR}/results"
-MARKER_MODEL=""
-ANNOTATION_TSV=""
 
 echo "======================================================================"
 echo " PlasFlow v2 Benchmark Pipeline"
@@ -149,8 +151,12 @@ GENOMAD_FLAG=""
 # Auto-detect marker model and annotation TSV at standard paths if not
 # specified on the command line. This means plain `bash run_benchmark.sh`
 # will automatically use the marker XGBoost if it has been trained.
+# Pass --no-marker-model to disable auto-detect (e.g. when benchmarking a
+# binary model against the old 3-class XGBoost would give wrong results).
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [[ -z "${MARKER_MODEL}" ]] && [[ -f "${ROOT_DIR}/data/models/marker_xgb.pkl" ]]; then
+if [[ ${NO_MARKER_MODEL} -eq 1 ]]; then
+    echo "  [flag] --no-marker-model: skipping marker XGBoost auto-detect"
+elif [[ -z "${MARKER_MODEL}" ]] && [[ -f "${ROOT_DIR}/data/models/marker_xgb.pkl" ]]; then
     MARKER_MODEL="${ROOT_DIR}/data/models/marker_xgb.pkl"
     echo "  [auto] Marker XGBoost detected: ${MARKER_MODEL}"
 fi

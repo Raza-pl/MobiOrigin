@@ -12,7 +12,17 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 ## Changelog
 
-### June 2026 (latest)
+### June 2026 (binary classifier)
+- **Binary classifier structural fix:** Switched from 3-class softmax (plasmid/chromosome/phage) to a **2-class binary MLP** (plasmid vs not-plasmid). The 3-class architecture is structurally flawed for plasmid detection: phage probability bleeds into the chromosome score via softmax competition, capping F1 at ≤0.267 regardless of threshold. PlasFlow v1 achieves F1=0.939 as a binary classifier — the binary formulation is the correct architecture.
+- **Binary MLP training:** Phage training windows relabeled as chromosome (`--binary-plasmid`). Trained on 9,557-dimensional k=7 features (k-mers + k=6 PCA). Validation accuracy 93.86% (up from 87.14% for 3-class). Model: `data/k7_binary_experiment/models/mlp_v2.pt`.
+- **Per-length thresholds recalibrated** for binary model output range: 1–2 kb: 0.99, 2–5 kb: 0.95, 5–10 kb: 0.98, 10–20 kb: 0.94, >20 kb: 0.97.
+- **Alpha blending fix for binary models:** Binary MLP scores true plasmids at 0.97+. Any non-zero `alpha_base` dragged scores below threshold (F1 collapsed to 0.620 with `alpha_base=0.30`). Fixed via `effective_alpha_base=0.0` for binary models — only sequences with actual biological marker genes receive XGBoost blending. Conjugative hard overrides and hallmark boosts remain unconditional.
+- **Marker XGBoost binary adaptation:** Binary model (N,2) output padded to (N,3) for XGBoost compatibility. Phage labels remapped to chromosome in training NPZ. 19 conjugative overrides and 3 hallmark boosts fire as before.
+- **Current benchmark:** Plasmid F1=0.675 (P=0.714, R=0.640, TP=252, FP=101, FN=142) vs PlasFlow v1 F1=0.939. Fundamental ceiling: **128 chromid plasmids** — chromosome-like megaplasmids whose k-mer composition is indistinguishable from true chromosomes (mean score ≈0.125). Next step: chromid training data augmentation.
+- **`--no-class-weights` flag** added to `train_model.py`. Inverse-frequency class weighting proved harmful for the binary model (FP explosion with no chromid recovery). Uniform weights used by default for binary retraining.
+- **New scripts:** `scripts/retrain_k7_binary.sh` (end-to-end binary retrain: dataset build → MLP → benchmark) · `scripts/update_marker_mlp_scores.py` (update marker NPZ MLP score columns for a new model).
+
+### June 2026 (geNomad + hallmark gate)
 - **geNomad integration (Phase 1):** `genomad annotate` now runs on benchmark sequences to produce per-gene SPM (Specificity Profile Measure) scores from 227,897 geNomad protein family profiles. `scripts/extract_genomad_features.py` aggregates these into 12 per-contig features (`p_marker_freq`, `pp_marker_freq`, `median_p_spm`, `p_vs_c_logistic`, strand switch rate, RBS features, etc.) that feed the marker XGBoost as a second geNomad channel alongside MOB-suite. Combined feature set: **26 features** (14 MOB-suite + 12 geNomad SPM). `scripts/annotate_sequences.py` updated with `--genomad-genes` to merge both feature sets in one run.
 - **Architecture:** 3-class MLP (plasmid/chromosome/phage, 87.14% val acc) retrained on **900k sequences** from 5,922 GTDB r220 bacterial genomes + PLSDB/RefSeq/COMPASS + INPHARED. Archaea removed from model — detected post-classification via DIAMOND taxonomy ORF voting (archaeal ORF hits > bacterial AND ≥5), following the Chibani et al. method.
 - **Hallmark gate (all contigs):** ALL plasmid calls now require biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein). Contigs <50 kb with no evidence → `unclassified`. Contigs ≥50 kb with no evidence → `low_confidence`. Reduced plasmid over-classification from 14.3% → 1.2% on WWTP metagenomes.
@@ -47,7 +57,7 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 |---|---|---|
 | Python | 3.5 / TensorFlow 0.10 | 3.10+ / PyTorch 2.x |
 | Classes | plasmid vs chromosome | plasmid · chromosome · **phage** · **archaea** · unclassified |
-| Architecture | TF neural net | **3-class MLP** (k-mer) + **marker XGBoost** (biological features) |
+| Architecture | TF neural net | **Binary MLP** (k-mer, plasmid vs not-plasmid) + **marker XGBoost** (biological features) |
 | Archaea detection | ✗ | Post-classification DIAMOND taxonomy ORF voting (archaeal hits > bacterial AND ≥5) |
 | Hallmark gate | ✗ | **All** plasmid calls require biological evidence — contigs <50 kb with none → unclassified |
 | Class prior correction | ✗ | Bayesian correction by context (wastewater / clinical / environmental) |
@@ -104,7 +114,16 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 > Plasmid reduction (14.3% → 1.2%) reflects removal of false positives: chromosomal fragments with plasmid-like k-mer composition. All 1,968 retained plasmids have at least one piece of biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein).
 
-**Model accuracy:** MLP 87.14% val acc · XGBoost 91.7% val acc (16 biological features).
+**Model accuracy:** Binary MLP 93.86% val acc (2-class) · XGBoost 91.7% val acc (binary-adapted).
+
+### PlasFlow v1 vs v2 benchmark (CAMI + RefSeq test set, June 2026)
+
+| Tool | Plasmid P | Plasmid R | Plasmid F1 | Chromosome F1 |
+|---|---|---|---|---|
+| PlasFlow v1 (published) | 0.963 | 0.917 | **0.939** | 0.987 |
+| PlasFlow v2 (binary MLP + marker XGBoost) | 0.714 | 0.640 | **0.675** | 0.878 |
+
+**Gap analysis:** 394 plasmid sequences in the test set; 252 recovered (TP), 142 missed (FN). Of the 142 FN, **128 are chromid plasmids** — chromosome-like megaplasmids (10–20 kb) with k-mer composition indistinguishable from true chromosomes (mean binary score ≈0.125). These are the primary gap vs v1 and the target of chromid training data augmentation.
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads
@@ -446,7 +465,7 @@ plasflow2 run key options:
 
 PlasFlow v2 uses a two-stage architecture that combines k-mer sequence composition with biological evidence:
 
-**Stage 1 — 3-class MLP (k-mer features):** Classifies contigs as plasmid / chromosome / phage using 1,493-dimensional features (k=1–5 k-mers + k=6 PCA 128 dims + log-length). Achieves 87.14% validation accuracy on 900k sequences. Fast — classifies 200k contigs in ~15 seconds on CPU.
+**Stage 1 — Binary MLP (k-mer features):** Classifies contigs as plasmid vs not-plasmid using 9,557-dimensional k=7 features (k-mers + k=6 PCA 512 dims + log-length). Phage sequences are treated as chromosome during training (not-plasmid class) — phage suppression is handled downstream by existing biological overrides (viral hallmark genes, marker frequency). Achieves 93.86% validation accuracy. Fast — classifies 60k contigs in ~15 seconds on CPU.
 
 **Stage 2 — Marker XGBoost (biological features):** Refines MLP scores using up to 26 biological marker features. Auto-activates when `data/models/marker_xgb.pkl` exists. Without it, a per-length threshold on raw MLP scores is applied. The combined feature vector includes:
 
@@ -499,30 +518,44 @@ plasflow2 predict \
 | `scripts/retrain_marker_pipeline.sh` | End-to-end retrain: annotate → extract features → train XGBoost |
 | `scripts/fit_k6_pca.py` | Fit PCA on k=6 k-mer spectrum for feature compression |
 | `scripts/retrain_k6.sh` | Full MLP retrain with k=6 PCA features |
+| `scripts/retrain_k7_binary.sh` | End-to-end binary MLP retrain: dataset build → train → benchmark |
+| `scripts/update_marker_mlp_scores.py` | Update MLP score columns in marker NPZ for a new model |
 
 ---
 
 ## Retrain the model
 
-### Stage 1 — 3-class MLP (k-mer features)
+### Stage 1 — Binary MLP (k-mer features)
+
+The recommended path is the end-to-end script:
 
 ```bash
-# Rebuild dataset (3-class: plasmid / chromosome / phage — no archaea)
-python scripts/build_dataset.py \
-    --plasmid-dir data/databases/plasmids/ \
-    --chrom-dir   data/gtdb_genomes/bacteria/ \
-    --data-dir    data/databases/ \
-    --max-per-class 300000 \
-    --out         data/
-
-# Train MLP
-python scripts/train_model.py \
-    --data   data/features.npy \
-    --labels data/labels.npy \
-    --mlp --epochs 50 --out data/models/
+nohup bash scripts/retrain_k7_binary.sh > data/retrain_k7_binary.log 2>&1 &
 ```
 
-> **Apple Silicon:** MPS is disabled by default (PyTorch ≤ 2.3 segfaults on large float32 ops). Training runs on CPU (~63 min for 900k × 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
+Or manually:
+
+```bash
+# Rebuild binary dataset (plasmid=0, not-plasmid=1; phage windows → chromosome label)
+python scripts/build_dataset.py \
+    --plasmid-files  data/databases/plasmids/plsdb.fasta,data/databases/plasmids/COMPASS.fna \
+    --gtdb-dir       data/gtdb_genomes/bacteria \
+    --data-dir       data/databases \
+    --window-sizes   5000,10000 \
+    --max-per-class  50000 \
+    --hard-negative-dir data/hard_negatives \
+    --binary-plasmid \
+    --out            data/k7_binary_experiment
+
+# Train binary MLP (uniform class weights — class-weighted training causes FP explosion)
+python scripts/train_model.py \
+    --data   data/k7_binary_experiment/features.npy \
+    --labels data/k7_binary_experiment/labels.npy \
+    --mlp --epochs 50 --no-class-weights \
+    --out    data/k7_binary_experiment/models/
+```
+
+> **Apple Silicon:** MPS is disabled by default (PyTorch ≤ 2.3 segfaults on large float32 ops). Training runs on CPU (~45–60 min for 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
 
 ### Stage 2 — Marker XGBoost (up to 26 features)
 

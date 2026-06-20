@@ -146,11 +146,15 @@ def run_mlp_scores(
     sequences: list[str],
     model,
     device,
+    k6_pca_path=None,
 ) -> np.ndarray:
-    """Return (N, 3) softmax prob array: [plasmid, chromosome, phage]."""
+    """Return (N, 3) softmax prob array: [plasmid, chromosome, phage].
+
+    For binary models (num_classes=2), the phage column is padded with 0.0.
+    """
     import torch
 
-    X = extract_features(sequences)
+    X = extract_features(sequences, k6_pca_path=k6_pca_path)
     logger.info("    Feature matrix: %s", X.shape)
     all_probs: list[np.ndarray] = []
     for start in range(0, len(X), BATCH_SIZE):
@@ -159,7 +163,16 @@ def run_mlp_scores(
             logits = model(batch)
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
         all_probs.append(probs)
-    return np.vstack(all_probs).astype(np.float32)
+    probs_all = np.vstack(all_probs).astype(np.float32)
+
+    # Binary model (2-class) — pad phage column with 0.0 so callers always
+    # receive a (N, 3) array in [plasmid, chromosome, phage] order.
+    if probs_all.shape[1] == 2:
+        pad = np.zeros((len(probs_all), 1), dtype=np.float32)
+        probs_all = np.hstack([probs_all, pad])
+        logger.info("    Binary model: padded phage column → shape %s", probs_all.shape)
+
+    return probs_all
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +186,8 @@ def main() -> None:
     parser.add_argument("--seed",   type=int, default=42)
     parser.add_argument("--dry-run", action="store_true",
                         help="Print shapes and exit without updating")
+    parser.add_argument("--k6-pca-path", type=Path, default=None,
+                        help="Custom k=6 PCA path (default: data/models/k6_pca.pkl)")
     args = parser.parse_args()
 
     # Load existing features
@@ -199,6 +214,16 @@ def main() -> None:
     model = load_model(args.model, device=device)
     model.eval()
 
+    # Detect binary model and remap phage → chromosome labels
+    is_binary = (model.net[11].out_features == 2)
+    if is_binary:
+        logger.info("Binary model detected (num_classes=2).")
+        logger.info("  Remapping phage labels (y=2) → chromosome (y=1) in saved NPZ.")
+        n_before = int((y == 2).sum())
+        y[y == 2] = 1
+        logger.info("  Remapped %d phage samples to chromosome.", n_before)
+        logger.info("  New class distribution: %s", dict(zip(*np.unique(y, return_counts=True))))
+
     # Process each class
     n_plasmid = class_counts.get(0, 0)
     n_chrom   = class_counts.get(1, 0)
@@ -208,19 +233,19 @@ def main() -> None:
 
     logger.info("=== Plasmid (%d sequences) ===", n_plasmid)
     plas_seqs = load_plasmid_seqs(n_plasmid, args.seed)
-    plas_probs = run_mlp_scores(plas_seqs[:n_plasmid], model, device)
+    plas_probs = run_mlp_scores(plas_seqs[:n_plasmid], model, device, k6_pca_path=args.k6_pca_path)
     new_cols[:n_plasmid] = plas_probs[:n_plasmid]
     logger.info("  Plasmid score mean (plasmid col): %.4f", plas_probs[:, 0].mean())
 
     logger.info("=== Chromosome (%d sequences) ===", n_chrom)
     chrom_seqs = load_chrom_seqs(n_chrom, args.seed)
-    chrom_probs = run_mlp_scores(chrom_seqs[:n_chrom], model, device)
+    chrom_probs = run_mlp_scores(chrom_seqs[:n_chrom], model, device, k6_pca_path=args.k6_pca_path)
     new_cols[n_plasmid : n_plasmid + n_chrom] = chrom_probs[:n_chrom]
     logger.info("  Chromosome score mean (chrom col): %.4f", chrom_probs[:, 1].mean())
 
     logger.info("=== Phage (%d sequences) ===", n_phage)
     phage_seqs = load_phage_seqs(n_phage, args.seed)
-    phage_probs = run_mlp_scores(phage_seqs[:n_phage], model, device)
+    phage_probs = run_mlp_scores(phage_seqs[:n_phage], model, device, k6_pca_path=args.k6_pca_path)
     new_cols[n_plasmid + n_chrom :] = phage_probs[:n_phage]
     logger.info("  Phage score mean (phage col): %.4f", phage_probs[:, 2].mean())
 

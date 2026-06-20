@@ -102,7 +102,7 @@ def run_plasflow2_classify(
     model_path: Path,
     out_tsv: Path,
     threshold: float = 0.70,
-    plasmid_threshold: float = 0.98,
+    plasmid_threshold: float = 0.95,
     context: str = "unspecified",
     marker_model_path: Path | None = None,
     annotation_tsv: Path | None = None,
@@ -389,7 +389,7 @@ def build_comparison_table(
             "precision": m.get("precision", "—"),
             "recall":    m.get("recall",    "—"),
             "f1":        m.get("f1",        "—"),
-            "note":      f"threshold=0.98, no prior correction, n={pf2_metrics.get('total_evaluated',0)}",
+            "note":      f"threshold=0.95, no prior correction, n={pf2_metrics.get('total_evaluated',0)}",
         })
 
     # geNomad
@@ -547,7 +547,7 @@ def main() -> None:
     pf2_metrics = compute_metrics(pf2_preds, gt)
     (out_dir / "plasflow2_metrics.json").write_text(json.dumps(pf2_metrics, indent=2))
 
-    logger.info("\n=== PlasFlow v2 metrics (default threshold=0.98) ===")
+    logger.info("\n=== PlasFlow v2 metrics (default threshold=0.95) ===")
     for cls in ["plasmid", "chromosome", "phage"]:
         m = pf2_metrics[cls]
         logger.info("  %-12s  P=%.4f  R=%.4f  F1=%.4f  (TP=%d FP=%d FN=%d)",

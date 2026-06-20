@@ -97,6 +97,19 @@ MARKER_FEATURE_NAMES = [
     "gc_content",
     "coding_density",
     "n_orfs_per_kb",
+    # geNomad SPM features (12) — from genomad annotate *_genes.tsv
+    "p_marker_freq",      # fraction of genes with plasmid-dominant marker hit
+    "c_marker_freq",      # fraction of genes with chromosome-dominant marker hit
+    "v_marker_freq",      # fraction of genes with virus-dominant marker hit
+    "pp_marker_freq",     # fraction of genes with plasmid SPM > 0.5
+    "median_p_spm",       # median plasmid SPM across all genes
+    "median_c_spm",       # median chromosome SPM
+    "median_v_spm",       # median virus SPM
+    "p_vs_c_logistic",    # sigmoid(mean(p_spm - c_spm))
+    "strand_switch_rate", # fraction of consecutive gene pairs with strand flips
+    "no_rbs_freq",        # fraction of genes with no RBS motif
+    "canonical_sd_freq",  # fraction with canonical Shine-Dalgarno motif
+    "n_plasmid_markers",  # raw count of plasmid-marker gene hits
 ]
 
 N_MARKER_FEATURES = len(MARKER_FEATURE_NAMES)
@@ -140,8 +153,22 @@ class ContigMarkerFeatures:
     coding_density: float = 0.85
     n_orfs_per_kb: float = 1.0
 
+    # geNomad SPM features (zero when --genomad-genes not provided)
+    p_marker_freq: float = 0.0
+    c_marker_freq: float = 0.0
+    v_marker_freq: float = 0.0
+    pp_marker_freq: float = 0.0
+    median_p_spm: float = 0.0
+    median_c_spm: float = 0.0
+    median_v_spm: float = 0.0
+    p_vs_c_logistic: float = 0.5   # neutral sigmoid value
+    strand_switch_rate: float = 0.0
+    no_rbs_freq: float = 0.0
+    canonical_sd_freq: float = 0.0
+    n_plasmid_markers: float = 0.0
+
     def to_array(self) -> NDArray[np.float32]:
-        """Return feature vector as float32 array (16 features, no has_plsdb_match)."""
+        """Return feature vector as float32 array (28 features)."""
         return np.array([
             self.mlp_plasmid_score,
             self.mlp_chromosome_score,
@@ -159,6 +186,19 @@ class ContigMarkerFeatures:
             self.gc_content,
             self.coding_density,
             self.n_orfs_per_kb,
+            # geNomad SPM features
+            self.p_marker_freq,
+            self.c_marker_freq,
+            self.v_marker_freq,
+            self.pp_marker_freq,
+            self.median_p_spm,
+            self.median_c_spm,
+            self.median_v_spm,
+            self.p_vs_c_logistic,
+            self.strand_switch_rate,
+            self.no_rbs_freq,
+            self.canonical_sd_freq,
+            self.n_plasmid_markers,
         ], dtype=np.float32)
 
     @property
@@ -390,13 +430,19 @@ class MarkerClassifier:
             X, y, test_size=eval_fraction, stratify=y, random_state=random_state
         )
 
+        # Always force 3-class multiclass — even when a class is absent from
+        # this training batch (e.g. no phage in benchmark data).  Without
+        # explicit num_class XGBoost auto-detects binary mode when only two
+        # label values are present, then throws "num_class=1 but found 1".
+        n_classes = 3
         self._model = XGBClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
             learning_rate=learning_rate,
             subsample=subsample,
             colsample_bytree=colsample_bytree,
-            use_label_encoder=False,
+            objective="multi:softprob",
+            num_class=n_classes,
             eval_metric="mlogloss",
             random_state=random_state,
             n_jobs=-1,
@@ -408,11 +454,24 @@ class MarkerClassifier:
             verbose=False,
         )
 
-        val_preds = self._model.predict(X_va)
+        val_preds_raw = self._model.predict(X_va)
+        # With objective='multi:softprob', predict() returns (N, n_class) probs
+        # rather than class indices — convert to argmax labels.
+        if val_preds_raw.ndim == 2:
+            val_preds = np.argmax(val_preds_raw, axis=1)
+        else:
+            val_preds = val_preds_raw
         val_acc = accuracy_score(y_va, val_preds)
         logger.info("MarkerClassifier val accuracy: %.4f", val_acc)
 
-        importances = dict(zip(MARKER_FEATURE_NAMES, self._model.feature_importances_))
+        # Feature names: use those stored in the NPZ when the model has more
+        # features than the legacy MARKER_FEATURE_NAMES list.
+        n_feat = len(self._model.feature_importances_)
+        feat_names = (
+            MARKER_FEATURE_NAMES if n_feat == len(MARKER_FEATURE_NAMES)
+            else [f"f{i}" for i in range(n_feat)]
+        )
+        importances = dict(zip(feat_names, self._model.feature_importances_))
         top = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:5]
         logger.info("Top-5 marker features: %s", top)
 
