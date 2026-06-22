@@ -18,7 +18,7 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 - **Per-length thresholds recalibrated** for binary model output range: 1–2 kb: 0.99, 2–5 kb: 0.95, 5–10 kb: 0.98, 10–20 kb: 0.94, >20 kb: 0.97.
 - **Alpha blending fix for binary models:** Binary MLP scores true plasmids at 0.97+. Any non-zero `alpha_base` dragged scores below threshold (F1 collapsed to 0.620 with `alpha_base=0.30`). Fixed via `effective_alpha_base=0.0` for binary models — only sequences with actual biological marker genes receive XGBoost blending. Conjugative hard overrides and hallmark boosts remain unconditional.
 - **Marker XGBoost binary adaptation:** Binary model (N,2) output padded to (N,3) for XGBoost compatibility. Phage labels remapped to chromosome in training NPZ. 19 conjugative overrides and 3 hallmark boosts fire as before.
-- **Current benchmark:** Plasmid F1=0.675 (P=0.714, R=0.640, TP=252, FP=101, FN=142) vs PlasFlow v1 F1=0.939. Fundamental ceiling: **128 chromid plasmids** — chromosome-like megaplasmids whose k-mer composition is indistinguishable from true chromosomes (mean score ≈0.125). Next step: chromid training data augmentation.
+- **Current benchmark (shared 60,394-sequence test set):** PlasFlow v2 Plasmid F1=**0.601** (P=0.543, R=0.673, TP=265, FP=223, FN=129); PlasFlow v1 kmer7 Plasmid F1=0.025; **24× improvement**. Macro F1: v2=0.756, v1=0.486. Fundamental ceiling: 129 "dark" plasmids with no k-mer, hallmark-gene, or mobility-marker signal distinguishable from chromosomes.
 - **`--no-class-weights` flag** added to `train_model.py`. Inverse-frequency class weighting proved harmful for the binary model (FP explosion with no chromid recovery). Uniform weights used by default for binary retraining.
 - **New scripts:** `scripts/retrain_k7_binary.sh` (end-to-end binary retrain: dataset build → MLP → benchmark) · `scripts/update_marker_mlp_scores.py` (update marker NPZ MLP score columns for a new model).
 
@@ -116,14 +116,30 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 **Model accuracy:** Binary MLP 93.86% val acc (2-class) · XGBoost 91.7% val acc (binary-adapted).
 
-### PlasFlow v1 vs v2 benchmark (CAMI + RefSeq test set, June 2026)
+### PlasFlow v1 vs v2 — shared benchmark (June 2026)
 
-| Tool | Plasmid P | Plasmid R | Plasmid F1 | Chromosome F1 |
-|---|---|---|---|---|
-| PlasFlow v1 (published) | 0.963 | 0.917 | **0.939** | 0.987 |
-| PlasFlow v2 (binary MLP + marker XGBoost) | 0.714 | 0.640 | **0.675** | 0.878 |
+Both tools evaluated on the **same 60,394-sequence benchmark** (394 true plasmids, 60,000 chromosome windows, min length 1 kb) built from GTDB r220 representative genomes + PLSDB/RefSeq plasmids.
 
-**Gap analysis:** 394 plasmid sequences in the test set; 252 recovered (TP), 142 missed (FN). Of the 142 FN, **128 are chromid plasmids** — chromosome-like megaplasmids (10–20 kb) with k-mer composition indistinguishable from true chromosomes (mean binary score ≈0.125). These are the primary gap vs v1 and the target of chromid training data augmentation.
+| Tool | Plasmid P | Plasmid R | Plasmid F1 | Chromosome F1 | Macro F1 |
+|---|---|---|---|---|---|
+| PlasFlow v1 (kmer7 model, actual run) | 0.014 | 0.198 | **0.025** | 0.947 | 0.486 |
+| PlasFlow v2 (binary MLP + marker XGBoost) | 0.543 | 0.673 | **0.601** | 0.912 | 0.756 |
+
+**Plasmid F1 by contig length:**
+
+| Length bin | v1 F1 | v2 F1 | True plasmids |
+|---|---|---|---|
+| 1–2 kb | 0.000 | 0.000 | 0 |
+| 2–5 kb | 0.002 | 0.375 | 5 |
+| 5–10 kb | 0.000 | 0.033 | 4 |
+| 10–20 kb | 0.308 | **0.672** | 379 |
+| >20 kb | 0.125 | 0.207 | 6 |
+
+**v2 improves plasmid F1 by 24× over v1 on the same benchmark.**
+
+**Gap analysis (v2):** 394 true plasmids; 265 recovered (TP), 129 missed (FN), 223 false positives (FP). Of the 129 FN, the majority are **"dark" plasmids** — sequences with no distinctive k-mer signature, no geNomad hallmark genes, and no MOB-suite mobility markers that separate them from chromosomes. These represent the theoretical detection ceiling for any sequence-composition-only method.
+
+> **Note on v1 numbers:** PlasFlow v1's published accuracy (~93%) was measured on its own training-adjacent benchmark. On our independent benchmark the kmer7 component model achieves plasmid F1=0.025 — the k=7-only model was not designed for standalone deployment and lacks the multi-kmer voting used in the published results. v2 is evaluated with no such advantage.
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads

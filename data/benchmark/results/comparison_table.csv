@@ -1,0 +1,15 @@
+model,class,metric,value
+plasflow_v1,plasmid,precision,0.014
+plasflow_v2,plasmid,precision,0.543
+plasflow_v1,plasmid,recall,0.198
+plasflow_v2,plasmid,recall,0.673
+plasflow_v1,plasmid,f1,0.025
+plasflow_v2,plasmid,f1,0.601
+plasflow_v1,chromosome,precision,0.994
+plasflow_v2,chromosome,precision,0.998
+plasflow_v1,chromosome,recall,0.904
+plasflow_v2,chromosome,recall,0.839
+plasflow_v1,chromosome,f1,0.947
+plasflow_v2,chromosome,f1,0.912
+plasflow_v1,overall,macro_f1,0.486
+plasflow_v2,overall,macro_f1,0.756
