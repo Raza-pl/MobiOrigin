@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import logging
 import pickle
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -86,28 +86,28 @@ MARKER_FEATURE_NAMES = [
     "is_mobilizable",
     "has_replicon",
     "has_ice",
-    "has_rep_protein",    # replication protein hit (RepA/RepB/RepC) — non-mobile plasmids
+    "has_rep_protein",  # replication protein hit (RepA/RepB/RepC) — non-mobile plasmids
     # ARG / MGE / rep density (per kb) (4)
     "n_arg_per_kb",
     "n_mge_per_kb",
     "n_ice_per_kb",
-    "n_rep_per_kb",       # rep protein hits per kb — density signal
+    "n_rep_per_kb",  # rep protein hits per kb — density signal
     # Sequence properties (4) — computed from ORF prediction + raw sequence
     "log10_length",
     "gc_content",
     "coding_density",
     "n_orfs_per_kb",
     # geNomad SPM features (12) — from genomad annotate *_genes.tsv
-    "p_marker_freq",      # fraction of genes with plasmid-dominant marker hit
-    "c_marker_freq",      # fraction of genes with chromosome-dominant marker hit
-    "v_marker_freq",      # fraction of genes with virus-dominant marker hit
-    "pp_marker_freq",     # fraction of genes with plasmid SPM > 0.5
-    "median_p_spm",       # median plasmid SPM across all genes
-    "median_c_spm",       # median chromosome SPM
-    "median_v_spm",       # median virus SPM
-    "p_vs_c_logistic",    # sigmoid(mean(p_spm - c_spm))
-    "strand_switch_rate", # fraction of consecutive gene pairs with strand flips
-    "no_rbs_freq",        # fraction of genes with no RBS motif
+    "p_marker_freq",  # fraction of genes with plasmid-dominant marker hit
+    "c_marker_freq",  # fraction of genes with chromosome-dominant marker hit
+    "v_marker_freq",  # fraction of genes with virus-dominant marker hit
+    "pp_marker_freq",  # fraction of genes with plasmid SPM > 0.5
+    "median_p_spm",  # median plasmid SPM across all genes
+    "median_c_spm",  # median chromosome SPM
+    "median_v_spm",  # median virus SPM
+    "p_vs_c_logistic",  # sigmoid(mean(p_spm - c_spm))
+    "strand_switch_rate",  # fraction of consecutive gene pairs with strand flips
+    "no_rbs_freq",  # fraction of genes with no RBS motif
     "canonical_sd_freq",  # fraction with canonical Shine-Dalgarno motif
     "n_plasmid_markers",  # raw count of plasmid-marker gene hits
 ]
@@ -148,7 +148,7 @@ class ContigMarkerFeatures:
     n_rep_per_kb: float = 0.0
 
     # Sequence properties
-    log10_length: float = 3.0    # default: 1 kb
+    log10_length: float = 3.0  # default: 1 kb
     gc_content: float = 0.5
     coding_density: float = 0.85
     n_orfs_per_kb: float = 1.0
@@ -161,7 +161,7 @@ class ContigMarkerFeatures:
     median_p_spm: float = 0.0
     median_c_spm: float = 0.0
     median_v_spm: float = 0.0
-    p_vs_c_logistic: float = 0.5   # neutral sigmoid value
+    p_vs_c_logistic: float = 0.5  # neutral sigmoid value
     strand_switch_rate: float = 0.0
     no_rbs_freq: float = 0.0
     canonical_sd_freq: float = 0.0
@@ -169,37 +169,40 @@ class ContigMarkerFeatures:
 
     def to_array(self) -> NDArray[np.float32]:
         """Return feature vector as float32 array (28 features)."""
-        return np.array([
-            self.mlp_plasmid_score,
-            self.mlp_chromosome_score,
-            self.mlp_phage_score,
-            self.is_conjugative,
-            self.is_mobilizable,
-            self.has_replicon,
-            self.has_ice,
-            self.has_rep_protein,
-            self.n_arg_per_kb,
-            self.n_mge_per_kb,
-            self.n_ice_per_kb,
-            self.n_rep_per_kb,
-            self.log10_length,
-            self.gc_content,
-            self.coding_density,
-            self.n_orfs_per_kb,
-            # geNomad SPM features
-            self.p_marker_freq,
-            self.c_marker_freq,
-            self.v_marker_freq,
-            self.pp_marker_freq,
-            self.median_p_spm,
-            self.median_c_spm,
-            self.median_v_spm,
-            self.p_vs_c_logistic,
-            self.strand_switch_rate,
-            self.no_rbs_freq,
-            self.canonical_sd_freq,
-            self.n_plasmid_markers,
-        ], dtype=np.float32)
+        return np.array(
+            [
+                self.mlp_plasmid_score,
+                self.mlp_chromosome_score,
+                self.mlp_phage_score,
+                self.is_conjugative,
+                self.is_mobilizable,
+                self.has_replicon,
+                self.has_ice,
+                self.has_rep_protein,
+                self.n_arg_per_kb,
+                self.n_mge_per_kb,
+                self.n_ice_per_kb,
+                self.n_rep_per_kb,
+                self.log10_length,
+                self.gc_content,
+                self.coding_density,
+                self.n_orfs_per_kb,
+                # geNomad SPM features
+                self.p_marker_freq,
+                self.c_marker_freq,
+                self.v_marker_freq,
+                self.pp_marker_freq,
+                self.median_p_spm,
+                self.median_c_spm,
+                self.median_v_spm,
+                self.p_vs_c_logistic,
+                self.strand_switch_rate,
+                self.no_rbs_freq,
+                self.canonical_sd_freq,
+                self.n_plasmid_markers,
+            ],
+            dtype=np.float32,
+        )
 
     @property
     def marker_gene_fraction(self) -> float:
@@ -209,8 +212,11 @@ class ContigMarkerFeatures:
         trust XGBoost more. Low when absent → trust MLP more.
         """
         vals = [
-            self.is_conjugative, self.is_mobilizable, self.has_replicon,
-            self.has_ice, self.has_rep_protein,
+            self.is_conjugative,
+            self.is_mobilizable,
+            self.has_replicon,
+            self.has_ice,
+            self.has_rep_protein,
         ]
         return float(sum(vals) / len(vals))
 
@@ -224,13 +230,13 @@ def extract_marker_features(
     contig_id: str,
     sequence: str,
     mlp_scores: dict[str, float],
-    mobility=None,                    # MobilityResult | None
-    arg_hits: list = None,            # list[ARGHit]
-    mge_hits: list = None,            # list[MGEHit]
-    ice_hits: list = None,            # list[ICEHit]
-    orfs: list = None,                # list[ORF]
-    has_rep_protein: bool = False,    # from rep_protein_hits set in pipeline
-    n_rep_hits: int = 0,              # raw rep protein hit count for this contig
+    mobility=None,  # MobilityResult | None
+    arg_hits: list = None,  # list[ARGHit]
+    mge_hits: list = None,  # list[MGEHit]
+    ice_hits: list = None,  # list[ICEHit]
+    orfs: list = None,  # list[ORF]
+    has_rep_protein: bool = False,  # from rep_protein_hits set in pipeline
+    n_rep_hits: int = 0,  # raw rep protein hit count for this contig
 ) -> ContigMarkerFeatures:
     """Build a ContigMarkerFeatures from pipeline annotation objects.
 
@@ -280,7 +286,7 @@ def extract_marker_features(
     if mobility is not None:
         mc = getattr(mobility, "mobility_class", "non-mobilizable")
         is_conj = 1.0 if mc == "conjugative" else 0.0
-        is_mob  = 1.0 if mc == "mobilizable" else 0.0
+        is_mob = 1.0 if mc == "mobilizable" else 0.0
         has_rep = 1.0 if getattr(mobility, "replicon_type", None) else 0.0
 
     has_ice = 1.0 if ice_hits else 0.0
@@ -423,8 +429,8 @@ class MarkerClassifier:
                 "Install with: pip install xgboost"
             ) from e
 
-        from sklearn.model_selection import train_test_split  # type: ignore[import]
         from sklearn.metrics import accuracy_score  # type: ignore[import]
+        from sklearn.model_selection import train_test_split  # type: ignore[import]
 
         X_tr, X_va, y_tr, y_va = train_test_split(
             X, y, test_size=eval_fraction, stratify=y, random_state=random_state
@@ -449,7 +455,8 @@ class MarkerClassifier:
             early_stopping_rounds=20,
         )
         self._model.fit(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             eval_set=[(X_va, y_va)],
             verbose=False,
         )
@@ -468,7 +475,8 @@ class MarkerClassifier:
         # features than the legacy MARKER_FEATURE_NAMES list.
         n_feat = len(self._model.feature_importances_)
         feat_names = (
-            MARKER_FEATURE_NAMES if n_feat == len(MARKER_FEATURE_NAMES)
+            MARKER_FEATURE_NAMES
+            if n_feat == len(MARKER_FEATURE_NAMES)
             else [f"f{i}" for i in range(n_feat)]
         )
         importances = dict(zip(feat_names, self._model.feature_importances_))
@@ -505,7 +513,7 @@ class MarkerClassifier:
         logger.info("MarkerClassifier saved → %s", path)
 
     @classmethod
-    def load(cls, path: Path | str) -> "MarkerClassifier":
+    def load(cls, path: Path | str) -> MarkerClassifier:
         """Load a saved MarkerClassifier."""
         with open(path, "rb") as fh:
             model = pickle.load(fh)  # noqa: S301
@@ -524,6 +532,7 @@ def marker_classifier_available() -> bool:
     """Return True if xgboost is installed."""
     try:
         import xgboost  # noqa: F401
+
         return True
     except ImportError:
         return False

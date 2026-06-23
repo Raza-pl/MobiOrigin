@@ -30,7 +30,7 @@ Categories
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterator
 
 # ---------------------------------------------------------------------------
@@ -43,77 +43,77 @@ from typing import Iterator
 
 _PATHOGEN_DB: list[tuple[str, str | None, str, str, str]] = [
     # ── ESKAPE + WHO Critical ────────────────────────────────────────────────
-    ("Enterococcus",      "faecium",          "critical", "ESKAPE/WHO", "VRE — vancomycin-resistant"),
-    ("Enterococcus",      "faecalis",         "critical", "ESKAPE/WHO", "VRE — vancomycin-resistant"),
-    ("Enterococcus",      None,               "high",     "ESKAPE",     "Enterococcus spp."),
-    ("Staphylococcus",    "aureus",           "critical", "ESKAPE/WHO", "MRSA — methicillin-resistant"),
-    ("Staphylococcus",    "epidermidis",      "high",     "ESKAPE",     "CoNS — coagulase-negative"),
-    ("Staphylococcus",    None,               "medium",   "ESKAPE",     "Staphylococcus spp."),
-    ("Klebsiella",        "pneumoniae",       "critical", "ESKAPE/WHO", "CRE / carbapenem-resistant"),
-    ("Klebsiella",        "oxytoca",          "high",     "ESKAPE/WHO", "Extended-spectrum beta-lactamase"),
-    ("Klebsiella",        None,               "high",     "ESKAPE/WHO", "Klebsiella spp."),
-    ("Acinetobacter",     "baumannii",        "critical", "ESKAPE/WHO", "Pandrug-resistant nosocomial"),
-    ("Acinetobacter",     None,               "high",     "ESKAPE/WHO", "Acinetobacter spp."),
-    ("Pseudomonas",       "aeruginosa",       "critical", "ESKAPE/WHO", "Carbapenem-resistant P. aeruginosa"),
-    ("Pseudomonas",       None,               "high",     "ESKAPE",     "Pseudomonas spp."),
-    ("Enterobacter",      "cloacae",          "critical", "ESKAPE/WHO", "Carbapenem-resistant Enterobacter"),
-    ("Enterobacter",      "hormaechei",       "high",     "ESKAPE/WHO", "Nosocomial"),
-    ("Enterobacter",      None,               "high",     "ESKAPE",     "Enterobacter spp."),
-    ("Escherichia",       "coli",             "critical", "ESKAPE/WHO", "ESBL/CRE — O157:H7 STEC"),
-    ("Escherichia",       None,               "high",     "ESKAPE",     "Escherichia spp."),
+    ("Enterococcus", "faecium", "critical", "ESKAPE/WHO", "VRE — vancomycin-resistant"),
+    ("Enterococcus", "faecalis", "critical", "ESKAPE/WHO", "VRE — vancomycin-resistant"),
+    ("Enterococcus", None, "high", "ESKAPE", "Enterococcus spp."),
+    ("Staphylococcus", "aureus", "critical", "ESKAPE/WHO", "MRSA — methicillin-resistant"),
+    ("Staphylococcus", "epidermidis", "high", "ESKAPE", "CoNS — coagulase-negative"),
+    ("Staphylococcus", None, "medium", "ESKAPE", "Staphylococcus spp."),
+    ("Klebsiella", "pneumoniae", "critical", "ESKAPE/WHO", "CRE / carbapenem-resistant"),
+    ("Klebsiella", "oxytoca", "high", "ESKAPE/WHO", "Extended-spectrum beta-lactamase"),
+    ("Klebsiella", None, "high", "ESKAPE/WHO", "Klebsiella spp."),
+    ("Acinetobacter", "baumannii", "critical", "ESKAPE/WHO", "Pandrug-resistant nosocomial"),
+    ("Acinetobacter", None, "high", "ESKAPE/WHO", "Acinetobacter spp."),
+    ("Pseudomonas", "aeruginosa", "critical", "ESKAPE/WHO", "Carbapenem-resistant P. aeruginosa"),
+    ("Pseudomonas", None, "high", "ESKAPE", "Pseudomonas spp."),
+    ("Enterobacter", "cloacae", "critical", "ESKAPE/WHO", "Carbapenem-resistant Enterobacter"),
+    ("Enterobacter", "hormaechei", "high", "ESKAPE/WHO", "Nosocomial"),
+    ("Enterobacter", None, "high", "ESKAPE", "Enterobacter spp."),
+    ("Escherichia", "coli", "critical", "ESKAPE/WHO", "ESBL/CRE — O157:H7 STEC"),
+    ("Escherichia", None, "high", "ESKAPE", "Escherichia spp."),
     # ── WHO Critical (non-ESKAPE) ────────────────────────────────────────────
-    ("Mycobacterium",     "tuberculosis",     "critical", "WHO",        "TB — extensively drug-resistant"),
-    ("Mycobacterium",     "abscessus",        "critical", "WHO",        "NTM — intrinsically resistant"),
-    ("Mycobacterium",     None,               "high",     "WHO",        "Mycobacterium spp."),
-    ("Serratia",          "marcescens",       "critical", "WHO",        "Nosocomial, intrinsic resistance"),
-    ("Proteus",           "mirabilis",        "high",     "WHO",        "ESBL producer"),
-    ("Morganella",        "morganii",         "high",     "WHO",        "AmpC beta-lactamase"),
-    ("Providencia",       None,               "high",     "WHO",        "MDR Enterobacteriaceae"),
-    ("Citrobacter",       "freundii",         "high",     "WHO",        "Carbapenemase producer"),
-    ("Citrobacter",       None,               "medium",   "WHO",        "Citrobacter spp."),
+    ("Mycobacterium", "tuberculosis", "critical", "WHO", "TB — extensively drug-resistant"),
+    ("Mycobacterium", "abscessus", "critical", "WHO", "NTM — intrinsically resistant"),
+    ("Mycobacterium", None, "high", "WHO", "Mycobacterium spp."),
+    ("Serratia", "marcescens", "critical", "WHO", "Nosocomial, intrinsic resistance"),
+    ("Proteus", "mirabilis", "high", "WHO", "ESBL producer"),
+    ("Morganella", "morganii", "high", "WHO", "AmpC beta-lactamase"),
+    ("Providencia", None, "high", "WHO", "MDR Enterobacteriaceae"),
+    ("Citrobacter", "freundii", "high", "WHO", "Carbapenemase producer"),
+    ("Citrobacter", None, "medium", "WHO", "Citrobacter spp."),
     # ── WHO High priority ────────────────────────────────────────────────────
-    ("Salmonella",        "typhi",            "critical", "WHO/CDC",    "Typhoid — fluoroquinolone-resistant"),
-    ("Salmonella",        "enterica",         "high",     "WHO/CDC",    "Non-typhoidal salmonella"),
-    ("Salmonella",        None,               "high",     "WHO/CDC",    "Salmonella spp."),
-    ("Shigella",          None,               "high",     "WHO/CDC",    "Drug-resistant dysentery"),
-    ("Campylobacter",     "jejuni",           "high",     "WHO/CDC",    "Fluoroquinolone-resistant"),
-    ("Campylobacter",     "coli",             "high",     "WHO/CDC",    "Erythromycin-resistant"),
-    ("Campylobacter",     None,               "medium",   "WHO/CDC",    "Campylobacter spp."),
-    ("Haemophilus",       "influenzae",       "high",     "WHO",        "Ampicillin-resistant"),
-    ("Streptococcus",     "pneumoniae",       "critical", "WHO/CDC",    "Drug-resistant S. pneumoniae"),
-    ("Streptococcus",     "pyogenes",         "high",     "WHO",        "GAS — iGAS"),
-    ("Streptococcus",     None,               "medium",   "WHO",        "Streptococcus spp."),
-    ("Neisseria",         "gonorrhoeae",      "critical", "WHO/CDC",    "Drug-resistant gonorrhoea"),
-    ("Neisseria",         "meningitidis",     "high",     "WHO",        "Meningococcal disease"),
+    ("Salmonella", "typhi", "critical", "WHO/CDC", "Typhoid — fluoroquinolone-resistant"),
+    ("Salmonella", "enterica", "high", "WHO/CDC", "Non-typhoidal salmonella"),
+    ("Salmonella", None, "high", "WHO/CDC", "Salmonella spp."),
+    ("Shigella", None, "high", "WHO/CDC", "Drug-resistant dysentery"),
+    ("Campylobacter", "jejuni", "high", "WHO/CDC", "Fluoroquinolone-resistant"),
+    ("Campylobacter", "coli", "high", "WHO/CDC", "Erythromycin-resistant"),
+    ("Campylobacter", None, "medium", "WHO/CDC", "Campylobacter spp."),
+    ("Haemophilus", "influenzae", "high", "WHO", "Ampicillin-resistant"),
+    ("Streptococcus", "pneumoniae", "critical", "WHO/CDC", "Drug-resistant S. pneumoniae"),
+    ("Streptococcus", "pyogenes", "high", "WHO", "GAS — iGAS"),
+    ("Streptococcus", None, "medium", "WHO", "Streptococcus spp."),
+    ("Neisseria", "gonorrhoeae", "critical", "WHO/CDC", "Drug-resistant gonorrhoea"),
+    ("Neisseria", "meningitidis", "high", "WHO", "Meningococcal disease"),
     # ── CDC urgent/serious ───────────────────────────────────────────────────
-    ("Clostridioides",    "difficile",        "critical", "CDC",        "CDI — hypervirulent strains"),
-    ("Clostridium",       "difficile",        "critical", "CDC",        "CDI legacy name"),
-    ("Clostridium",       None,               "medium",   "CDC",        "Clostridium spp."),
-    ("Helicobacter",      "pylori",           "critical", "WHO",        "Clarithromycin-resistant"),
-    ("Helicobacter",      None,               "medium",   "WHO",        "Helicobacter spp."),
-    ("Vibrio",            "cholerae",         "high",     "WHO",        "Cholera"),
-    ("Vibrio",            None,               "medium",   "WHO",        "Vibrio spp."),
-    ("Yersinia",          "pestis",           "critical", "CDC",        "Plague"),
-    ("Yersinia",          "enterocolitica",   "high",     "WHO",        "Yersiniosis"),
+    ("Clostridioides", "difficile", "critical", "CDC", "CDI — hypervirulent strains"),
+    ("Clostridium", "difficile", "critical", "CDC", "CDI legacy name"),
+    ("Clostridium", None, "medium", "CDC", "Clostridium spp."),
+    ("Helicobacter", "pylori", "critical", "WHO", "Clarithromycin-resistant"),
+    ("Helicobacter", None, "medium", "WHO", "Helicobacter spp."),
+    ("Vibrio", "cholerae", "high", "WHO", "Cholera"),
+    ("Vibrio", None, "medium", "WHO", "Vibrio spp."),
+    ("Yersinia", "pestis", "critical", "CDC", "Plague"),
+    ("Yersinia", "enterocolitica", "high", "WHO", "Yersiniosis"),
     # ── Medium / environmental ──────────────────────────────────────────────
-    ("Burkholderia",      "pseudomallei",     "critical", "CDC",        "Melioidosis — select agent"),
-    ("Burkholderia",      "mallei",           "critical", "CDC",        "Glanders — select agent"),
-    ("Burkholderia",      "cepacia",          "high",     "WHO",        "CF pathogen; MDR"),
-    ("Burkholderia",      None,               "medium",   "WHO",        "Burkholderia spp."),
-    ("Stenotrophomonas",  "maltophilia",      "high",     "WHO",        "Intrinsic MDR; nosocomial"),
-    ("Listeria",          "monocytogenes",    "high",     "WHO",        "Listeriosis; immunocompromised"),
-    ("Brucella",          None,               "high",     "WHO",        "Brucellosis — occupational"),
-    ("Legionella",        "pneumophila",      "high",     "WHO",        "Legionnaire's — environmental"),
-    ("Francisella",       "tularensis",       "critical", "CDC",        "Tularemia — select agent"),
-    ("Coxiella",          "burnetii",         "high",     "CDC",        "Q fever — environmental"),
-    ("Leptospira",        None,               "medium",   "WHO",        "Leptospirosis — waterborne"),
+    ("Burkholderia", "pseudomallei", "critical", "CDC", "Melioidosis — select agent"),
+    ("Burkholderia", "mallei", "critical", "CDC", "Glanders — select agent"),
+    ("Burkholderia", "cepacia", "high", "WHO", "CF pathogen; MDR"),
+    ("Burkholderia", None, "medium", "WHO", "Burkholderia spp."),
+    ("Stenotrophomonas", "maltophilia", "high", "WHO", "Intrinsic MDR; nosocomial"),
+    ("Listeria", "monocytogenes", "high", "WHO", "Listeriosis; immunocompromised"),
+    ("Brucella", None, "high", "WHO", "Brucellosis — occupational"),
+    ("Legionella", "pneumophila", "high", "WHO", "Legionnaire's — environmental"),
+    ("Francisella", "tularensis", "critical", "CDC", "Tularemia — select agent"),
+    ("Coxiella", "burnetii", "high", "CDC", "Q fever — environmental"),
+    ("Leptospira", None, "medium", "WHO", "Leptospirosis — waterborne"),
     # ── Wastewater-relevant ──────────────────────────────────────────────────
-    ("Arcobacter",        None,               "medium",   "WHO",        "Emerging waterborne pathogen"),
-    ("Aliarcobacter",     None,               "medium",   "WHO",        "Emerging waterborne pathogen"),
-    ("Arcobacter",        "butzleri",         "high",     "WHO",        "Diarrheal disease"),
-    ("Aeromonas",         "hydrophila",       "high",     "WHO",        "Waterborne; wound infections"),
-    ("Aeromonas",         None,               "medium",   "WHO",        "Aeromonas spp. — waterborne"),
-    ("Mycobacterium",     "avium",            "high",     "WHO",        "NTM — waterborne"),
+    ("Arcobacter", None, "medium", "WHO", "Emerging waterborne pathogen"),
+    ("Aliarcobacter", None, "medium", "WHO", "Emerging waterborne pathogen"),
+    ("Arcobacter", "butzleri", "high", "WHO", "Diarrheal disease"),
+    ("Aeromonas", "hydrophila", "high", "WHO", "Waterborne; wound infections"),
+    ("Aeromonas", None, "medium", "WHO", "Aeromonas spp. — waterborne"),
+    ("Mycobacterium", "avium", "high", "WHO", "NTM — waterborne"),
 ]
 
 
@@ -179,9 +179,7 @@ def _species_from_lineage(lineage: str) -> str:
     return ""
 
 
-def _match_pathogen(
-    genus: str, species: str
-) -> tuple[str, str, str] | None:
+def _match_pathogen(genus: str, species: str) -> tuple[str, str, str] | None:
     """Return (threat_level, category, note) for the best matching entry, or None."""
     candidates = _GENUS_INDEX.get(genus.lower())
     if not candidates:

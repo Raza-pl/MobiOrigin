@@ -14,10 +14,8 @@ Prefer running on a Linux/x86 machine or via Docker.
 
 from __future__ import annotations
 
-import csv
 import logging
 import subprocess
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,7 +70,7 @@ def _mob_typer_one(cid: str, seq: str, contig_tmp_dir: Path) -> tuple[str, list[
     Uses 1 thread per call — parallelism comes from the caller's thread pool.
     """
     contig_fasta = contig_tmp_dir / f"{cid}.fasta"
-    contig_out   = contig_tmp_dir / f"{cid}_results.txt"
+    contig_out = contig_tmp_dir / f"{cid}_results.txt"
 
     # Cache hit: result already computed (from a previous or interrupted run)
     if contig_out.exists() and contig_out.stat().st_size > 0:
@@ -84,9 +82,12 @@ def _mob_typer_one(cid: str, seq: str, contig_tmp_dir: Path) -> tuple[str, list[
 
     cmd = [
         "mob_typer",
-        "--infile",      str(contig_fasta),
-        "--out_file",    str(contig_out),
-        "--num_threads", "1",   # 1 thread per call; pool provides parallelism
+        "--infile",
+        str(contig_fasta),
+        "--out_file",
+        str(contig_out),
+        "--num_threads",
+        "1",  # 1 thread per call; pool provides parallelism
     ]
     subprocess.run(cmd, capture_output=True, text=True)
 
@@ -130,7 +131,7 @@ def run_mob_typer(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    combined_tsv   = out_dir / "mobtyper_results.txt"
+    combined_tsv = out_dir / "mobtyper_results.txt"
     contig_tmp_dir = out_dir / "per_contig"
     contig_tmp_dir.mkdir(exist_ok=True)
 
@@ -141,7 +142,8 @@ def run_mob_typer(
 
     # Count already-cached results so we can report how many need to run
     n_cached = sum(
-        1 for r in records
+        1
+        for r in records
         if (contig_tmp_dir / f"{r.id}_results.txt").exists()
         and (contig_tmp_dir / f"{r.id}_results.txt").stat().st_size > 0
     )
@@ -149,9 +151,11 @@ def run_mob_typer(
     n_workers = min(threads, max(n_todo, 1))
 
     logger.info(
-        "mob_typer: %d contigs total | %d cached (instant) | %d to run "
-        "| %d parallel workers",
-        len(records), n_cached, n_todo, n_workers,
+        "mob_typer: %d contigs total | %d cached (instant) | %d to run " "| %d parallel workers",
+        len(records),
+        n_cached,
+        n_todo,
+        n_workers,
     )
 
     results: dict[str, list[str]] = {}
@@ -160,8 +164,7 @@ def run_mob_typer(
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = {
-            pool.submit(_mob_typer_one, r.id, str(r.seq), contig_tmp_dir): r.id
-            for r in records
+            pool.submit(_mob_typer_one, r.id, str(r.seq), contig_tmp_dir): r.id for r in records
         }
         for future in as_completed(futures):
             cid, lines = future.result()

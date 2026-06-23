@@ -396,9 +396,9 @@ def score_nonplasmid(
         contig_id=contig_id,
         score=min(total, 10),
         evidence=evidence,
-        mobility_score=0,       # not applicable for non-plasmid
+        mobility_score=0,  # not applicable for non-plasmid
         arg_score=arg_score,
-        replicon_score=0,       # not applicable for non-plasmid
+        replicon_score=0,  # not applicable for non-plasmid
         context_score=ctx_score,
         host_score=host_score,
         eskape_host=is_pathogen,

@@ -54,13 +54,13 @@ _HEADER = [
 
 
 def write_genes_tsv(
-    orfs,           # list[ORF]  — from annotate.args
-    arg_hits,       # list[ARGHit]
-    vf_hits,        # list[VFHit]
-    mge_hits,       # list[MGEHit]
-    label_by_contig: dict[str, str],   # contig_id → classification label
+    orfs,  # list[ORF]  — from annotate.args
+    arg_hits,  # list[ARGHit]
+    vf_hits,  # list[VFHit]
+    mge_hits,  # list[MGEHit]
+    label_by_contig: dict[str, str],  # contig_id → classification label
     output_path: Path | str,
-    label_filter: str | None = None,   # if set, only write ORFs from contigs with this label
+    label_filter: str | None = None,  # if set, only write ORFs from contigs with this label
 ) -> Path:
     """Write a gene-level TSV with ARG/VF/MGE annotations.
 
@@ -135,24 +135,26 @@ def write_genes_tsv(
                 is_family = h.is_family
                 source = "ISfinder"
 
-            writer.writerow([
-                orf.contig_id,
-                orf.orf_id,
-                orf.start,
-                orf.end,
-                orf.strand,
-                abs(orf.end - orf.start) + 1,
-                contig_label,
-                arg_flag,
-                vf_flag,
-                mge_flag,
-                gene_name,
-                drug_class,
-                amr_family,
-                vf_category,
-                is_family,
-                source,
-            ])
+            writer.writerow(
+                [
+                    orf.contig_id,
+                    orf.orf_id,
+                    orf.start,
+                    orf.end,
+                    orf.strand,
+                    abs(orf.end - orf.start) + 1,
+                    contig_label,
+                    arg_flag,
+                    vf_flag,
+                    mge_flag,
+                    gene_name,
+                    drug_class,
+                    amr_family,
+                    vf_category,
+                    is_family,
+                    source,
+                ]
+            )
             rows_written += 1
 
     logger.info("Wrote %d gene records to %s", rows_written, output_path)

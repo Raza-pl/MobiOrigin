@@ -72,16 +72,16 @@ _KMER_DIM = sum(len(_VOCAB[k]) for k in KMER_SIZES)  # 4+16+64+256+1024 = 1364
 # k=7 canonical dimensions.
 # For odd k there are no palindromes, so each k-mer pairs with a different
 # reverse complement.  The canonical set has exactly 4^7 / 2 = 8192 members.
-K7_VOCAB_SIZE  = 4 ** 7   # 16384 total k=7 words
-K7_CANON_SIZE  = K7_VOCAB_SIZE // 2   # 8192 canonical k=7 words
+K7_VOCAB_SIZE = 4**7  # 16384 total k=7 words
+K7_CANON_SIZE = K7_VOCAB_SIZE // 2  # 8192 canonical k=7 words
 
 # Feature dimension with k=7 canonical block
-FEATURE_DIM_BASE = _KMER_DIM + 1              # k=1–5 + length (no k=7)  = 1365
-FEATURE_DIM      = _KMER_DIM + K7_CANON_SIZE + 1  # k=1–5 + k=7 + length = 9557
+FEATURE_DIM_BASE = _KMER_DIM + 1  # k=1–5 + length (no k=7)  = 1365
+FEATURE_DIM = _KMER_DIM + K7_CANON_SIZE + 1  # k=1–5 + k=7 + length = 9557
 
 # Backward-compat aliases for legacy code that references these names
-K6_PCA_COMPONENTS = 128        # still referenced by older scripts
-K6_RAW_DIM = 4 ** 6            # = 4096; referenced by fit_k6_pca.py
+K6_PCA_COMPONENTS = 128  # still referenced by older scripts
+K6_RAW_DIM = 4**6  # = 4096; referenced by fit_k6_pca.py
 FEATURE_DIM_WITH_K6 = _KMER_DIM + 1 + K6_PCA_COMPONENTS  # = 1493
 
 # ---------------------------------------------------------------------------
@@ -98,6 +98,7 @@ _POWERS: dict[int, NDArray[np.int64]] = {
     k: (4 ** np.arange(k - 1, -1, -1, dtype=np.int64)) for k in (*KMER_SIZES, 6, 7)
 }
 
+
 # ---------------------------------------------------------------------------
 # k=7 canonical lookup table (built once at import time, ~0.05 s)
 # ---------------------------------------------------------------------------
@@ -112,9 +113,9 @@ _POWERS: dict[int, NDArray[np.int64]] = {
 #
 def _build_k7_canon_map() -> NDArray[np.int16]:
     k = 7
-    vocab = 4 ** k          # 16384
+    vocab = 4**k  # 16384
     powers = np.array([4 ** (k - 1 - j) for j in range(k)], dtype=np.int64)
-    comp = np.array([3, 2, 1, 0], dtype=np.int64)   # A↔T, C↔G complement indices
+    comp = np.array([3, 2, 1, 0], dtype=np.int64)  # A↔T, C↔G complement indices
 
     # Decode each raw ID into its base sequence, compute rc ID
     ids = np.arange(vocab, dtype=np.int64)
@@ -123,8 +124,8 @@ def _build_k7_canon_map() -> NDArray[np.int16]:
     for j in range(k):
         bases[:, j] = (ids // powers[j]) % 4
     # Reverse-complement: complement each base, reverse the sequence
-    rc_bases = comp[bases[:, ::-1]]   # shape (16384, 7)
-    rc_ids = (rc_bases * powers).sum(axis=1)   # shape (16384,)
+    rc_bases = comp[bases[:, ::-1]]  # shape (16384, 7)
+    rc_ids = (rc_bases * powers).sum(axis=1)  # shape (16384,)
 
     # Assign canonical indices: iterate in raw ID order; each pair gets the
     # same index when first encountered via the smaller member.
@@ -215,6 +216,7 @@ def kmer_vector(seq: str, k: int) -> NDArray[np.float32]:
 # k=6 PCA stubs (deprecated — kept so existing scripts don't break on import)
 # ---------------------------------------------------------------------------
 
+
 def fit_k6_pca(*args, **kwargs):  # type: ignore[no-untyped-def]
     """Deprecated.  The k=7 canonical architecture does not use PCA."""
     raise NotImplementedError(
@@ -236,6 +238,7 @@ def k6_pca_vector(*args, **kwargs):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 # k=7 canonical feature vector
 # ---------------------------------------------------------------------------
+
 
 def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
     """Compute normalised k=7 canonical k-mer frequency vector (8192 dims).
@@ -265,10 +268,10 @@ def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
     # via the map already handles both strands simultaneously because each
     # kmer ID and its rc map to the SAME canonical index).
     windows = np.lib.stride_tricks.sliding_window_view(encoded, k).astype(np.int64)
-    raw_ids: NDArray[np.int64] = windows @ powers     # shape (L-6,)
+    raw_ids: NDArray[np.int64] = windows @ powers  # shape (L-6,)
 
     # Map raw IDs → canonical IDs
-    canon_ids = _K7_CANON_MAP[raw_ids]               # shape (L-6,), dtype int16
+    canon_ids = _K7_CANON_MAP[raw_ids]  # shape (L-6,), dtype int16
 
     # Also do the reverse-complement strand so counts from both strands are
     # summed (mirrors kmer_vector behaviour for k=1–5).
@@ -292,8 +295,10 @@ def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
 # Main feature extraction
 # ---------------------------------------------------------------------------
 
-def extract_features(sequences: list[str],
-                     k6_pca_path: Path | str | None = None) -> NDArray[np.float32]:
+
+def extract_features(
+    sequences: list[str], k6_pca_path: Path | str | None = None
+) -> NDArray[np.float32]:
     """Extract k=1–5 + k=7-canonical k-mer features + length feature.
 
     Feature layout (9557 dims total):
@@ -318,13 +323,13 @@ def extract_features(sequences: list[str],
         logger.debug("k6_pca_path ignored — k=7 canonical architecture does not use PCA")
 
     n = len(sequences)
-    dim = FEATURE_DIM   # 9557
+    dim = FEATURE_DIM  # 9557
     X = np.zeros((n, dim), dtype=np.float32)
 
     # k=1–5 block (1364 dims)
     offset = 0
     for k in KMER_SIZES:
-        k_dim = 4 ** k
+        k_dim = 4**k
         for i, seq in enumerate(sequences):
             X[i, offset : offset + k_dim] = kmer_vector(seq, k)
         if n >= 10_000:

@@ -26,7 +26,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-ICE_MIN_IDENTITY = 70.0   # ICE proteins are more diverse — lower threshold
+ICE_MIN_IDENTITY = 70.0  # ICE proteins are more diverse — lower threshold
 ICE_MIN_COVERAGE = 70.0
 
 # sseqid from DIAMOND: first token of FASTA header
@@ -37,8 +37,9 @@ _ICE_ID_RE = re.compile(r"ICEberg\|(\d+)")
 @dataclass
 class ICEHit:
     """Single DIAMOND hit against ICEberg3."""
+
     contig_id: str
-    ice_id: str         # ICEberg element ID, e.g. "1010"
+    ice_id: str  # ICEberg element ID, e.g. "1010"
     gene_function: str  # e.g. "Integrase", "relaxase", "conjugal transfer"
     identity: float
     coverage: float
@@ -99,7 +100,12 @@ def parse_ice_hits(
             if len(parts) < 6:
                 continue
             qseqid, sseqid, pident, qcovhsp, evalue, stitle = (
-                parts[0], parts[1], parts[2], parts[3], parts[4], parts[5],
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+                parts[4],
+                parts[5],
             )
             try:
                 ident = float(pident)
@@ -126,15 +132,17 @@ def parse_ice_hits(
                 fn_m = re.search(r"\|\s+([^[]+?)\s*\[", stitle)
                 gene_function = fn_m.group(1).strip() if fn_m else "unknown"
 
-            hits.append(ICEHit(
-                contig_id=contig_id,
-                ice_id=ice_id,
-                gene_function=gene_function,
-                identity=ident,
-                coverage=cov,
-                evalue=float(evalue),
-                _orf_id=qseqid,
-            ))
+            hits.append(
+                ICEHit(
+                    contig_id=contig_id,
+                    ice_id=ice_id,
+                    gene_function=gene_function,
+                    identity=ident,
+                    coverage=cov,
+                    evalue=float(evalue),
+                    _orf_id=qseqid,
+                )
+            )
 
     logger.info("Parsed %d ICE hits from %s", len(hits), tsv_path)
     return hits
@@ -155,8 +163,9 @@ def annotate_ice(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # Load metadata from xlsx in same directory as DB
-    meta_candidates = list(ice_db.parent.glob("ice_experimental_list.tsv")) + \
-                      list(ice_db.parent.glob("*.tsv"))
+    meta_candidates = list(ice_db.parent.glob("ice_experimental_list.tsv")) + list(
+        ice_db.parent.glob("*.tsv")
+    )
     ice_meta = load_ice_metadata(meta_candidates[0]) if meta_candidates else {}
 
     out_tsv = work_dir / "ice_hits.tsv"
@@ -165,15 +174,32 @@ def annotate_ice(
     else:
         db_stem = str(ice_db).removesuffix(".dmnd")
         cmd = [
-            "diamond", "blastp",
-            "--query", str(proteins_faa),
-            "--db", db_stem,
-            "--out", str(out_tsv),
-            "--outfmt", "6", "qseqid", "sseqid", "pident", "qcovhsp", "evalue", "stitle",
-            "--id", str(min_identity),
-            "--query-cover", str(min_coverage),
-            "--threads", str(threads),
-            "--sensitive", "--max-target-seqs", "1", "--quiet",
+            "diamond",
+            "blastp",
+            "--query",
+            str(proteins_faa),
+            "--db",
+            db_stem,
+            "--out",
+            str(out_tsv),
+            "--outfmt",
+            "6",
+            "qseqid",
+            "sseqid",
+            "pident",
+            "qcovhsp",
+            "evalue",
+            "stitle",
+            "--id",
+            str(min_identity),
+            "--query-cover",
+            str(min_coverage),
+            "--threads",
+            str(threads),
+            "--sensitive",
+            "--max-target-seqs",
+            "1",
+            "--quiet",
         ]
         logger.info("Running DIAMOND ICEberg3: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True)

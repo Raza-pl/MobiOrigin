@@ -201,8 +201,8 @@ def train_mlp(
     # Use from_numpy to share memory with the numpy arrays (no copy).
     # This avoids temporarily holding 2× the training data in RAM, which
     # causes macOS to hit memory pressure and segfault on large datasets.
-    X_t = torch.from_numpy(X_train)   # float32 already — no .float() needed
-    y_t = torch.from_numpy(y_train)   # int64 already — no .long() needed
+    X_t = torch.from_numpy(X_train)  # float32 already — no .float() needed
+    y_t = torch.from_numpy(y_train)  # int64 already — no .long() needed
     X_v = torch.from_numpy(X_val).to(device)
     # y_val (numpy) is used for accuracy_score; X_v is the device tensor for inference
 

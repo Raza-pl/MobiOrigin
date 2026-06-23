@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -217,11 +216,11 @@ function LightTable(cfg){
 # ---------------------------------------------------------------------------
 
 _NAV_PAGES = [
-    ("plasmid",      "report_plasmid.html",      "Plasmid",      "#2c6fad"),
-    ("chromosome",   "report_chromosome.html",    "Chromosome",   "#27ae60"),
-    ("phage",        "report_phage.html",         "Phage",        "#e67e22"),
-    ("archaea",      "report_archaea.html",        "Archaea",      "#8e44ad"),
-    ("unclassified", "report_unclassified.html",  "Unclassified", "#95a5a6"),
+    ("plasmid", "report_plasmid.html", "Plasmid", "#2c6fad"),
+    ("chromosome", "report_chromosome.html", "Chromosome", "#27ae60"),
+    ("phage", "report_phage.html", "Phage", "#e67e22"),
+    ("archaea", "report_archaea.html", "Archaea", "#8e44ad"),
+    ("unclassified", "report_unclassified.html", "Unclassified", "#95a5a6"),
 ]
 
 
@@ -230,26 +229,22 @@ def _nav(active: str, class_counts: dict[str, int], color: str) -> str:
         f'<a href="{href}" class="{"active" if k==active else ""}">{label}</a>'
         for k, href, label, _ in _NAV_PAGES
     )
-    pills = "".join(
-        f'<span>{k.capitalize()}: <b>{v:,}</b></span>'
-        for k, v in class_counts.items()
-    )
-    return (f'<nav class="nav" style="--nc:{color}">{links}'
-            f'<div class="pill">{pills}</div></nav>')
+    pills = "".join(f"<span>{k.capitalize()}: <b>{v:,}</b></span>" for k, v in class_counts.items())
+    return f'<nav class="nav" style="--nc:{color}">{links}' f'<div class="pill">{pills}</div></nav>'
 
 
 def _full_page(title: str, active: str, counts: dict, color: str, body: str, js: str = "") -> str:
     return (
         f'<!DOCTYPE html><html lang="en"><head>'
         f'<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-        f'<title>{title} — PlasFlow v2</title>'
-        f'{_PLOTLY_CDN}'
-        f'<style>{_CSS}</style></head><body>'
-        f'{_nav(active, counts, color)}'
+        f"<title>{title} — PlasFlow v2</title>"
+        f"{_PLOTLY_CDN}"
+        f"<style>{_CSS}</style></head><body>"
+        f"{_nav(active, counts, color)}"
         f'<div class="wrap">{body}'
-        f'<footer>PlasFlow v2 — open in any browser, no server required.</footer></div>'
-        f'<script>{_PAGINATOR_JS}{js}</script>'
-        f'</body></html>'
+        f"<footer>PlasFlow v2 — open in any browser, no server required.</footer></div>"
+        f"<script>{_PAGINATOR_JS}{js}</script>"
+        f"</body></html>"
     )
 
 
@@ -271,16 +266,16 @@ class PlasmidRow:
     taxonomy: str
     risk_evidence: str
     arg_sources: str = ""
-    arg_genes: str = ""      # e.g. "blaNDM-1; sul1"
+    arg_genes: str = ""  # e.g. "blaNDM-1; sul1"
     eskape_host: bool = False
     eskape_genus: str = ""
     num_vf: int = 0
     vf_genes: str = ""
     num_mge: int = 0
-    mge_genes: str = ""      # actual IS element names e.g. "ISAba1; IS26"
-    mge_families: str = ""   # IS families e.g. "IS4; Tn3"
-    topology: str = "linear"        # "circular" | "linear" | "too_short"
-    low_confidence: bool = False    # True if confidence < 0.70
+    mge_genes: str = ""  # actual IS element names e.g. "ISAba1; IS26"
+    mge_families: str = ""  # IS families e.g. "IS4; Tn3"
+    topology: str = "linear"  # "circular" | "linear" | "too_short"
+    low_confidence: bool = False  # True if confidence < 0.70
 
 
 @dataclass
@@ -315,15 +310,31 @@ class NonPlasmidRow:
 
 
 def _pie(class_counts: dict[str, int]) -> dict:
-    colors = {"plasmid":"#2c6fad","chromosome":"#27ae60","phage":"#e67e22",
-              "archaea":"#8e44ad","unclassified":"#95a5a6"}
+    colors = {
+        "plasmid": "#2c6fad",
+        "chromosome": "#27ae60",
+        "phage": "#e67e22",
+        "archaea": "#8e44ad",
+        "unclassified": "#95a5a6",
+    }
     labels, values = list(class_counts.keys()), list(class_counts.values())
-    return {"data":[{"type":"pie","labels":labels,"values":values,
-                     "marker":{"colors":[colors.get(l,"#aaa") for l in labels]},
-                     "textinfo":"label+percent","hole":0.35}],
-            "layout":{**_layout(margin={"t":40,"b":10,"l":10,"r":10}),
-                      "title":{"text":"Classification Overview","font":{"size":12}},
-                      "showlegend":False}}
+    return {
+        "data": [
+            {
+                "type": "pie",
+                "labels": labels,
+                "values": values,
+                "marker": {"colors": [colors.get(ln, "#aaa") for ln in labels]},
+                "textinfo": "label+percent",
+                "hole": 0.35,
+            }
+        ],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 10, "l": 10, "r": 10}),
+            "title": {"text": "Classification Overview", "font": {"size": 12}},
+            "showlegend": False,
+        },
+    }
 
 
 def _arg_bar(arg_hits: list) -> dict:
@@ -334,13 +345,30 @@ def _arg_bar(arg_hits: list) -> dict:
             if c and c != "unknown":
                 dc[c] += 1
     if not dc:
-        return {"data":[{"type":"bar","x":[],"y":[],"orientation":"h"}],
-                "layout":{**_layout(),"title":{"text":"ARG Drug Classes (none detected)","font":{"size":12}}}}
+        return {
+            "data": [{"type": "bar", "x": [], "y": [], "orientation": "h"}],
+            "layout": {
+                **_layout(),
+                "title": {"text": "ARG Drug Classes (none detected)", "font": {"size": 12}},
+            },
+        }
     items = sorted(dc.items(), key=lambda x: x[1])
-    return {"data":[{"type":"bar","x":[i[1] for i in items],"y":[i[0] for i in items],
-                     "orientation":"h","marker":{"color":"#c0392b"}}],
-            "layout":{**_layout(),"title":{"text":"ARGs by Drug Class","font":{"size":12}},
-                      "xaxis":{"title":"Count"}}}
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in items],
+                "y": [i[0] for i in items],
+                "orientation": "h",
+                "marker": {"color": "#c0392b"},
+            }
+        ],
+        "layout": {
+            **_layout(),
+            "title": {"text": "ARGs by Drug Class", "font": {"size": 12}},
+            "xaxis": {"title": "Count"},
+        },
+    }
 
 
 def _vf_bar(rows: list[PlasmidRow]) -> dict:
@@ -352,13 +380,29 @@ def _vf_bar(rows: list[PlasmidRow]) -> dict:
                 gc[g] += 1
     top = gc.most_common(12)
     if not top:
-        return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{**_layout(),"title":{"text":"VF Genes (none detected)","font":{"size":12}}}}
-    return {"data":[{"type":"bar","x":[i[1] for i in reversed(top)],
-                     "y":[i[0] for i in reversed(top)],
-                     "orientation":"h","marker":{"color":"#f59e0b"}}],
-            "layout":{**_layout(),"title":{"text":"Top VF Genes","font":{"size":12}},
-                      "xaxis":{"title":"Contigs"}}}
+        return {
+            "data": [{"type": "bar", "x": [], "y": []}],
+            "layout": {
+                **_layout(),
+                "title": {"text": "VF Genes (none detected)", "font": {"size": 12}},
+            },
+        }
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in reversed(top)],
+                "y": [i[0] for i in reversed(top)],
+                "orientation": "h",
+                "marker": {"color": "#f59e0b"},
+            }
+        ],
+        "layout": {
+            **_layout(),
+            "title": {"text": "Top VF Genes", "font": {"size": 12}},
+            "xaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _mge_bar(rows: list[PlasmidRow]) -> dict:
@@ -370,26 +414,57 @@ def _mge_bar(rows: list[PlasmidRow]) -> dict:
                 fc[f] += 1
     top = fc.most_common(12)
     if not top:
-        return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{**_layout(),"title":{"text":"MGE Families (none detected)","font":{"size":12}}}}
-    return {"data":[{"type":"bar","x":[i[1] for i in reversed(top)],
-                     "y":[i[0] for i in reversed(top)],
-                     "orientation":"h","marker":{"color":"#8b5cf6"}}],
-            "layout":{**_layout(),"title":{"text":"Top MGE Families","font":{"size":12}},
-                      "xaxis":{"title":"Contigs"}}}
+        return {
+            "data": [{"type": "bar", "x": [], "y": []}],
+            "layout": {
+                **_layout(),
+                "title": {"text": "MGE Families (none detected)", "font": {"size": 12}},
+            },
+        }
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in reversed(top)],
+                "y": [i[0] for i in reversed(top)],
+                "orientation": "h",
+                "marker": {"color": "#8b5cf6"},
+            }
+        ],
+        "layout": {
+            **_layout(),
+            "title": {"text": "Top MGE Families", "font": {"size": 12}},
+            "xaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _mobility_bar(rows: list[PlasmidRow]) -> dict:
     mc: Counter[str] = Counter(r.mobility_class for r in rows)
     items = sorted(mc.items(), key=lambda x: x[1])
-    colors_map = {"conjugative":"#c0392b","mobilizable":"#e67e22","non-mobilizable":"#27ae60",
-                  "unknown":"#95a5a6"}
+    colors_map = {
+        "conjugative": "#c0392b",
+        "mobilizable": "#e67e22",
+        "non-mobilizable": "#27ae60",
+        "unknown": "#95a5a6",
+    }
     bar_colors = [colors_map.get(i[0], "#2c6fad") for i in items]
-    return {"data":[{"type":"bar","x":[i[1] for i in items],"y":[i[0] for i in items],
-                     "orientation":"h","marker":{"color":bar_colors}}],
-            "layout":{**_layout(margin={"t":40,"b":30,"l":140,"r":15}),
-                      "title":{"text":"Mobility Classes","font":{"size":12}},
-                      "xaxis":{"title":"Plasmid contigs"}}}
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in items],
+                "y": [i[0] for i in items],
+                "orientation": "h",
+                "marker": {"color": bar_colors},
+            }
+        ],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 30, "l": 140, "r": 15}),
+            "title": {"text": "Mobility Classes", "font": {"size": 12}},
+            "xaxis": {"title": "Plasmid contigs"},
+        },
+    }
 
 
 def _eskape_bar(rows: list[PlasmidRow]) -> dict:
@@ -398,19 +473,45 @@ def _eskape_bar(rows: list[PlasmidRow]) -> dict:
         if r.eskape_host and r.eskape_genus:
             gc[r.eskape_genus] += 1
     if not gc:
-        return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{**_layout(),"title":{"text":"ESKAPE / Pathogen Hosts (none detected)","font":{"size":12}}}}
+        return {
+            "data": [{"type": "bar", "x": [], "y": []}],
+            "layout": {
+                **_layout(),
+                "title": {"text": "ESKAPE / Pathogen Hosts (none detected)", "font": {"size": 12}},
+            },
+        }
     items = sorted(gc.items(), key=lambda x: x[1])
-    eskape_set = {"Enterococcus","Staphylococcus","Klebsiella","Acinetobacter",
-                  "Pseudomonas","Enterobacter","Escherichia","Enterobacteriaceae"}
+    eskape_set = {
+        "Enterococcus",
+        "Staphylococcus",
+        "Klebsiella",
+        "Acinetobacter",
+        "Pseudomonas",
+        "Enterobacter",
+        "Escherichia",
+        "Enterobacteriaceae",
+    }
     bar_colors = ["#c0392b" if i[0] in eskape_set else "#e67e22" for i in items]
-    return {"data":[{"type":"bar","x":[i[1] for i in items],"y":[i[0] for i in items],
-                     "orientation":"h","marker":{"color":bar_colors},
-                     "name":""}],
-            "layout":{**_layout(margin={"t":40,"b":30,"l":150,"r":15}),
-                      "title":{"text":"ESKAPE & Other Pathogen Hosts<br><sup>Red = ESKAPE, Orange = WHO priority</sup>",
-                               "font":{"size":12}},
-                      "xaxis":{"title":"Plasmid contigs"}}}
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in items],
+                "y": [i[0] for i in items],
+                "orientation": "h",
+                "marker": {"color": bar_colors},
+                "name": "",
+            }
+        ],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 30, "l": 150, "r": 15}),
+            "title": {
+                "text": "ESKAPE & Other Pathogen Hosts<br><sup>Red = ESKAPE, Orange = WHO priority</sup>",
+                "font": {"size": 12},
+            },
+            "xaxis": {"title": "Plasmid contigs"},
+        },
+    }
 
 
 def _risk_hist(risk_scores: list[int]) -> dict:
@@ -418,11 +519,15 @@ def _risk_hist(risk_scores: list[int]) -> dict:
     sr = list(range(1, 11))  # exclude 0
     y = [c.get(s, 0) for s in sr]
     cols = ["#c0392b" if s >= 7 else "#e67e22" if s >= 4 else "#27ae60" for s in sr]
-    return {"data":[{"type":"bar","x":sr,"y":y,"marker":{"color":cols}}],
-            "layout":{**_layout(margin={"t":40,"b":40,"l":45,"r":15}),
-                      "title":{"text":"Risk Score Distribution (score ≥ 1)","font":{"size":12}},
-                      "xaxis":{"title":"Risk Score","dtick":1},
-                      "yaxis":{"title":"Plasmids"}}}
+    return {
+        "data": [{"type": "bar", "x": sr, "y": y, "marker": {"color": cols}}],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 40, "l": 45, "r": 15}),
+            "title": {"text": "Risk Score Distribution (score ≥ 1)", "font": {"size": 12}},
+            "xaxis": {"title": "Risk Score", "dtick": 1},
+            "yaxis": {"title": "Plasmids"},
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +535,15 @@ def _risk_hist(risk_scores: list[int]) -> dict:
 # ---------------------------------------------------------------------------
 
 _LENGTH_EDGES = [1_000, 3_000, 10_000, 30_000, 100_000, 300_000, float("inf")]
-_LENGTH_LABELS = ["1–3 kb", "3–10 kb", "10–30 kb", "30–100 kb", "100–300 kb", "300 kb–1 Mb", ">1 Mb"]
+_LENGTH_LABELS = [
+    "1–3 kb",
+    "3–10 kb",
+    "10–30 kb",
+    "30–100 kb",
+    "100–300 kb",
+    "300 kb–1 Mb",
+    ">1 Mb",
+]
 
 
 def _length_hist(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
@@ -440,11 +553,15 @@ def _length_hist(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
             if r.contig_length < edge:
                 bins[i] += 1
                 break
-    return {"data":[{"type":"bar","x":_LENGTH_LABELS,"y":bins,
-                     "marker":{"color":color}}],
-            "layout":{**_layout(margin={"t":40,"b":60,"l":55,"r":15}),
-                      "title":{"text":f"Contig Length Distribution — {title}","font":{"size":12}},
-                      "xaxis":{"tickangle":-35},"yaxis":{"title":"Contigs"}}}
+    return {
+        "data": [{"type": "bar", "x": _LENGTH_LABELS, "y": bins, "marker": {"color": color}}],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 60, "l": 55, "r": 15}),
+            "title": {"text": f"Contig Length Distribution — {title}", "font": {"size": 12}},
+            "xaxis": {"tickangle": -35},
+            "yaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _confidence_hist(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
@@ -453,12 +570,17 @@ def _confidence_hist(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
     for r in rows:
         i = min(int(r.confidence * 10), 9)
         bins_y[i] += 1
-    return {"data":[{"type":"bar","x":bins_x,"y":bins_y,
-                     "marker":{"color":color,"opacity":0.8}}],
-            "layout":{**_layout(margin={"t":40,"b":50,"l":55,"r":15}),
-                      "title":{"text":f"Classification Confidence — {title}","font":{"size":12}},
-                      "xaxis":{"title":"Confidence","tickangle":-30},
-                      "yaxis":{"title":"Contigs"}}}
+    return {
+        "data": [
+            {"type": "bar", "x": bins_x, "y": bins_y, "marker": {"color": color, "opacity": 0.8}}
+        ],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 50, "l": 55, "r": 15}),
+            "title": {"text": f"Classification Confidence — {title}", "font": {"size": 12}},
+            "xaxis": {"title": "Confidence", "tickangle": -30},
+            "yaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _taxonomy_bar_nonplasmid(rows: list[NonPlasmidRow], title: str, color: str) -> dict:
@@ -469,60 +591,117 @@ def _taxonomy_bar_nonplasmid(rows: list[NonPlasmidRow], title: str, color: str) 
             tc[t] += 1
     top = tc.most_common(12)
     if not top:
-        return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{**_layout(),"title":{"text":f"Taxonomy — {title} (no data)","font":{"size":12}}}}
-    return {"data":[{"type":"bar","x":[i[1] for i in reversed(top)],
-                     "y":[i[0] for i in reversed(top)],
-                     "orientation":"h","marker":{"color":color}}],
-            "layout":{**_layout(),"title":{"text":f"Top Taxonomy — {title}","font":{"size":12}},
-                      "xaxis":{"title":"Contigs"}}}
+        return {
+            "data": [{"type": "bar", "x": [], "y": []}],
+            "layout": {
+                **_layout(),
+                "title": {"text": f"Taxonomy — {title} (no data)", "font": {"size": 12}},
+            },
+        }
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in reversed(top)],
+                "y": [i[0] for i in reversed(top)],
+                "orientation": "h",
+                "marker": {"color": color},
+            }
+        ],
+        "layout": {
+            **_layout(),
+            "title": {"text": f"Top Taxonomy — {title}", "font": {"size": 12}},
+            "xaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _best_label_bar(rows: list[NonPlasmidRow]) -> dict:
     bc: Counter[str] = Counter(r.best_label for r in rows if r.best_label)
     if not bc:
-        return {"data":[{"type":"bar","x":[],"y":[]}],
-                "layout":{**_layout(),"title":{"text":"Best Label Distribution","font":{"size":12}}}}
-    colors_map = {"plasmid":"#2c6fad","chromosome":"#27ae60","phage":"#e67e22","archaea":"#8e44ad"}
+        return {
+            "data": [{"type": "bar", "x": [], "y": []}],
+            "layout": {
+                **_layout(),
+                "title": {"text": "Best Label Distribution", "font": {"size": 12}},
+            },
+        }
+    colors_map = {
+        "plasmid": "#2c6fad",
+        "chromosome": "#27ae60",
+        "phage": "#e67e22",
+        "archaea": "#8e44ad",
+    }
     items = sorted(bc.items(), key=lambda x: x[1], reverse=True)
-    return {"data":[{"type":"bar",
-                     "x":[i[0] for i in items],
-                     "y":[i[1] for i in items],
-                     "marker":{"color":[colors_map.get(i[0],"#95a5a6") for i in items]}}],
-            "layout":{**_layout(margin={"t":40,"b":40,"l":45,"r":15}),
-                      "title":{"text":"Best-Guess Class Distribution<br><sup>What the model would assign if forced</sup>",
-                               "font":{"size":12}},
-                      "xaxis":{"title":"Class"},"yaxis":{"title":"Contigs"}}}
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[0] for i in items],
+                "y": [i[1] for i in items],
+                "marker": {"color": [colors_map.get(i[0], "#95a5a6") for i in items]},
+            }
+        ],
+        "layout": {
+            **_layout(margin={"t": 40, "b": 40, "l": 45, "r": 15}),
+            "title": {
+                "text": "Best-Guess Class Distribution<br><sup>What the model would assign if forced</sup>",
+                "font": {"size": 12},
+            },
+            "xaxis": {"title": "Class"},
+            "yaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _pathogen_bar(pathogens: dict) -> dict:
     """Horizontal bar: top pathogenic species detected across all contigs."""
     from collections import Counter
+
     sc: Counter[str] = Counter()
     level_map: dict[str, str] = {}
     for pr in pathogens.values():
         sc[pr.species] += 1
         level_map[pr.species] = getattr(pr, "threat_level", "medium")
     if not sc:
-        return {"data":[{"type":"bar","x":[],"y":[],"orientation":"h"}],
-                "layout":{**_layout(),
-                           "title":{"text":"Pathogenic Species (none detected — run with --taxonomy-db)",
-                                    "font":{"size":11}}}}
+        return {
+            "data": [{"type": "bar", "x": [], "y": [], "orientation": "h"}],
+            "layout": {
+                **_layout(),
+                "title": {
+                    "text": "Pathogenic Species (none detected — run with --taxonomy-db)",
+                    "font": {"size": 11},
+                },
+            },
+        }
     items = sorted(sc.items(), key=lambda x: x[1])[-20:]  # top 20
-    level_colors = {"critical":"#c0392b","high":"#e67e22","medium":"#f1c40f"}
-    return {"data":[{"type":"bar",
-                     "x":[i[1] for i in items],
-                     "y":[i[0] for i in items],
-                     "orientation":"h",
-                     "text":[level_map.get(i[0],"") for i in items],
-                     "textposition":"auto",
-                     "marker":{"color":[level_colors.get(level_map.get(i[0],"medium"),"#aaa")
-                                        for i in items]}}],
-            "layout":{**_layout(),
-                      "title":{"text":"Pathogenic Species Detected<br>"
-                                      "<sup>Red=critical · Orange=high · Yellow=medium</sup>",
-                               "font":{"size":12}},
-                      "xaxis":{"title":"Contigs"}}}
+    level_colors = {"critical": "#c0392b", "high": "#e67e22", "medium": "#f1c40f"}
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "x": [i[1] for i in items],
+                "y": [i[0] for i in items],
+                "orientation": "h",
+                "text": [level_map.get(i[0], "") for i in items],
+                "textposition": "auto",
+                "marker": {
+                    "color": [
+                        level_colors.get(level_map.get(i[0], "medium"), "#aaa") for i in items
+                    ]
+                },
+            }
+        ],
+        "layout": {
+            **_layout(),
+            "title": {
+                "text": "Pathogenic Species Detected<br>"
+                "<sup>Red=critical · Orange=high · Yellow=medium</sup>",
+                "font": {"size": 12},
+            },
+            "xaxis": {"title": "Contigs"},
+        },
+    }
 
 
 def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
@@ -531,31 +710,40 @@ def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
     Each cell (i,j) shows how many plasmids carry both drug class i and j.
     Only includes plasmids with ≥2 drug classes (co-occurrence requires ≥2).
     """
-    from collections import Counter
+
     # Collect drug classes per plasmid
     drug_sets: list[list[str]] = []
     for r in plasmid_rows:
         if not hasattr(r, "drug_classes") or not r.drug_classes or r.drug_classes == "—":
             continue
-        classes = [c.strip() for c in r.drug_classes.replace(";", ",").split(",")
-                   if c.strip() and c.strip() != "—"]
+        classes = [
+            c.strip()
+            for c in r.drug_classes.replace(";", ",").split(",")
+            if c.strip() and c.strip() != "—"
+        ]
         if len(classes) >= 2:
             drug_sets.append(classes)
 
     if not drug_sets:
-        return {"data": [], "layout": {"title": {"text": "Drug Class Co-occurrence", "font": {"size": 12}}}}
+        return {
+            "data": [],
+            "layout": {"title": {"text": "Drug Class Co-occurrence", "font": {"size": 12}}},
+        }
 
     # Build co-occurrence matrix
     all_classes = sorted({c for ds in drug_sets for c in ds})
     if len(all_classes) < 2:
-        return {"data": [], "layout": {"title": {"text": "Drug Class Co-occurrence", "font": {"size": 12}}}}
+        return {
+            "data": [],
+            "layout": {"title": {"text": "Drug Class Co-occurrence", "font": {"size": 12}}},
+        }
 
     n = len(all_classes)
     idx = {c: i for i, c in enumerate(all_classes)}
     matrix = [[0] * n for _ in range(n)]
     for ds in drug_sets:
         for i, a in enumerate(ds):
-            for b in ds[i + 1:]:
+            for b in ds[i + 1 :]:
                 ia, ib = idx[a], idx[b]
                 matrix[ia][ib] += 1
                 matrix[ib][ia] += 1
@@ -563,12 +751,23 @@ def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
     # Shorten long class names for display
     def _short(name: str) -> str:
         subs = {
-            "antibiotic": "", "beta-lactam": "β-lact", "aminoglycoside": "aminogl.",
-            "fluoroquinolone": "FQ", "tetracycline": "Tet", "macrolide": "Macr.",
-            "carbapenem": "Carb.", "cephalosporin": "Ceph.", "sulfonamide": "Sulf.",
-            "trimethoprim": "TMP", "diaminopyrimidine": "DMP", "phenicol": "Phen.",
-            "lincosamide": "Linc.", "streptogramin": "Strept.", "rifamycin": "Rif.",
-            "glycopeptide": "Glyc.", "peptide": "Pept.",
+            "antibiotic": "",
+            "beta-lactam": "β-lact",
+            "aminoglycoside": "aminogl.",
+            "fluoroquinolone": "FQ",
+            "tetracycline": "Tet",
+            "macrolide": "Macr.",
+            "carbapenem": "Carb.",
+            "cephalosporin": "Ceph.",
+            "sulfonamide": "Sulf.",
+            "trimethoprim": "TMP",
+            "diaminopyrimidine": "DMP",
+            "phenicol": "Phen.",
+            "lincosamide": "Linc.",
+            "streptogramin": "Strept.",
+            "rifamycin": "Rif.",
+            "glycopeptide": "Glyc.",
+            "peptide": "Pept.",
         }
         for k, v in subs.items():
             name = name.replace(k, v).strip()
@@ -578,17 +777,19 @@ def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
     z_text = [[str(matrix[i][j]) if matrix[i][j] > 0 else "" for j in range(n)] for i in range(n)]
 
     return {
-        "data": [{
-            "type": "heatmap",
-            "z": matrix,
-            "x": labels,
-            "y": labels,
-            "text": z_text,
-            "texttemplate": "%{text}",
-            "colorscale": [[0, "#fff5f0"], [0.5, "#fc8d59"], [1, "#b30000"]],
-            "showscale": True,
-            "colorbar": {"title": "Plasmids", "thickness": 12},
-        }],
+        "data": [
+            {
+                "type": "heatmap",
+                "z": matrix,
+                "x": labels,
+                "y": labels,
+                "text": z_text,
+                "texttemplate": "%{text}",
+                "colorscale": [[0, "#fff5f0"], [0.5, "#fc8d59"], [1, "#b30000"]],
+                "showscale": True,
+                "colorbar": {"title": "Plasmids", "thickness": 12},
+            }
+        ],
         "layout": {
             "title": {"text": "Drug Class Co-occurrence on Plasmids", "font": {"size": 12}},
             "xaxis": {"tickangle": -35, "tickfont": {"size": 9}},
@@ -607,11 +808,12 @@ def _build_drug_cooccurrence_heatmap(plasmid_rows: list) -> dict:
 # Plain-English summary narrative
 # ---------------------------------------------------------------------------
 
+
 def _narrative_summary(data: dict) -> str:
     """Generate a 3–4 sentence natural-language interpretation for the plasmid report."""
-    total         = data.get("total", 0)
-    num_plasmids  = data.get("num_plasmids", 0)
-    total_args    = data.get("total_args", 0)
+    total = data.get("total", 0)
+    num_plasmids = data.get("num_plasmids", 0)
+    total_args = data.get("total_args", 0)
     plasmid_rows: list[PlasmidRow] = data.get("plasmid_rows", [])
 
     if total == 0:
@@ -625,6 +827,7 @@ def _narrative_summary(data: dict) -> str:
     for r in arg_contigs:
         all_drugs.extend(d.strip() for d in r.drug_classes.split(";") if d.strip() and d != "—")
     from collections import Counter
+
     drug_counts = Counter(all_drugs)
     top_drugs = [d for d, _ in drug_counts.most_common(3) if d]
 
@@ -678,30 +881,73 @@ def _narrative_summary(data: dict) -> str:
 def _p_row(r: PlasmidRow) -> list:
     """Compact array for the vanilla JS paginator."""
     return [
-        r.contig_id, r.contig_length, round(r.confidence, 4),
-        r.num_args, r.arg_genes, r.drug_classes, r.arg_sources,
-        r.num_vf, r.vf_genes, r.num_mge, r.mge_genes, r.mge_families,
+        r.contig_id,
+        r.contig_length,
+        round(r.confidence, 4),
+        r.num_args,
+        r.arg_genes,
+        r.drug_classes,
+        r.arg_sources,
+        r.num_vf,
+        r.vf_genes,
+        r.num_mge,
+        r.mge_genes,
+        r.mge_families,
         r.eskape_genus if r.eskape_host else "",
-        r.mobility_class, r.replicon_type,
-        r.risk_score, r.taxonomy, r.risk_evidence,
-        r.topology, r.low_confidence,
+        r.mobility_class,
+        r.replicon_type,
+        r.risk_score,
+        r.taxonomy,
+        r.risk_evidence,
+        r.topology,
+        r.low_confidence,
     ]
 
 
 _PLASMID_COL_HEADERS = [
-    "Contig", "Length (bp)", "Conf.",
-    "ARGs", "ARG Names", "Drug Classes", "DB",
-    "VFs", "VF Genes", "MGEs", "MGE Elements", "MGE Families",
-    "Pathogen", "Mobility", "Replicon", "Risk", "Taxonomy", "Evidence",
-    "Topology", "Low Conf.",
+    "Contig",
+    "Length (bp)",
+    "Conf.",
+    "ARGs",
+    "ARG Names",
+    "Drug Classes",
+    "DB",
+    "VFs",
+    "VF Genes",
+    "MGEs",
+    "MGE Elements",
+    "MGE Families",
+    "Pathogen",
+    "Mobility",
+    "Replicon",
+    "Risk",
+    "Taxonomy",
+    "Evidence",
+    "Topology",
+    "Low Conf.",
 ]
 
 _PLASMID_DOWNLOAD_HEADERS = [
-    "contig_id", "length_bp", "confidence",
-    "num_args", "arg_genes", "drug_classes", "db_source",
-    "num_vf", "vf_genes", "num_mge", "mge_genes", "mge_families",
-    "pathogen_host", "mobility_class", "replicon_type", "risk_score", "taxonomy", "risk_evidence",
-    "topology", "low_confidence",
+    "contig_id",
+    "length_bp",
+    "confidence",
+    "num_args",
+    "arg_genes",
+    "drug_classes",
+    "db_source",
+    "num_vf",
+    "vf_genes",
+    "num_mge",
+    "mge_genes",
+    "mge_families",
+    "pathogen_host",
+    "mobility_class",
+    "replicon_type",
+    "risk_score",
+    "taxonomy",
+    "risk_evidence",
+    "topology",
+    "low_confidence",
 ]
 
 
@@ -712,7 +958,7 @@ def _render_plasmid_page(data: dict) -> str:
     counts = data["class_counts"]
     n_total = len(all_rows)
     n_shown = len(rows)
-    n_zero  = n_total - n_shown
+    n_zero = n_total - n_shown
     display = rows[:MAX_TABLE_ROWS]
     truncated = n_shown > MAX_TABLE_ROWS
 
@@ -733,25 +979,27 @@ def _render_plasmid_page(data: dict) -> str:
 
     note = ""
     if truncated:
-        note = (f'<p class="note">Showing top {MAX_TABLE_ROWS:,} of {n_shown:,} '
-                f'risk≥1 plasmid contigs. Full data in predictions.tsv.</p>')
+        note = (
+            f'<p class="note">Showing top {MAX_TABLE_ROWS:,} of {n_shown:,} '
+            f"risk≥1 plasmid contigs. Full data in predictions.tsv.</p>"
+        )
     if n_zero:
         note += f'<p class="note">{n_zero:,} contigs with risk score = 0 are hidden. Full list in predictions.tsv.</p>'
 
     row_data_json = json.dumps([_p_row(r) for r in display])
-    headers_json  = json.dumps(_PLASMID_DOWNLOAD_HEADERS)
+    headers_json = json.dumps(_PLASMID_DOWNLOAD_HEADERS)
 
-    th_row = '<th class="no-sort"><input type="checkbox" id="chk-all" title="Select all on page"></th>'
+    th_row = (
+        '<th class="no-sort"><input type="checkbox" id="chk-all" title="Select all on page"></th>'
+    )
     th_row += "".join(f"<th>{h}</th>" for h in _PLASMID_COL_HEADERS)
 
     # Narrative summary block
     narrative_html = (
-        f'<div class="narrative">{data.get("narrative", "")}</div>'
-        if data.get("narrative") else ""
+        f'<div class="narrative">{data.get("narrative", "")}</div>' if data.get("narrative") else ""
     )
 
-
-    high_risk_html    = data.get("high_risk_table", "")
+    high_risk_html = data.get("high_risk_table", "")
     pathogen_sum_html = data.get("pathogen_table", "")
 
     # Circular maps link — show only when circular contigs exist
@@ -764,8 +1012,8 @@ def _render_plasmid_page(data: dict) -> str:
             f'<strong style="color:#1a7a4a">&#9711; {n_circular} circular plasmid'
             f'{"s" if n_circular!=1 else ""} detected</strong> — '
             f'<a href="report_circular_plasmids.html" style="color:#1a7a4a;font-weight:bold">'
-            f'View circular genome maps →</a>'
-            f'</div>'
+            f"View circular genome maps →</a>"
+            f"</div>"
         )
 
     body = f"""
@@ -936,11 +1184,19 @@ window.downloadFiltered=function(){{
 
 def _np_row(r: NonPlasmidRow, show_best: bool) -> list:
     row = [
-        r.contig_id, r.contig_length, round(r.confidence, 4),
-        r.taxonomy, r.taxonomy_lineage,
-        r.num_args, r.arg_genes, r.drug_classes,
-        r.num_vf, r.vf_genes,
-        r.num_mge, r.mge_genes, r.mge_families,
+        r.contig_id,
+        r.contig_length,
+        round(r.confidence, 4),
+        r.taxonomy,
+        r.taxonomy_lineage,
+        r.num_args,
+        r.arg_genes,
+        r.drug_classes,
+        r.num_vf,
+        r.vf_genes,
+        r.num_mge,
+        r.mge_genes,
+        r.mge_families,
     ]
     if show_best:
         row += [r.best_label, round(r.best_score, 4)]
@@ -948,7 +1204,7 @@ def _np_row(r: NonPlasmidRow, show_best: bool) -> list:
 
 
 def _build_high_risk_table(
-    plasmid_rows: list["PlasmidRow"],
+    plasmid_rows: list[PlasmidRow],
     pathogens: dict,
 ) -> str:
     """Return an HTML table of plasmids that are mobile AND carry ARGs AND
@@ -957,7 +1213,8 @@ def _build_high_risk_table(
     Returns an empty string when no such plasmids exist.
     """
     hits = [
-        r for r in plasmid_rows
+        r
+        for r in plasmid_rows
         if r.mobility_class in ("conjugative", "mobilizable")
         and r.num_args > 0
         and (r.eskape_host or r.contig_id in pathogens)
@@ -971,7 +1228,7 @@ def _build_high_risk_table(
         color = "#c0392b" if m == "conjugative" else "#e67e22"
         return f'<span style="background:{color};color:#fff;padding:1px 6px;border-radius:3px;font-size:.78rem">{m}</span>'
 
-    def _threat_badge(cid: str, r: "PlasmidRow") -> str:
+    def _threat_badge(cid: str, r: PlasmidRow) -> str:
         pr = pathogens.get(cid)
         if pr:
             colors = {"critical": "#c0392b", "high": "#e67e22", "medium": "#f39c12"}
@@ -1027,7 +1284,7 @@ def _build_high_risk_table(
 
 
 def _build_pathogen_table(
-    plasmid_rows: list["PlasmidRow"],
+    plasmid_rows: list[PlasmidRow],
     pathogens: dict,
 ) -> str:
     """Return an HTML summary table of pathogenic plasmid contigs by threat level."""
@@ -1038,7 +1295,7 @@ def _build_pathogen_table(
         return ""
 
     by_level: dict[str, list] = {"critical": [], "high": [], "medium": []}
-    for cid, pr in plas_pathogens.items():
+    for _, pr in plas_pathogens.items():
         by_level.setdefault(pr.threat_level, []).append(pr)
 
     rows_html = ""
@@ -1050,6 +1307,7 @@ def _build_pathogen_table(
         c = colors[level]
         # Group by species
         from collections import Counter
+
         species_counts = Counter(pr.species or pr.genus for pr in prs)
         for sp, cnt in species_counts.most_common():
             rows_html += (
@@ -1093,7 +1351,7 @@ def _render_nonplasmid_page(
     extra_note: str = "",
 ) -> str:
     n_total = len(rows)
-    display  = rows[:MAX_TABLE_ROWS]
+    display = rows[:MAX_TABLE_ROWS]
     truncated = n_total > MAX_TABLE_ROWS
     counts = data["class_counts"]
 
@@ -1106,7 +1364,9 @@ def _render_nonplasmid_page(
 
     notes = []
     if truncated:
-        notes.append(f'Showing top {MAX_TABLE_ROWS:,} of {n_total:,} contigs (by length). Full data in predictions.tsv.')
+        notes.append(
+            f"Showing top {MAX_TABLE_ROWS:,} of {n_total:,} contigs (by length). Full data in predictions.tsv."
+        )
     if extra_note:
         notes.append(extra_note)
     note_html = "".join(f'<p class="note">{n}</p>' for n in notes)
@@ -1169,23 +1429,31 @@ def _render_nonplasmid_page(
   {render:function(v){return ellipsis(v,22);}},"""
 
     if show_best:
-        col_js = """[
+        col_js = (
+            """[
   {render:function(v){return ellipsis(v,38);}},
   {render:function(v){return Number(v).toLocaleString();}},
   {render:function(v){return v;}},
   {render:function(v,r){return '<span class="ellipsis" title="'+esc(r[4])+'">'+esc(v)+'</span>';}},
-""" + _arg_cols_js + """
+"""
+            + _arg_cols_js
+            + """
   {render:function(v){return esc(v);}},
   {render:function(v){return v;}}
 ]"""
+        )
     else:
-        col_js = """[
+        col_js = (
+            """[
   {render:function(v){return ellipsis(v,38);}},
   {render:function(v){return Number(v).toLocaleString();}},
   {render:function(v){return v;}},
   {render:function(v,r){return '<span class="ellipsis" title="'+esc(r[4])+'">'+esc(v)+'</span>';}},
-""" + _arg_cols_js + """
+"""
+            + _arg_cols_js
+            + """
 ]"""
+        )
 
     row_json = json.dumps([_np_row(r, show_best) for r in display])
 
@@ -1255,50 +1523,54 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
 
     plasmid_rows: list[PlasmidRow] = []
     for cr in pipeline_result.plasmid_results:
-        unique_classes = sorted({
-            dc.strip()
-            for h in cr.arg_hits
-            for dc in h.drug_class.split(";")
-            if dc.strip() and dc.strip() != "unknown"
-        })
+        unique_classes = sorted(
+            {
+                dc.strip()
+                for h in cr.arg_hits
+                for dc in h.drug_class.split(";")
+                if dc.strip() and dc.strip() != "unknown"
+            }
+        )
         mob = cr.mobility
         tax = getattr(cr, "taxonomy", None) or taxonomy.get(cr.record.id)
-        vf_hits  = getattr(cr, "vf_hits",  [])
+        vf_hits = getattr(cr, "vf_hits", [])
         mge_hits = getattr(cr, "mge_hits", [])
-        sources  = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
-        arg_genes_str  = "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
-        mge_genes_str  = "; ".join(sorted({h.is_name   for h in mge_hits}))    if mge_hits   else ""
-        mge_fams_str   = "; ".join(sorted({h.is_family for h in mge_hits}))    if mge_hits   else ""
+        sources = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
+        arg_genes_str = "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
+        mge_genes_str = "; ".join(sorted({h.is_name for h in mge_hits})) if mge_hits else ""
+        mge_fams_str = "; ".join(sorted({h.is_family for h in mge_hits})) if mge_hits else ""
         cid = cr.record.id
-        plasmid_rows.append(PlasmidRow(
-            contig_id=cid,
-            contig_length=len(cr.record.seq),
-            confidence=cr.prediction.confidence,
-            num_args=len(cr.arg_hits),
-            arg_genes=arg_genes_str,
-            drug_classes="; ".join(unique_classes) or "—",
-            mobility_class=mob.mobility_class if mob else "unknown",
-            replicon_type=mob.replicon_type if mob else "unknown",
-            risk_score=cr.risk.score,
-            taxonomy=tax.display if tax else "—",
-            risk_evidence="; ".join(cr.risk.evidence) if cr.risk.evidence else "—",
-            arg_sources=", ".join(sources),
-            eskape_host=cr.risk.eskape_host,
-            eskape_genus=cr.risk.eskape_genus,
-            num_vf=len(vf_hits),
-            vf_genes="; ".join(sorted({h.gene_name for h in vf_hits})),
-            num_mge=len(mge_hits),
-            mge_genes=mge_genes_str,
-            mge_families=mge_fams_str,
-            topology=topology_map.get(cid, "linear"),
-            low_confidence=cr.prediction.confidence < 0.70,
-        ))
+        plasmid_rows.append(
+            PlasmidRow(
+                contig_id=cid,
+                contig_length=len(cr.record.seq),
+                confidence=cr.prediction.confidence,
+                num_args=len(cr.arg_hits),
+                arg_genes=arg_genes_str,
+                drug_classes="; ".join(unique_classes) or "—",
+                mobility_class=mob.mobility_class if mob else "unknown",
+                replicon_type=mob.replicon_type if mob else "unknown",
+                risk_score=cr.risk.score,
+                taxonomy=tax.display if tax else "—",
+                risk_evidence="; ".join(cr.risk.evidence) if cr.risk.evidence else "—",
+                arg_sources=", ".join(sources),
+                eskape_host=cr.risk.eskape_host,
+                eskape_genus=cr.risk.eskape_genus,
+                num_vf=len(vf_hits),
+                vf_genes="; ".join(sorted({h.gene_name for h in vf_hits})),
+                num_mge=len(mge_hits),
+                mge_genes=mge_genes_str,
+                mge_families=mge_fams_str,
+                topology=topology_map.get(cid, "linear"),
+                low_confidence=cr.prediction.confidence < 0.70,
+            )
+        )
 
     non_plasmid_results = getattr(pipeline_result, "non_plasmid_results", [])
-    phage_rows:         list[NonPlasmidRow] = []
-    chromosome_rows:    list[NonPlasmidRow] = []
-    archaea_rows:       list[NonPlasmidRow] = []
-    unclassified_rows:  list[NonPlasmidRow] = []
+    phage_rows: list[NonPlasmidRow] = []
+    chromosome_rows: list[NonPlasmidRow] = []
+    archaea_rows: list[NonPlasmidRow] = []
+    unclassified_rows: list[NonPlasmidRow] = []
 
     for npr in non_plasmid_results:
         tax = getattr(npr, "taxonomy", None) or taxonomy.get(npr.record.id)
@@ -1306,21 +1578,23 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         best_label = max(scores, key=scores.get) if scores else ""
         best_score = scores.get(best_label, 0.0) if best_label else 0.0
 
-        np_arg_hits  = getattr(npr, "arg_hits",  [])
-        np_vf_hits   = getattr(npr, "vf_hits",   [])
-        np_mge_hits  = getattr(npr, "mge_hits",  [])
+        np_arg_hits = getattr(npr, "arg_hits", [])
+        np_vf_hits = getattr(npr, "vf_hits", [])
+        np_mge_hits = getattr(npr, "mge_hits", [])
 
         np_arg_genes = "; ".join(sorted({h.gene_name for h in np_arg_hits})) if np_arg_hits else ""
-        np_drug_classes = sorted({
-            dc.strip()
-            for h in np_arg_hits
-            for dc in h.drug_class.split(";")
-            if dc.strip() and dc.strip() != "unknown"
-        })
+        np_drug_classes = sorted(
+            {
+                dc.strip()
+                for h in np_arg_hits
+                for dc in h.drug_class.split(";")
+                if dc.strip() and dc.strip() != "unknown"
+            }
+        )
         np_sources = sorted({h.source for h in np_arg_hits if getattr(h, "source", "")})
-        np_vf_genes  = "; ".join(sorted({h.gene_name for h in np_vf_hits}))  if np_vf_hits  else ""
-        np_mge_genes = "; ".join(sorted({h.is_name   for h in np_mge_hits})) if np_mge_hits else ""
-        np_mge_fams  = "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
+        np_vf_genes = "; ".join(sorted({h.gene_name for h in np_vf_hits})) if np_vf_hits else ""
+        np_mge_genes = "; ".join(sorted({h.is_name for h in np_mge_hits})) if np_mge_hits else ""
+        np_mge_fams = "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
 
         np_cid = npr.record.id
         row = NonPlasmidRow(
@@ -1345,15 +1619,19 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
             low_confidence=npr.prediction.confidence < 0.70,
         )
         lbl = npr.prediction.label
-        if lbl == "phage":        phage_rows.append(row)
-        elif lbl == "chromosome": chromosome_rows.append(row)
-        elif lbl == "archaea":    archaea_rows.append(row)
-        else:                     unclassified_rows.append(row)
+        if lbl == "phage":
+            phage_rows.append(row)
+        elif lbl == "chromosome":
+            chromosome_rows.append(row)
+        elif lbl == "archaea":
+            archaea_rows.append(row)
+        else:
+            unclassified_rows.append(row)
 
     for lst in (chromosome_rows, unclassified_rows):
         lst.sort(key=lambda r: r.contig_length, reverse=True)
 
-    total_vf  = sum(r.num_vf  for r in plasmid_rows)
+    total_vf = sum(r.num_vf for r in plasmid_rows)
     total_mge = sum(r.num_mge for r in plasmid_rows)
     risk_scores = [cr.risk.score for cr in pipeline_result.plasmid_results if cr.risk.score > 0]
     tax_classified = sum(1 for r in taxonomy.values() if r.rank != "unclassified")
@@ -1361,52 +1639,54 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
     # Pathogen detection results (populated when taxonomy DB was used)
     pathogens = getattr(pipeline_result, "pathogens", {}) or {}
 
-
     # Build the return dict first (narrative needs it)
     result_dict = {
-        "input_file":        input_file or str(pipeline_result.input_fasta),
-        "total":             pipeline_result.total_sequences,
-        "num_plasmids":      pipeline_result.total_plasmids,
-        "total_args":        pipeline_result.total_args,
-        "total_vf":          total_vf,
-        "total_mge":         total_mge,
-        "tax_classified":    tax_classified,
-        "total_pathogens":   len(pathogens),
-        "class_counts":      pipeline_result.class_counts,
+        "input_file": input_file or str(pipeline_result.input_fasta),
+        "total": pipeline_result.total_sequences,
+        "num_plasmids": pipeline_result.total_plasmids,
+        "total_args": pipeline_result.total_args,
+        "total_vf": total_vf,
+        "total_mge": total_mge,
+        "tax_classified": tax_classified,
+        "total_pathogens": len(pathogens),
+        "class_counts": pipeline_result.class_counts,
         # plasmid charts
-        "pie_data":          _pie(pipeline_result.class_counts),
-        "arg_data":          _arg_bar(all_arg_hits),
-        "risk_data":         _risk_hist(risk_scores),
-        "vf_data":           _vf_bar(plasmid_rows),
-        "mge_data":          _mge_bar(plasmid_rows),
-        "mobility_data":     _mobility_bar(plasmid_rows),
-        "eskape_data":       _eskape_bar(plasmid_rows),
-        "pathogen_data":     _pathogen_bar(pathogens),
+        "pie_data": _pie(pipeline_result.class_counts),
+        "arg_data": _arg_bar(all_arg_hits),
+        "risk_data": _risk_hist(risk_scores),
+        "vf_data": _vf_bar(plasmid_rows),
+        "mge_data": _mge_bar(plasmid_rows),
+        "mobility_data": _mobility_bar(plasmid_rows),
+        "eskape_data": _eskape_bar(plasmid_rows),
+        "pathogen_data": _pathogen_bar(pathogens),
         "cooccurrence_data": _build_drug_cooccurrence_heatmap(plasmid_rows),
-        "scatter_data":      {}, "tax_bar_data": {},
+        "scatter_data": {},
+        "tax_bar_data": {},
         # row lists
-        "plasmid_rows":      plasmid_rows,
-        "chromosome_rows":   chromosome_rows,
-        "phage_rows":        phage_rows,
-        "archaea_rows":      archaea_rows,
+        "plasmid_rows": plasmid_rows,
+        "chromosome_rows": chromosome_rows,
+        "phage_rows": phage_rows,
+        "archaea_rows": archaea_rows,
         "unclassified_rows": unclassified_rows,
-        "other_rows":        archaea_rows + unclassified_rows,
+        "other_rows": archaea_rows + unclassified_rows,
         # per-class chart bundles
-        "chrom_charts":      _np_charts(chromosome_rows, "Chromosome", "#27ae60"),
-        "phage_charts":      _np_charts(phage_rows,      "Phage",      "#e67e22"),
-        "arch_charts":       _np_charts(archaea_rows,    "Archaea",    "#8e44ad"),
-        "unc_charts":        _np_charts(unclassified_rows, "Unclassified", "#95a5a6", show_best=True),
+        "chrom_charts": _np_charts(chromosome_rows, "Chromosome", "#27ae60"),
+        "phage_charts": _np_charts(phage_rows, "Phage", "#e67e22"),
+        "arch_charts": _np_charts(archaea_rows, "Archaea", "#8e44ad"),
+        "unc_charts": _np_charts(unclassified_rows, "Unclassified", "#95a5a6", show_best=True),
         # legacy flags
-        "has_scatter": False, "has_cooccurrence": bool(plasmid_rows),
-        "has_phages":  bool(phage_rows), "has_chromosomes": bool(chromosome_rows),
-        "has_others":  bool(archaea_rows or unclassified_rows),
+        "has_scatter": False,
+        "has_cooccurrence": bool(plasmid_rows),
+        "has_phages": bool(phage_rows),
+        "has_chromosomes": bool(chromosome_rows),
+        "has_others": bool(archaea_rows or unclassified_rows),
         # high-risk intersection: conjugative + ARGs + ESKAPE/pathogen
         "high_risk_table": _build_high_risk_table(plasmid_rows, pathogens),
         # pathogen summary: breakdown by threat level
         "pathogen_table": _build_pathogen_table(plasmid_rows, pathogens),
         # pass through for circular maps page
         "_pipeline_result": pipeline_result,
-        "topology_map":     topology_map,
+        "topology_map": topology_map,
     }
     result_dict["narrative"] = _narrative_summary(result_dict)
     return result_dict
@@ -1422,33 +1702,49 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
     out.mkdir(parents=True, exist_ok=True)
 
     pages = {
-        "plasmid":      out / "report_plasmid.html",
-        "chromosome":   out / "report_chromosome.html",
-        "phage":        out / "report_phage.html",
-        "archaea":      out / "report_archaea.html",
+        "plasmid": out / "report_plasmid.html",
+        "chromosome": out / "report_chromosome.html",
+        "phage": out / "report_phage.html",
+        "archaea": out / "report_archaea.html",
         "unclassified": out / "report_unclassified.html",
     }
 
     html_map = {
         "plasmid": _render_plasmid_page(report_data),
         "chromosome": _render_nonplasmid_page(
-            report_data, "chromosome", "Chromosome", "#27ae60",
-            report_data["chromosome_rows"], "ctable",
+            report_data,
+            "chromosome",
+            "Chromosome",
+            "#27ae60",
+            report_data["chromosome_rows"],
+            "ctable",
             report_data["chrom_charts"],
         ),
         "phage": _render_nonplasmid_page(
-            report_data, "phage", "Phage", "#e67e22",
-            report_data["phage_rows"], "phtable",
+            report_data,
+            "phage",
+            "Phage",
+            "#e67e22",
+            report_data["phage_rows"],
+            "phtable",
             report_data["phage_charts"],
         ),
         "archaea": _render_nonplasmid_page(
-            report_data, "archaea", "Archaea", "#8e44ad",
-            report_data["archaea_rows"], "artable",
+            report_data,
+            "archaea",
+            "Archaea",
+            "#8e44ad",
+            report_data["archaea_rows"],
+            "artable",
             report_data["arch_charts"],
         ),
         "unclassified": _render_nonplasmid_page(
-            report_data, "unclassified", "Unclassified", "#95a5a6",
-            report_data["unclassified_rows"], "utable",
+            report_data,
+            "unclassified",
+            "Unclassified",
+            "#95a5a6",
+            report_data["unclassified_rows"],
+            "utable",
             report_data["unc_charts"],
             show_best=True,
             extra_note=(
@@ -1465,9 +1761,10 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
 
     # Circular plasmid maps — separate page, only when ORF data is available
     pipeline_result = report_data.get("_pipeline_result")
-    topology_map    = report_data.get("topology_map", {})
+    topology_map = report_data.get("topology_map", {})
     if pipeline_result is not None and getattr(pipeline_result, "orfs", None):
         from plasflow2.report.circular_map import build_circular_maps_page
+
         circular_path = out / "report_circular_plasmids.html"
         circular_html = build_circular_maps_page(
             pipeline_result=pipeline_result,
@@ -1495,6 +1792,6 @@ def generate_report(report_data: dict, output_path: Path | str) -> Path:
 # Backward-compat aliases (used by tests and report_cmd imports)
 # ---------------------------------------------------------------------------
 
-_build_pie_data       = _pie
-_build_arg_chart      = _arg_bar
+_build_pie_data = _pie
+_build_arg_chart = _arg_bar
 _build_risk_histogram = _risk_hist

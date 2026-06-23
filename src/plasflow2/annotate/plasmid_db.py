@@ -42,7 +42,6 @@ No pre-indexing needed — minimap2 builds an in-memory index at runtime.
 
 from __future__ import annotations
 
-import csv
 import logging
 import re
 import subprocess
@@ -52,9 +51,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Minimum thresholds for reporting a plasmid-DB match
-PLAS_MIN_ANI     = 85.0   # % sequence identity
-PLAS_MIN_COV     = 50.0   # % query contig coverage
-PLAS_MIN_MAPQ    = 10     # minimap2 MAPQ
+PLAS_MIN_ANI = 85.0  # % sequence identity
+PLAS_MIN_COV = 50.0  # % query contig coverage
+PLAS_MIN_MAPQ = 10  # minimap2 MAPQ
 
 
 @dataclass
@@ -62,11 +61,11 @@ class PlasmidDBHit:
     """Best-match result for a single contig against the plasmid database."""
 
     contig_id: str
-    match_acc: str      # matched accession in the plasmid DB
-    source_db: str      # PLSDB / RefSeq / COMPASS / unknown
-    ani: float          # approximate nucleotide identity %
-    query_cov: float    # % of query contig covered by the alignment
-    organism: str       # organism from FASTA header (empty if not embedded)
+    match_acc: str  # matched accession in the plasmid DB
+    source_db: str  # PLSDB / RefSeq / COMPASS / unknown
+    ani: float  # approximate nucleotide identity %
+    query_cov: float  # % of query contig covered by the alignment
+    organism: str  # organism from FASTA header (empty if not embedded)
 
 
 def _infer_source(acc: str) -> str:
@@ -109,13 +108,20 @@ def _build_combined_fasta(plasmid_db_dir: Path) -> Path | None:
     """
     # Prefer PLSDB only — best RAM/coverage trade-off (accept both naming conventions)
     plsdb = next(
-        (plasmid_db_dir / n for n in ("plsdb.fasta", "PLSDB.fna", "plsdb.fna")
-         if (plasmid_db_dir / n).exists()),
+        (
+            plasmid_db_dir / n
+            for n in ("plsdb.fasta", "PLSDB.fna", "plsdb.fna")
+            if (plasmid_db_dir / n).exists()
+        ),
         None,
     )
     if plsdb is not None:
         size_gb = plsdb.stat().st_size / 1e9
-        logger.info("Using %s as plasmid reference (%.1f GB) — avoids OOM on large combined FASTA", plsdb.name, size_gb)
+        logger.info(
+            "Using %s as plasmid reference (%.1f GB) — avoids OOM on large combined FASTA",
+            plsdb.name,
+            size_gb,
+        )
         return plsdb
 
     # Fall back to pre-built combined FASTA
@@ -206,20 +212,23 @@ def run_plasmid_db_search(
     # a 13 GB combined FASTA requires ~60–80 GB RAM and OOMs on most machines.
     cmd = [
         "minimap2",
-        "-x", "asm20",                   # ~85–95 % identity preset
-        "--secondary=no",                # best hit only per query
-        "-t", str(threads),
-        "--split-prefix", str(split_prefix),  # chunked indexing for large reference
+        "-x",
+        "asm20",  # ~85–95 % identity preset
+        "--secondary=no",  # best hit only per query
+        "-t",
+        str(threads),
+        "--split-prefix",
+        str(split_prefix),  # chunked indexing for large reference
         str(combined_fasta),
         str(query_fasta),
     ]
-    logger.info("Running minimap2 plasmid-DB search (split-prefix for large ref): %s",
-                " ".join(cmd))
+    logger.info(
+        "Running minimap2 plasmid-DB search (split-prefix for large ref): %s", " ".join(cmd)
+    )
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            logger.error("minimap2 failed (exit %d): %s",
-                         result.returncode, result.stderr[:800])
+            logger.error("minimap2 failed (exit %d): %s", result.returncode, result.stderr[:800])
             return []
         paf_path.write_text(result.stdout)
     except Exception as exc:
@@ -256,14 +265,14 @@ def _parse_paf(paf_path: Path, min_ani: float, min_cov: float) -> list[PlasmidDB
             if len(parts) < 12:
                 continue
             try:
-                qname     = parts[0]
-                qlen      = int(parts[1])
-                qstart    = int(parts[2])
-                qend      = int(parts[3])
-                tname     = parts[5]
+                qname = parts[0]
+                qlen = int(parts[1])
+                qstart = int(parts[2])
+                qend = int(parts[3])
+                tname = parts[5]
                 res_match = int(parts[9])
-                aln_len   = int(parts[10])
-                mapq      = int(parts[11])
+                aln_len = int(parts[10])
+                mapq = int(parts[11])
             except (ValueError, IndexError):
                 continue
 

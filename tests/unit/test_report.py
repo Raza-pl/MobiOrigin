@@ -15,14 +15,13 @@ from plasflow2.annotate.mobility import MobilityResult
 from plasflow2.classify.predict import Prediction
 from plasflow2.pipeline import ContigResult, PipelineResult
 from plasflow2.report.generator import (
-    PlasmidRow,
     NonPlasmidRow,
+    PlasmidRow,
     _build_arg_chart,
     _build_pie_data,
     _build_risk_histogram,
     build_report_data,
     generate_report,
-    generate_reports,
 )
 from plasflow2.risk.scorer import RiskScore
 
@@ -319,8 +318,13 @@ def test_generate_report_creates_file(tmp_path: Path) -> None:
     assert path.exists()
     assert path.stat().st_size > 0
     # All 5 pages are created
-    for page in ("report_plasmid.html", "report_chromosome.html", "report_phage.html",
-                 "report_archaea.html", "report_unclassified.html"):
+    for page in (
+        "report_plasmid.html",
+        "report_chromosome.html",
+        "report_phage.html",
+        "report_archaea.html",
+        "report_unclassified.html",
+    ):
         assert (out_dir / page).exists()
 
 
@@ -354,10 +358,18 @@ def test_generate_report_creates_parent_dir(tmp_path: Path) -> None:
 def test_nonplasmid_row_has_annotation_fields() -> None:
     """NonPlasmidRow should carry ARG/VF/MGE fields for all contig classes."""
     row = NonPlasmidRow(
-        contig_id="c1", contig_length=5000, label="chromosome", confidence=0.92,
-        num_args=2, arg_genes="blaNDM-1; sul1", drug_classes="carbapenem antibiotic",
-        num_vf=1, vf_genes="mgtC",
-        num_mge=1, mge_genes="ISAba1", mge_families="IS4",
+        contig_id="c1",
+        contig_length=5000,
+        label="chromosome",
+        confidence=0.92,
+        num_args=2,
+        arg_genes="blaNDM-1; sul1",
+        drug_classes="carbapenem antibiotic",
+        num_vf=1,
+        vf_genes="mgtC",
+        num_mge=1,
+        mge_genes="ISAba1",
+        mge_families="IS4",
     )
     assert row.num_args == 2
     assert "blaNDM-1" in row.arg_genes
@@ -368,13 +380,18 @@ def test_nonplasmid_row_has_annotation_fields() -> None:
 
 def test_plasmid_row_has_arg_genes_field() -> None:
     """PlasmidRow should carry arg_genes (actual gene names)."""
-    from plasflow2.risk.scorer import RiskScore
+
     row = PlasmidRow(
-        contig_id="p1", contig_length=3000, confidence=0.98,
-        num_args=2, arg_genes="blaNDM-1; mcr-1",
+        contig_id="p1",
+        contig_length=3000,
+        confidence=0.98,
+        num_args=2,
+        arg_genes="blaNDM-1; mcr-1",
         drug_classes="carbapenem antibiotic; colistin",
-        mobility_class="conjugative", replicon_type="IncP-1",
-        risk_score=8, taxonomy="Klebsiella pneumoniae",
+        mobility_class="conjugative",
+        replicon_type="IncP-1",
+        risk_score=8,
+        taxonomy="Klebsiella pneumoniae",
         risk_evidence="Conjugative (+3)",
     )
     assert row.arg_genes == "blaNDM-1; mcr-1"
@@ -383,7 +400,6 @@ def test_plasmid_row_has_arg_genes_field() -> None:
 def test_build_report_data_nonplasmid_rows_have_annotation(tmp_path: Path) -> None:
     """build_report_data should populate ARG/VF/MGE fields on NonPlasmidRow."""
     from plasflow2.pipeline import NonPlasmidContigResult
-    from plasflow2.annotate.args import ARGHit
 
     np_cr = NonPlasmidContigResult(
         record=_record("c1"),

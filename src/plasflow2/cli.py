@@ -25,39 +25,54 @@ from __future__ import annotations
 
 # ── macOS ARM segfault fix — MUST be before any numpy/torch import ──────────
 import os as _os
-for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+
+for _v in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
     _os.environ.setdefault(_v, "1")
 # ────────────────────────────────────────────────────────────────────────────
 
-import csv
-import json
-import logging
-import sys
-from pathlib import Path
+import csv  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-import click
+import click  # noqa: E402
 
-from plasflow2 import __version__
-from plasflow2.annotate.args import annotate_contigs
-from plasflow2.output.genes_tsv import write_genes_tsv
-from plasflow2.annotate.mobility import annotate_mobility
-from plasflow2.classify.predict import predict
-from plasflow2.pipeline import PipelineResult, run_pipeline
-from plasflow2.report.generator import (
-    PlasmidRow,
+from plasflow2 import __version__  # noqa: E402
+from plasflow2.annotate.args import annotate_contigs  # noqa: E402
+from plasflow2.annotate.mobility import annotate_mobility  # noqa: E402
+from plasflow2.classify.predict import predict  # noqa: E402
+from plasflow2.output.genes_tsv import write_genes_tsv  # noqa: E402
+from plasflow2.pipeline import PipelineResult, run_pipeline  # noqa: E402
+from plasflow2.report.generator import (  # noqa: E402
     NonPlasmidRow,
-    _arg_bar as _build_arg_chart,
-    _pie as _build_pie_data,
-    _risk_hist as _build_risk_histogram,
-    _mobility_bar as _build_mobility_bar,
-    _eskape_bar as _build_eskape_bar,
+    PlasmidRow,
     build_report_data,
-    generate_report,
     generate_reports,
 )
-from plasflow2.risk.scorer import score_plasmid
-from plasflow2.utils.fasta import load_fasta, split_by_label, write_fasta
+from plasflow2.report.generator import (  # noqa: E402
+    _arg_bar as _build_arg_chart,
+)
+from plasflow2.report.generator import (  # noqa: E402
+    _eskape_bar as _build_eskape_bar,
+)
+from plasflow2.report.generator import (  # noqa: E402
+    _mobility_bar as _build_mobility_bar,
+)
+from plasflow2.report.generator import (  # noqa: E402
+    _pie as _build_pie_data,
+)
+from plasflow2.report.generator import (  # noqa: E402
+    _risk_hist as _build_risk_histogram,
+)
+from plasflow2.risk.scorer import score_plasmid  # noqa: E402
+from plasflow2.utils.fasta import load_fasta, split_by_label, write_fasta  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +92,16 @@ def _configure_logging(verbose: bool) -> None:
 # ---------------------------------------------------------------------------
 
 _DB_ROOT = Path(__file__).parent.parent.parent / "data" / "databases"
-_DEFAULT_MODEL       = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
-_DEFAULT_CARD_DB     = _DB_ROOT / "card" / "card.dmnd"
-_DEFAULT_ARO_INDEX   = _DB_ROOT / "card" / "aro_index.tsv"
-_DEFAULT_SARG_DB     = _DB_ROOT / "sarg" / "sarg.dmnd"
-_DEFAULT_VFDB        = _DB_ROOT / "vfdb" / "vfdb.dmnd"
-_DEFAULT_MGE_DB      = _DB_ROOT / "mge" / "isfinder.dmnd"
-_DEFAULT_PLASMID_DB  = _DB_ROOT / "plasmids"   # dir; combined FASTA is built here
+_DEFAULT_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
+_DEFAULT_CARD_DB = _DB_ROOT / "card" / "card.dmnd"
+_DEFAULT_ARO_INDEX = _DB_ROOT / "card" / "aro_index.tsv"
+_DEFAULT_SARG_DB = _DB_ROOT / "sarg" / "sarg.dmnd"
+_DEFAULT_VFDB = _DB_ROOT / "vfdb" / "vfdb.dmnd"
+_DEFAULT_MGE_DB = _DB_ROOT / "mge" / "isfinder.dmnd"
+_DEFAULT_PLASMID_DB = _DB_ROOT / "plasmids"  # dir; combined FASTA is built here
 _DEFAULT_TAXONOMY_DB = _DB_ROOT / "taxonomy" / "refseq_taxonomy.dmnd"
-_DEFAULT_TAXON_MAP   = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
-_DEFAULT_KAIJU_DIR   = _DB_ROOT / "kaiju"
+_DEFAULT_TAXON_MAP = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
+_DEFAULT_KAIJU_DIR = _DB_ROOT / "kaiju"
 _DEFAULT_KAIJU_NODES = _DEFAULT_KAIJU_DIR / "nodes.dmp"
 _DEFAULT_KAIJU_NAMES = _DEFAULT_KAIJU_DIR / "names.dmp"
 
@@ -144,7 +159,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "taxonomy_lineage",
         # ── ARG annotation (all contig classes) ──────────────────────────
         "num_args",
-        "arg_genes",         # e.g. "blaNDM-1; sul1; tetA"
+        "arg_genes",  # e.g. "blaNDM-1; sul1; tetA"
         "drug_classes",
         "arg_sources",
         # ── VF annotation (all contig classes) ───────────────────────────
@@ -152,8 +167,8 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "vf_genes",
         # ── MGE annotation (all contig classes) ──────────────────────────
         "num_mge",
-        "mge_genes",         # IS element names e.g. "ISAba1; IS26"
-        "mge_families",      # IS families e.g. "IS4; Tn3"
+        "mge_genes",  # IS element names e.g. "ISAba1; IS26"
+        "mge_families",  # IS families e.g. "IS4; Tn3"
         # ── plasmid-specific mobility & risk ─────────────────────────────
         "mobility_class",
         "replicon_type",
@@ -169,13 +184,13 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "eskape_host",
         "eskape_genus",
         # ── topology & confidence ─────────────────────────────────────────
-        "topology",          # circular / linear / too_short
-        "low_confidence",    # True if confidence < 0.70 or argmax fallback used
+        "topology",  # circular / linear / too_short
+        "low_confidence",  # True if confidence < 0.70 or argmax fallback used
         # ── plasmid-DB nucleotide match (plasmid contigs only) ────────────
-        "plasmid_db_match",      # closest known plasmid accession (e.g. PLSDB_NZ_CP073379.1)
-        "plasmid_db_source",     # PLSDB / RefSeq / COMPASS
-        "plasmid_db_ani",        # approximate nucleotide identity % to DB hit
-        "plasmid_db_cov",        # query coverage % of the DB hit alignment
+        "plasmid_db_match",  # closest known plasmid accession (e.g. PLSDB_NZ_CP073379.1)
+        "plasmid_db_source",  # PLSDB / RefSeq / COMPASS
+        "plasmid_db_ani",  # approximate nucleotide identity % to DB hit
+        "plasmid_db_cov",  # query coverage % of the DB hit alignment
         # ── pathogen detection (all classes) ─────────────────────────────
         "pathogen_species",
         "pathogen_threat",
@@ -199,7 +214,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Index results by contig_id for O(1) lookup
-    plasmid_by_id     = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
+    plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
     non_plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.non_plasmid_results}
     # Index all records by contig_id for length lookup
     record_by_id = {cr.record.id: cr.record for cr in pipeline_result.plasmid_results}
@@ -232,30 +247,48 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 tax_cols = _tax_fields(cr.taxonomy)
 
                 # ARG
-                arg_genes    = "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
-                unique_classes = sorted({
-                    dc.strip()
-                    for h in cr.arg_hits
-                    for dc in h.drug_class.split(";")
-                    if dc.strip() and dc.strip() != "unknown"
-                })
+                arg_genes = (
+                    "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
+                )
+                unique_classes = sorted(
+                    {
+                        dc.strip()
+                        for h in cr.arg_hits
+                        for dc in h.drug_class.split(";")
+                        if dc.strip() and dc.strip() != "unknown"
+                    }
+                )
                 sources = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
                 # VF
-                vf_hits  = getattr(cr, "vf_hits",  [])
+                vf_hits = getattr(cr, "vf_hits", [])
                 vf_genes = "; ".join(sorted({h.gene_name for h in vf_hits})) if vf_hits else ""
                 # MGE
-                mge_hits     = getattr(cr, "mge_hits", [])
-                mge_genes    = "; ".join(sorted({h.is_name   for h in mge_hits})) if mge_hits else ""
-                mge_families = "; ".join(sorted({h.is_family for h in mge_hits})) if mge_hits else ""
+                mge_hits = getattr(cr, "mge_hits", [])
+                mge_genes = "; ".join(sorted({h.is_name for h in mge_hits})) if mge_hits else ""
+                mge_families = (
+                    "; ".join(sorted({h.is_family for h in mge_hits})) if mge_hits else ""
+                )
                 # BacMet
-                bm_hits     = getattr(cr, "bacmet_hits", [])
-                bm_genes    = "; ".join(sorted({h.gene_name for h in bm_hits})) if bm_hits else ""
-                bm_classes  = "; ".join(sorted({h.resistance_class for h in bm_hits})) if bm_hits else ""
-                bm_compounds= "; ".join(sorted({h.compound for h in bm_hits if h.compound})) if bm_hits else ""
+                bm_hits = getattr(cr, "bacmet_hits", [])
+                bm_genes = "; ".join(sorted({h.gene_name for h in bm_hits})) if bm_hits else ""
+                bm_classes = (
+                    "; ".join(sorted({h.resistance_class for h in bm_hits})) if bm_hits else ""
+                )
+                bm_compounds = (
+                    "; ".join(sorted({h.compound for h in bm_hits if h.compound}))
+                    if bm_hits
+                    else ""
+                )
                 # ICE
-                ice_hits_cr  = getattr(cr, "ice_hits", [])
-                ice_ids_str  = "; ".join(sorted({h.ice_id for h in ice_hits_cr})) if ice_hits_cr else ""
-                ice_funcs    = "; ".join(sorted({h.gene_function for h in ice_hits_cr if h.gene_function})) if ice_hits_cr else ""
+                ice_hits_cr = getattr(cr, "ice_hits", [])
+                ice_ids_str = (
+                    "; ".join(sorted({h.ice_id for h in ice_hits_cr})) if ice_hits_cr else ""
+                )
+                ice_funcs = (
+                    "; ".join(sorted({h.gene_function for h in ice_hits_cr if h.gene_function}))
+                    if ice_hits_cr
+                    else ""
+                )
 
                 annot_cols = [
                     len(cr.arg_hits),
@@ -269,7 +302,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     mge_families,
                 ]
                 bacmet_cols = [len(bm_hits), bm_genes, bm_classes, bm_compounds]
-                ice_cols    = [len(ice_hits_cr), ice_ids_str, ice_funcs]
+                ice_cols = [len(ice_hits_cr), ice_ids_str, ice_funcs]
 
                 mob = cr.mobility
                 risk = cr.risk
@@ -297,28 +330,42 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
 
                 np_cr = non_plasmid_by_id.get(cid)
                 if np_cr is not None:
-                    np_arg_hits  = getattr(np_cr, "arg_hits",  [])
-                    np_vf_hits   = getattr(np_cr, "vf_hits",   [])
-                    np_mge_hits  = getattr(np_cr, "mge_hits",  [])
-                    np_bm_hits   = getattr(np_cr, "bacmet_hits", [])
-                    np_ice_hits  = getattr(np_cr, "ice_hits",   [])
-                    np_arg_genes = "; ".join(sorted({h.gene_name for h in np_arg_hits})) if np_arg_hits else ""
-                    np_drug_cls  = sorted({
-                        dc.strip()
-                        for h in np_arg_hits
-                        for dc in h.drug_class.split(";")
-                        if dc.strip() and dc.strip() != "unknown"
-                    })
-                    np_sources   = sorted({h.source for h in np_arg_hits if getattr(h, "source", "")})
-                    np_vf_genes  = "; ".join(sorted({h.gene_name for h in np_vf_hits}))  if np_vf_hits  else ""
-                    np_mge_genes = "; ".join(sorted({h.is_name   for h in np_mge_hits})) if np_mge_hits else ""
-                    np_mge_fams  = "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
+                    np_arg_hits = getattr(np_cr, "arg_hits", [])
+                    np_vf_hits = getattr(np_cr, "vf_hits", [])
+                    np_mge_hits = getattr(np_cr, "mge_hits", [])
+                    np_bm_hits = getattr(np_cr, "bacmet_hits", [])
+                    np_ice_hits = getattr(np_cr, "ice_hits", [])
+                    np_arg_genes = (
+                        "; ".join(sorted({h.gene_name for h in np_arg_hits})) if np_arg_hits else ""
+                    )
+                    np_drug_cls = sorted(
+                        {
+                            dc.strip()
+                            for h in np_arg_hits
+                            for dc in h.drug_class.split(";")
+                            if dc.strip() and dc.strip() != "unknown"
+                        }
+                    )
+                    np_sources = sorted({h.source for h in np_arg_hits if getattr(h, "source", "")})
+                    np_vf_genes = (
+                        "; ".join(sorted({h.gene_name for h in np_vf_hits})) if np_vf_hits else ""
+                    )
+                    np_mge_genes = (
+                        "; ".join(sorted({h.is_name for h in np_mge_hits})) if np_mge_hits else ""
+                    )
+                    np_mge_fams = (
+                        "; ".join(sorted({h.is_family for h in np_mge_hits})) if np_mge_hits else ""
+                    )
                     annot_cols = [
-                        len(np_arg_hits), np_arg_genes,
+                        len(np_arg_hits),
+                        np_arg_genes,
                         "; ".join(np_drug_cls) if np_drug_cls else "",
                         ", ".join(np_sources) if np_sources else "",
-                        len(np_vf_hits), np_vf_genes,
-                        len(np_mge_hits), np_mge_genes, np_mge_fams,
+                        len(np_vf_hits),
+                        np_vf_genes,
+                        len(np_mge_hits),
+                        np_mge_genes,
+                        np_mge_fams,
                     ]
                     bacmet_cols = [
                         len(np_bm_hits),
@@ -329,12 +376,14 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                     ice_cols = [
                         len(np_ice_hits),
                         "; ".join(sorted({h.ice_id for h in np_ice_hits})),
-                        "; ".join(sorted({h.gene_function for h in np_ice_hits if h.gene_function})),
+                        "; ".join(
+                            sorted({h.gene_function for h in np_ice_hits if h.gene_function})
+                        ),
                     ]
                 else:
-                    annot_cols  = ANNOT_EMPTY
+                    annot_cols = ANNOT_EMPTY
                     bacmet_cols = ["", "", "", ""]
-                    ice_cols    = ["", "", ""]
+                    ice_cols = ["", "", ""]
 
             # ── Topology & confidence flag ────────────────────────────────
             topology = pipeline_result.topology.get(cid, "")
@@ -363,9 +412,15 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 pathogen_cols = PATHOGEN_EMPTY
 
             writer.writerow(
-                base_cols + tax_cols + annot_cols + plasmid_cols
-                + topo_conf_cols + plasmid_db_cols + pathogen_cols
-                + bacmet_cols + ice_cols
+                base_cols
+                + tax_cols
+                + annot_cols
+                + plasmid_cols
+                + topo_conf_cols
+                + plasmid_db_cols
+                + pathogen_cols
+                + bacmet_cols
+                + ice_cols
             )
 
 
@@ -405,7 +460,7 @@ def _write_annotated_tsv(pipeline_result: PipelineResult, output_path: Path) -> 
         "pathogen_category",
     ]
 
-    plasmid_by_id     = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
+    plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.plasmid_results}
     non_plasmid_by_id = {cr.record.id: cr for cr in pipeline_result.non_plasmid_results}
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -420,62 +475,96 @@ def _write_annotated_tsv(pipeline_result: PipelineResult, output_path: Path) -> 
 
             if pred.label == "plasmid" and cid in plasmid_by_id:
                 cr = plasmid_by_id[cid]
-                arg_hits    = cr.arg_hits or []
-                vf_hits     = getattr(cr, "vf_hits",     []) or []
-                mge_hits    = getattr(cr, "mge_hits",    []) or []
-                bm_hits     = getattr(cr, "bacmet_hits", []) or []
-                ice_hits_cr = getattr(cr, "ice_hits",    []) or []
-                mob         = cr.mobility
-                mob_class   = mob.mobility_class if mob else "unknown"
-                risk_score  = cr.risk.score
+                arg_hits = cr.arg_hits or []
+                vf_hits = getattr(cr, "vf_hits", []) or []
+                mge_hits = getattr(cr, "mge_hits", []) or []
+                bm_hits = getattr(cr, "bacmet_hits", []) or []
+                ice_hits_cr = getattr(cr, "ice_hits", []) or []
+                mob = cr.mobility
+                mob_class = mob.mobility_class if mob else "unknown"
+                risk_score = cr.risk.score
                 tax = cr.taxonomy
                 tax_lca = tax.lineage if tax else ""
                 path_hit = pipeline_result.pathogens.get(cid)
                 pathogen_cat = path_hit.category if path_hit else ""
                 is_mobile = mob_class not in ("non-mobilizable", "unknown", "")
             else:
-                np_cr       = non_plasmid_by_id.get(cid)
-                arg_hits    = getattr(np_cr, "arg_hits",     []) if np_cr else []
-                vf_hits     = getattr(np_cr, "vf_hits",      []) if np_cr else []
-                mge_hits    = getattr(np_cr, "mge_hits",     []) if np_cr else []
-                bm_hits     = getattr(np_cr, "bacmet_hits",  []) if np_cr else []
-                ice_hits_cr = getattr(np_cr, "ice_hits",     []) if np_cr else []
-                mob_class   = ""
-                risk_score  = ""
-                is_mobile   = False
+                np_cr = non_plasmid_by_id.get(cid)
+                arg_hits = getattr(np_cr, "arg_hits", []) if np_cr else []
+                vf_hits = getattr(np_cr, "vf_hits", []) if np_cr else []
+                mge_hits = getattr(np_cr, "mge_hits", []) if np_cr else []
+                bm_hits = getattr(np_cr, "bacmet_hits", []) if np_cr else []
+                ice_hits_cr = getattr(np_cr, "ice_hits", []) if np_cr else []
+                mob_class = ""
+                risk_score = ""
+                is_mobile = False
                 tax = pipeline_result.taxonomy.get(cid)
                 tax_lca = tax.lineage if tax else ""
                 path_hit = pipeline_result.pathogens.get(cid)
                 pathogen_cat = path_hit.category if path_hit else ""
 
             # Filter: include only if at least one annotation present
-            if not (arg_hits or mge_hits or vf_hits or bm_hits or ice_hits_cr or is_mobile or pathogen_cat):
+            if not (
+                arg_hits
+                or mge_hits
+                or vf_hits
+                or bm_hits
+                or ice_hits_cr
+                or is_mobile
+                or pathogen_cat
+            ):
                 continue
 
-            arg_genes    = "; ".join(sorted({h.gene_name for h in arg_hits}))
-            drug_classes = "; ".join(sorted({
-                dc.strip() for h in arg_hits for dc in h.drug_class.split(";")
-                if dc.strip() and dc.strip() != "unknown"
-            }))
-            mge_genes    = "; ".join(sorted({h.is_name   for h in mge_hits}))
+            arg_genes = "; ".join(sorted({h.gene_name for h in arg_hits}))
+            drug_classes = "; ".join(
+                sorted(
+                    {
+                        dc.strip()
+                        for h in arg_hits
+                        for dc in h.drug_class.split(";")
+                        if dc.strip() and dc.strip() != "unknown"
+                    }
+                )
+            )
+            mge_genes = "; ".join(sorted({h.is_name for h in mge_hits}))
             mge_families = "; ".join(sorted({h.is_family for h in mge_hits}))
-            vf_genes     = "; ".join(sorted({h.gene_name for h in vf_hits}))
-            vf_cats      = "; ".join(sorted({getattr(h, "vf_category", "") for h in vf_hits if getattr(h, "vf_category", "")}))
-            bm_genes     = "; ".join(sorted({h.gene_name for h in bm_hits}))
-            bm_class     = "; ".join(sorted({h.resistance_class for h in bm_hits}))
+            vf_genes = "; ".join(sorted({h.gene_name for h in vf_hits}))
+            vf_cats = "; ".join(
+                sorted(
+                    {
+                        getattr(h, "vf_category", "")
+                        for h in vf_hits
+                        if getattr(h, "vf_category", "")
+                    }
+                )
+            )
+            bm_genes = "; ".join(sorted({h.gene_name for h in bm_hits}))
+            bm_class = "; ".join(sorted({h.resistance_class for h in bm_hits}))
             bm_compounds = "; ".join(sorted({h.compound for h in bm_hits if h.compound}))
-            ice_ids_str  = "; ".join(sorted({h.ice_id for h in ice_hits_cr}))
-            ice_funcs    = "; ".join(sorted({h.gene_function for h in ice_hits_cr if h.gene_function}))
+            ice_ids_str = "; ".join(sorted({h.ice_id for h in ice_hits_cr}))
+            ice_funcs = "; ".join(sorted({h.gene_function for h in ice_hits_cr if h.gene_function}))
 
-            writer.writerow([
-                cid, pred.label,
-                arg_genes, drug_classes,
-                mge_genes, mge_families,
-                vf_genes, vf_cats,
-                bm_genes, bm_class, bm_compounds,
-                ice_ids_str, ice_funcs,
-                mob_class, risk_score, tax_lca, pathogen_cat,
-            ])
+            writer.writerow(
+                [
+                    cid,
+                    pred.label,
+                    arg_genes,
+                    drug_classes,
+                    mge_genes,
+                    mge_families,
+                    vf_genes,
+                    vf_cats,
+                    bm_genes,
+                    bm_class,
+                    bm_compounds,
+                    ice_ids_str,
+                    ice_funcs,
+                    mob_class,
+                    risk_score,
+                    tax_lca,
+                    pathogen_cat,
+                ]
+            )
             written += 1
 
     logger.info("Annotated predictions: %d contigs written to %s", written, output_path)
@@ -880,6 +969,7 @@ def run(
 
     # Kaiju auto-detection
     from plasflow2.annotate.taxonomy_kaiju import find_kaiju_db, kaiju_available
+
     if kaiju_db is None and _DEFAULT_KAIJU_DIR.is_dir():
         _found = find_kaiju_db(_DEFAULT_KAIJU_DIR)
         if _found:
@@ -891,7 +981,9 @@ def run(
     if kaiju_db and kaiju_nodes and kaiju_names:
         _engine_label = "kaiju" if taxonomy_engine in ("kaiju", "auto") else "diamond"
         if taxonomy_engine == "auto" and kaiju_available():
-            click.echo(f"[info] Auto-detected Kaiju database: {kaiju_db} (will use kaiju for taxonomy)")
+            click.echo(
+                f"[info] Auto-detected Kaiju database: {kaiju_db} (will use kaiju for taxonomy)"
+            )
         elif taxonomy_engine == "kaiju":
             click.echo(f"[info] Kaiju database: {kaiju_db}")
 
@@ -959,7 +1051,8 @@ def run(
         if _fallback.exists():
             logger.warning(
                 "Original input %s not found — using work-dir copy %s",
-                input_fasta, _fallback,
+                input_fasta,
+                _fallback,
             )
             _fasta_source = _fallback
         else:
@@ -979,12 +1072,15 @@ def run(
     # --- Write gene-level TSV (all ORFs with ARG/VF/MGE flags + coordinates) ---
     if pipeline_result.orfs:
         label_by_contig = {p.sequence_id: p.label for p in pipeline_result.all_predictions}
-        all_vf_hits  = [h for cr in pipeline_result.plasmid_results for h in cr.vf_hits] + \
-                       [h for cr in pipeline_result.non_plasmid_results for h in cr.vf_hits]
-        all_mge_hits = [h for cr in pipeline_result.plasmid_results for h in cr.mge_hits] + \
-                       [h for cr in pipeline_result.non_plasmid_results for h in cr.mge_hits]
-        all_arg_hits = [h for cr in pipeline_result.plasmid_results for h in cr.arg_hits] + \
-                       [h for cr in pipeline_result.non_plasmid_results for h in cr.arg_hits]
+        all_vf_hits = [h for cr in pipeline_result.plasmid_results for h in cr.vf_hits] + [
+            h for cr in pipeline_result.non_plasmid_results for h in cr.vf_hits
+        ]
+        all_mge_hits = [h for cr in pipeline_result.plasmid_results for h in cr.mge_hits] + [
+            h for cr in pipeline_result.non_plasmid_results for h in cr.mge_hits
+        ]
+        all_arg_hits = [h for cr in pipeline_result.plasmid_results for h in cr.arg_hits] + [
+            h for cr in pipeline_result.non_plasmid_results for h in cr.arg_hits
+        ]
         genes_tsv_path = out / "genes.tsv"
         write_genes_tsv(
             orfs=pipeline_result.orfs,
@@ -1357,11 +1453,11 @@ def report_cmd(
                 # ARG gene names (new column; absent in old TSV files)
                 arg_genes_str = row.get("arg_genes", "") or ""
                 # VF / MGE — read from TSV (gracefully absent in old files)
-                num_vf        = int(row.get("num_vf",  0) or 0)
-                vf_genes_str  = row.get("vf_genes",     "") or ""
-                num_mge       = int(row.get("num_mge", 0) or 0)
+                num_vf = int(row.get("num_vf", 0) or 0)
+                vf_genes_str = row.get("vf_genes", "") or ""
+                num_mge = int(row.get("num_mge", 0) or 0)
                 mge_genes_str = row.get("mge_genes", "") or ""
-                mge_fam_str   = row.get("mge_families", "") or ""
+                mge_fam_str = row.get("mge_families", "") or ""
 
                 plasmid_rows.append(
                     PlasmidRow(
@@ -1385,7 +1481,8 @@ def report_cmd(
                         mge_genes=mge_genes_str,
                         mge_families=mge_fam_str,
                         topology=row.get("topology", "linear") or "linear",
-                        low_confidence=(row.get("low_confidence", "False") or "False").lower() == "true",
+                        low_confidence=(row.get("low_confidence", "False") or "False").lower()
+                        == "true",
                     )
                 )
             else:
@@ -1416,77 +1513,89 @@ def report_cmd(
                         mge_genes=row.get("mge_genes", "") or "",
                         mge_families=row.get("mge_families", "") or "",
                         topology=row.get("topology", "linear") or "linear",
-                        low_confidence=(row.get("low_confidence", "False") or "False").lower() == "true",
+                        low_confidence=(row.get("low_confidence", "False") or "False").lower()
+                        == "true",
                     )
                 )
 
     from plasflow2.report.generator import (
-        _vf_bar as _build_vf_bar,
-        _mge_bar as _build_mge_bar,
-        _pathogen_bar as _build_pathogen_bar,
         _build_drug_cooccurrence_heatmap,
-        _np_charts as _build_np_charts,
         _narrative_summary,
     )
+    from plasflow2.report.generator import (
+        _mge_bar as _build_mge_bar,
+    )
+    from plasflow2.report.generator import (
+        _np_charts as _build_np_charts,
+    )
+    from plasflow2.report.generator import (
+        _pathogen_bar as _build_pathogen_bar,
+    )
+    from plasflow2.report.generator import (
+        _vf_bar as _build_vf_bar,
+    )
 
-    phage_rows        = [r for r in non_plasmid_rows if r.label == "phage"]
-    chromosome_rows   = [r for r in non_plasmid_rows if r.label == "chromosome"]
-    archaea_rows      = [r for r in non_plasmid_rows if r.label == "archaea"]
-    unclassified_rows = [r for r in non_plasmid_rows
-                         if r.label not in ("phage", "chromosome", "archaea")]
+    phage_rows = [r for r in non_plasmid_rows if r.label == "phage"]
+    chromosome_rows = [r for r in non_plasmid_rows if r.label == "chromosome"]
+    archaea_rows = [r for r in non_plasmid_rows if r.label == "archaea"]
+    unclassified_rows = [
+        r for r in non_plasmid_rows if r.label not in ("phage", "chromosome", "archaea")
+    ]
     # sort large lists by length so top-N truncation keeps longest contigs
     for lst in (chromosome_rows, unclassified_rows):
         lst.sort(key=lambda r: r.contig_length, reverse=True)
 
     # Build pathogen data from the pathogen_threat column in predictions.tsv
     from plasflow2.annotate.pathogens import PathogenResult as _PR
+
     _pathogens_from_tsv: dict[str, _PR] = {}
     # Re-read pathogens from the TSV (they were written as pathogen_species/threat/category)
     # We need to reparse since the tsv loop above doesn't track these
     # (simple rebuild from the row loop below)
     report_data = {
-        "input_file":        predictions,
-        "total":             total,
-        "num_plasmids":      len(plasmid_rows),
-        "total_args":        len(all_arg_hits_for_chart),
-        "total_vf":          sum(r.num_vf  for r in plasmid_rows),
-        "total_mge":         sum(r.num_mge for r in plasmid_rows),
-        "tax_classified":    0,
-        "total_pathogens":   0,  # filled below after re-reading pathogen cols
-        "class_counts":      class_counts,
+        "input_file": predictions,
+        "total": total,
+        "num_plasmids": len(plasmid_rows),
+        "total_args": len(all_arg_hits_for_chart),
+        "total_vf": sum(r.num_vf for r in plasmid_rows),
+        "total_mge": sum(r.num_mge for r in plasmid_rows),
+        "tax_classified": 0,
+        "total_pathogens": 0,  # filled below after re-reading pathogen cols
+        "class_counts": class_counts,
         # plasmid charts
-        "pie_data":          _build_pie_data(class_counts),
-        "arg_data":          _build_arg_chart(all_arg_hits_for_chart),
-        "risk_data":         _build_risk_histogram(risk_scores),
-        "vf_data":           _build_vf_bar(plasmid_rows),
-        "mge_data":          _build_mge_bar(plasmid_rows),
-        "mobility_data":     _build_mobility_bar(plasmid_rows),
-        "eskape_data":       _build_eskape_bar(plasmid_rows),
-        "pathogen_data":     _build_pathogen_bar({}),  # populated below
+        "pie_data": _build_pie_data(class_counts),
+        "arg_data": _build_arg_chart(all_arg_hits_for_chart),
+        "risk_data": _build_risk_histogram(risk_scores),
+        "vf_data": _build_vf_bar(plasmid_rows),
+        "mge_data": _build_mge_bar(plasmid_rows),
+        "mobility_data": _build_mobility_bar(plasmid_rows),
+        "eskape_data": _build_eskape_bar(plasmid_rows),
+        "pathogen_data": _build_pathogen_bar({}),  # populated below
         "cooccurrence_data": _build_drug_cooccurrence_heatmap([]),
-        "scatter_data":      {},
-        "tax_bar_data":      {},
+        "scatter_data": {},
+        "tax_bar_data": {},
         # row lists
-        "plasmid_rows":      plasmid_rows,
-        "chromosome_rows":   chromosome_rows,
-        "phage_rows":        phage_rows,
-        "archaea_rows":      archaea_rows,
+        "plasmid_rows": plasmid_rows,
+        "chromosome_rows": chromosome_rows,
+        "phage_rows": phage_rows,
+        "archaea_rows": archaea_rows,
         "unclassified_rows": unclassified_rows,
-        "other_rows":        archaea_rows + unclassified_rows,
+        "other_rows": archaea_rows + unclassified_rows,
         # per-class chart bundles
-        "chrom_charts":      _build_np_charts(chromosome_rows,   "Chromosome",   "#27ae60"),
-        "phage_charts":      _build_np_charts(phage_rows,        "Phage",        "#e67e22"),
-        "arch_charts":       _build_np_charts(archaea_rows,      "Archaea",      "#8e44ad"),
-        "unc_charts":        _build_np_charts(unclassified_rows, "Unclassified", "#95a5a6",
-                                              show_best=True),
+        "chrom_charts": _build_np_charts(chromosome_rows, "Chromosome", "#27ae60"),
+        "phage_charts": _build_np_charts(phage_rows, "Phage", "#e67e22"),
+        "arch_charts": _build_np_charts(archaea_rows, "Archaea", "#8e44ad"),
+        "unc_charts": _build_np_charts(
+            unclassified_rows, "Unclassified", "#95a5a6", show_best=True
+        ),
         # legacy flags
-        "has_scatter":       False,
-        "has_cooccurrence":  False,
-        "has_phages":        bool(phage_rows),
-        "has_chromosomes":   bool(chromosome_rows),
-        "has_others":        bool(archaea_rows or unclassified_rows),
+        "has_scatter": False,
+        "has_cooccurrence": False,
+        "has_phages": bool(phage_rows),
+        "has_chromosomes": bool(chromosome_rows),
+        "has_others": bool(archaea_rows or unclassified_rows),
         # genome maps not available when rebuilding from TSV (no ORF data)
-        "genome_maps":       {},
+        "genome_maps": {},
     }
     # narrative summary (computed after report_data is assembled)
     report_data["narrative"] = _narrative_summary(report_data)
@@ -1496,19 +1605,24 @@ def report_cmd(
     with open(predictions) as _pfh:
         _pr = csv.DictReader(_pfh, delimiter="\t")
         for _row in _pr:
-            _sp  = _row.get("pathogen_species", "")
-            _lv  = _row.get("pathogen_threat", "")
+            _sp = _row.get("pathogen_species", "")
+            _lv = _row.get("pathogen_threat", "")
             _cat = _row.get("pathogen_category", "")
             if _sp and _lv:
                 _pathogen_hits[_row["contig_id"]] = _PR(
-                    contig_id=_row["contig_id"], genus=_sp.split()[0],
-                    species=_sp, threat_level=_lv, category=_cat, note="",
+                    contig_id=_row["contig_id"],
+                    genus=_sp.split()[0],
+                    species=_sp,
+                    threat_level=_lv,
+                    category=_cat,
+                    note="",
                 )
     if _pathogen_hits:
-        report_data["pathogen_data"]   = _build_pathogen_bar(_pathogen_hits)
+        report_data["pathogen_data"] = _build_pathogen_bar(_pathogen_hits)
         report_data["total_pathogens"] = len(_pathogen_hits)
 
     import os as _os
+
     out_dir = _os.path.dirname(_os.path.abspath(output_html))
     report_paths = generate_reports(report_data, out_dir)
     click.echo("Reports written:")

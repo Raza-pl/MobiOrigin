@@ -28,11 +28,14 @@ from pathlib import Path
 
 from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 
-from plasflow2.annotate.args import ARGHit, ORF, annotate_contigs, annotate_contigs_with_orfs, merge_arg_hits
-from plasflow2.annotate.mge import MGEHit, annotate_mge
+from plasflow2.annotate.args import (
+    ORF,
+    ARGHit,
+    annotate_contigs_with_orfs,
+)
 from plasflow2.annotate.bacmet import BacMetHit, annotate_bacmet
 from plasflow2.annotate.ice import ICEHit, annotate_ice
-from plasflow2.annotate.plasmid_db import PlasmidDBHit, annotate_plasmid_db
+from plasflow2.annotate.mge import MGEHit, annotate_mge
 from plasflow2.annotate.mobility import (
     MobilityResult,
     index_by_contig,
@@ -44,7 +47,7 @@ from plasflow2.annotate.mobility_diamond import (
     find_mob_diamond_dbs,
 )
 from plasflow2.annotate.pathogens import PathogenResult, detect_pathogens
-from plasflow2.annotate.topology import Topology, detect_topologies
+from plasflow2.annotate.plasmid_db import PlasmidDBHit, annotate_plasmid_db
 from plasflow2.annotate.taxonomy import (
     TaxResult,
     assign_taxonomy,
@@ -53,18 +56,18 @@ from plasflow2.annotate.taxonomy import (
 )
 from plasflow2.annotate.taxonomy_kaiju import (
     assign_taxonomy_kaiju,
-    find_kaiju_db,
     kaiju_available,
 )
+from plasflow2.annotate.topology import Topology, detect_topologies
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
-from plasflow2.classify.predict import Prediction, predict
 from plasflow2.classify.marker_classifier import (
     MarkerClassifier,
     aggregate_scores,
     extract_marker_features,
     marker_classifier_available,
 )
-from plasflow2.risk.scorer import RiskScore, score_plasmid, score_nonplasmid
+from plasflow2.classify.predict import Prediction, predict
+from plasflow2.risk.scorer import RiskScore, score_nonplasmid, score_plasmid
 from plasflow2.utils.fasta import load_fasta, write_fasta
 
 logger = logging.getLogger(__name__)
@@ -135,9 +138,8 @@ class PipelineResult:
         self.total_sequences = len(self.all_predictions)
         self.total_plasmids = len(self.plasmid_results)
         # Count ARGs across ALL contig classes (plasmid + non-plasmid)
-        self.total_args = (
-            sum(len(cr.arg_hits) for cr in self.plasmid_results)
-            + sum(len(cr.arg_hits) for cr in self.non_plasmid_results)
+        self.total_args = sum(len(cr.arg_hits) for cr in self.plasmid_results) + sum(
+            len(cr.arg_hits) for cr in self.non_plasmid_results
         )
 
         if not self.class_counts:
@@ -324,7 +326,9 @@ def run_pipeline(
     # 4. ARG annotation — ALL contigs (plasmid + chromosome + phage + archaea)
     # ------------------------------------------------------------------
     # Auto-detect AMRProt DIAMOND DB if not explicitly provided
-    _amrprot_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "amrfinder" / "amrprot.dmnd"
+    _amrprot_auto = (
+        Path(__file__).parent.parent.parent / "data" / "databases" / "amrfinder" / "amrprot.dmnd"
+    )
     _amrprot_db = amrprot_db or (_amrprot_auto if _amrprot_auto.exists() else None)
 
     dbs_label = "CARD" + (" + SARG" if sarg_db else "") + (" + AMRProt" if _amrprot_db else "")
@@ -411,7 +415,9 @@ def run_pipeline(
     # 4c-2. BacMet annotation — ALL contigs (biocide/metal resistance)
     # ------------------------------------------------------------------
     bacmet_by_contig: dict[str, list[BacMetHit]] = {}
-    _bacmet_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "bacmet" / "bacmet.dmnd"
+    _bacmet_auto = (
+        Path(__file__).parent.parent.parent / "data" / "databases" / "bacmet" / "bacmet.dmnd"
+    )
     if _bacmet_auto.exists() and arg_proteins.exists():
         try:
             bacmet_hits = annotate_bacmet(
@@ -422,7 +428,9 @@ def run_pipeline(
             )
             for hit in bacmet_hits:
                 bacmet_by_contig.setdefault(hit.contig_id, []).append(hit)
-            logger.info("BacMet hits: %d across %d contigs", len(bacmet_hits), len(bacmet_by_contig))
+            logger.info(
+                "BacMet hits: %d across %d contigs", len(bacmet_hits), len(bacmet_by_contig)
+            )
         except Exception as exc:
             logger.warning("BacMet annotation failed: %s — skipping.", exc)
 
@@ -454,7 +462,9 @@ def run_pipeline(
         plasmid_db_path = Path(plasmid_db_dir)
         if plasmid_db_path.is_dir():
             if not _cached(_pdb_cache):
-                logger.info("Running plasmid-DB match on %d plasmid contigs …", len(plasmid_records))
+                logger.info(
+                    "Running plasmid-DB match on %d plasmid contigs …", len(plasmid_records)
+                )
             try:
                 plasmid_db_hits = annotate_plasmid_db(
                     plasmid_fasta=plasmid_fasta,
@@ -462,11 +472,17 @@ def run_pipeline(
                     work_dir=work_dir / "plasmid_db",
                     threads=threads,
                 )
-                logger.info("Plasmid-DB: %d / %d contigs matched", len(plasmid_db_hits), len(plasmid_records))
+                logger.info(
+                    "Plasmid-DB: %d / %d contigs matched",
+                    len(plasmid_db_hits),
+                    len(plasmid_records),
+                )
             except Exception as exc:
                 logger.warning("Plasmid-DB matching failed: %s — skipping.", exc)
         else:
-            logger.warning("Plasmid DB dir not found: %s — skipping plasmid-DB match.", plasmid_db_dir)
+            logger.warning(
+                "Plasmid DB dir not found: %s — skipping plasmid-DB match.", plasmid_db_dir
+            )
 
     # ------------------------------------------------------------------
     # 5. Mobility annotation — DIAMOND fast path or mob_typer fallback
@@ -492,14 +508,13 @@ def run_pipeline(
                 )
                 mobility_by_contig = index_by_contig(mob_results)
             except Exception as exc:
-                logger.warning(
-                    "DIAMOND mobility failed: %s — falling back to mob_typer.", exc
-                )
+                logger.warning("DIAMOND mobility failed: %s — falling back to mob_typer.", exc)
                 _use_diamond_mob = False
 
         if not _use_diamond_mob:
-            logger.info("Mobility annotation: mob_typer on %d plasmid contigs …",
-                        len(plasmid_records))
+            logger.info(
+                "Mobility annotation: mob_typer on %d plasmid contigs …", len(plasmid_records)
+            )
             try:
                 mob_tsv = run_mob_typer(
                     plasmid_fasta,
@@ -525,18 +540,37 @@ def run_pipeline(
     _rep_prot_db = _mob_diamond_dir_rep / "rep_proteins.dmnd"
     if _rep_prot_db.exists() and arg_proteins.exists():
         try:
-            import subprocess as _sp, re as _re
+            import re as _re
+            import subprocess as _sp
+
             _rep_out = work_dir / "mob_diamond" / "rep_protein_hits.tsv"
             _rep_out.parent.mkdir(parents=True, exist_ok=True)
             _rep_cmd = [
-                "diamond", "blastp",
-                "--query", str(arg_proteins),
-                "--db", str(_rep_prot_db).removesuffix(".dmnd"),
-                "--out", str(_rep_out),
-                "--outfmt", "6", "qseqid", "sseqid", "pident", "qcovhsp", "evalue",
-                "--id", "40.0", "--query-cover", "60.0",
-                "--threads", str(threads),
-                "--max-target-seqs", "1", "--sensitive", "--quiet",
+                "diamond",
+                "blastp",
+                "--query",
+                str(arg_proteins),
+                "--db",
+                str(_rep_prot_db).removesuffix(".dmnd"),
+                "--out",
+                str(_rep_out),
+                "--outfmt",
+                "6",
+                "qseqid",
+                "sseqid",
+                "pident",
+                "qcovhsp",
+                "evalue",
+                "--id",
+                "40.0",
+                "--query-cover",
+                "60.0",
+                "--threads",
+                str(threads),
+                "--max-target-seqs",
+                "1",
+                "--sensitive",
+                "--quiet",
             ]
             _rep_result = _sp.run(_rep_cmd, capture_output=True, text=True)
             if _rep_result.returncode == 0 and _rep_out.exists():
@@ -545,7 +579,9 @@ def run_pipeline(
                         _orf_id = _line.split("\t")[0].strip()
                         _cid = _re.sub(r"_\d+$", "", _orf_id)
                         rep_protein_hits.add(_cid)
-                logger.info("Rep protein hits: %d contigs with replication proteins", len(rep_protein_hits))
+                logger.info(
+                    "Rep protein hits: %d contigs with replication proteins", len(rep_protein_hits)
+                )
         except Exception as _exc:
             logger.warning("Rep protein DIAMOND failed: %s — skipping.", _exc)
     else:
@@ -571,17 +607,27 @@ def run_pipeline(
                     return p
             return None
 
-        _kaiju_plasmids_db  = _find_fmi("plasmid")
-        _kaiju_refseq_db    = _find_fmi("refseq") or _find_fmi("nr")
-        _kaiju_nodes        = Path(kaiju_nodes) if kaiju_nodes else (_kaiju_nodes_auto if _kaiju_nodes_auto.exists() else None)
-        _kaiju_names        = Path(kaiju_names) if kaiju_names else (_kaiju_names_auto if _kaiju_names_auto.exists() else None)
+        _kaiju_plasmids_db = _find_fmi("plasmid")
+        _kaiju_refseq_db = _find_fmi("refseq") or _find_fmi("nr")
+        _kaiju_nodes = (
+            Path(kaiju_nodes)
+            if kaiju_nodes
+            else (_kaiju_nodes_auto if _kaiju_nodes_auto.exists() else None)
+        )
+        _kaiju_names = (
+            Path(kaiju_names)
+            if kaiju_names
+            else (_kaiju_names_auto if _kaiju_names_auto.exists() else None)
+        )
         # Legacy: user-supplied single DB via --kaiju-db
-        _kaiju_db_legacy    = Path(kaiju_db) if kaiju_db else None
+        _kaiju_db_legacy = Path(kaiju_db) if kaiju_db else None
 
         _kaiju_ready = (
             kaiju_available()
-            and _kaiju_nodes and _kaiju_nodes.exists()
-            and _kaiju_names and _kaiju_names.exists()
+            and _kaiju_nodes
+            and _kaiju_nodes.exists()
+            and _kaiju_names
+            and _kaiju_names.exists()
             and reuse_prot
             and (taxonomy_engine in ("kaiju", "auto"))
         )
@@ -601,12 +647,14 @@ def run_pipeline(
                 if _kaiju_plasmids_db and plasmid_records:
                     _plasmid_prot = work_dir / "arg_annotation" / "plasmid_proteins.faa"
                     # Write plasmid-only proteins subset
-                    plasmid_ids = {cr.record.id for cr in plasmid_results}
+                    plasmid_ids = {r.id for r in plasmid_records}
                     if reuse_prot and reuse_prot.exists():
                         from Bio import SeqIO  # type: ignore
+
                         with open(_plasmid_prot, "w") as _pf:
                             for rec in SeqIO.parse(str(reuse_prot), "fasta"):
                                 import re as _re
+
                                 cid = _re.sub(r"_\d+$", "", rec.id)
                                 if cid in plasmid_ids:
                                     _pf.write(f">{rec.id}\n{str(rec.seq)}\n")
@@ -624,14 +672,19 @@ def run_pipeline(
                             threads=threads,
                         )
                         taxonomy_by_contig.update(plasmid_tax)
-                        logger.info("Taxonomy (plasmids DB): %d plasmid contigs classified", len(plasmid_tax))
+                        logger.info(
+                            "Taxonomy (plasmids DB): %d plasmid contigs classified",
+                            len(plasmid_tax),
+                        )
 
                 # ── All contigs: refseq_ref DB (or legacy single DB) ──────────
                 _general_db = _kaiju_refseq_db or _kaiju_db_legacy
                 if _general_db:
                     logger.info(
                         "Taxonomy: Kaiju %s on %d contigs (threads=%d) …",
-                        _general_db.name, len(records), threads,
+                        _general_db.name,
+                        len(records),
+                        threads,
                     )
                     general_tax = assign_taxonomy_kaiju(
                         protein_fasta=reuse_prot,
@@ -657,9 +710,9 @@ def run_pipeline(
                     logger.info("Taxonomy: loading cached results from %s", _tax_cache)
                 else:
                     logger.info(
-                        "Taxonomy: DIAMOND blastp on %d contigs "
-                        "(threads=%d, block_size=4.0) …",
-                        len(records), threads,
+                        "Taxonomy: DIAMOND blastp on %d contigs " "(threads=%d, block_size=4.0) …",
+                        len(records),
+                        threads,
                     )
                 try:
                     taxonomy_by_contig, _raw_tax_hits = assign_taxonomy(
@@ -695,6 +748,7 @@ def run_pipeline(
         find_kraken2_db,
         kraken2_available,
     )
+
     _kraken2_db = find_kraken2_db()
     _kraken2_nodes = _kaiju_dir_auto / "nodes.dmp"
     _kraken2_names = _kaiju_dir_auto / "names.dmp"
@@ -733,9 +787,7 @@ def run_pipeline(
         except Exception as _exc:
             logger.warning("Kraken2 fallback taxonomy failed: %s — skipping.", _exc)
     elif not skip_taxonomy and _kraken2_db is None:
-        logger.debug(
-            "Kraken2 DB not found — run scripts/setup_kraken2_db.sh for fallback taxonomy"
-        )
+        logger.debug("Kraken2 DB not found — run scripts/setup_kraken2_db.sh for fallback taxonomy")
 
     # ------------------------------------------------------------------
     # 6b. Archaeal post-classification override
@@ -763,7 +815,8 @@ def run_pipeline(
             # Only consider chromosome/unclassified candidates to avoid
             # wrongly overriding plasmid or phage calls.
             _candidates = {
-                cid for cid, pred in pred_by_id.items()
+                cid
+                for cid, pred in pred_by_id.items()
                 if pred.label in ("chromosome", "unclassified")
             }
             _raw_hits_candidates = {k: v for k, v in _raw_tax_hits.items() if k in _candidates}
@@ -804,18 +857,18 @@ def run_pipeline(
     #   ≥ 50,000 bp  → keep as plasmid but flag low_confidence (large novel plasmids
     #                  are plausible without PLSDB match; false positive rate is lower
     #                  at this length due to consistent k-mer composition)
-    HALLMARK_HARD_THRESHOLD  = 50_000  # bp — above this: trust MLP, flag low_confidence
+    HALLMARK_HARD_THRESHOLD = 50_000  # bp — above this: trust MLP, flag low_confidence
     _hallmark_demoted = 0
     _hallmark_flagged = 0
     for record in list(plasmid_records):
         cid = record.id
-        mob         = mobility_by_contig.get(cid)
-        has_mobility    = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
-        has_plsdb       = cid in plasmid_db_hits
-        has_replicon    = mob is not None and bool(mob.replicon_type)
-        has_ice         = bool(ice_by_contig.get(cid))
+        mob = mobility_by_contig.get(cid)
+        has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
+        has_plsdb = cid in plasmid_db_hits
+        has_replicon = mob is not None and bool(mob.replicon_type)
+        has_ice = bool(ice_by_contig.get(cid))
         has_rep_protein = cid in rep_protein_hits
-        has_evidence    = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
+        has_evidence = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
 
         if has_evidence:
             continue  # good evidence — keep as plasmid
@@ -845,8 +898,10 @@ def run_pipeline(
         logger.info(
             "Hallmark gate: demoted %d plasmid calls (no evidence, <%d bp) → unclassified; "
             "flagged %d (no evidence, ≥%d bp) → low_confidence plasmid",
-            _hallmark_demoted, HALLMARK_HARD_THRESHOLD,
-            _hallmark_flagged, HALLMARK_HARD_THRESHOLD,
+            _hallmark_demoted,
+            HALLMARK_HARD_THRESHOLD,
+            _hallmark_flagged,
+            HALLMARK_HARD_THRESHOLD,
         )
         plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
 
@@ -888,8 +943,9 @@ def run_pipeline(
                     ice_hits=ice_by_contig.get(cid, []),
                     orfs=_orfs_by_contig.get(cid, []),
                     has_rep_protein=cid in rep_protein_hits,
-                    n_rep_hits=len([h for h in _orfs_by_contig.get(cid, [])
-                                    if cid in rep_protein_hits]),
+                    n_rep_hits=len(
+                        [h for h in _orfs_by_contig.get(cid, []) if cid in rep_protein_hits]
+                    ),
                 )
                 marker_scores = _marker_clf.predict_scores(feats)
                 agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
@@ -901,8 +957,10 @@ def run_pipeline(
                 best_class = max(agg, key=agg.get)
                 best_conf = agg[best_class]
                 thresh = plasmid_threshold if best_class == "plasmid" else confidence_threshold
-                new_label = best_class if best_conf >= thresh else (
-                    best_class if argmax_fallback else "unclassified"
+                new_label = (
+                    best_class
+                    if best_conf >= thresh
+                    else (best_class if argmax_fallback else "unclassified")
                 )
 
                 if new_label != pred.label:
@@ -919,7 +977,8 @@ def run_pipeline(
 
             logger.info(
                 "Marker XGBoost: promoted %d → plasmid, demoted %d → other",
-                _n_xgb_promoted, _n_xgb_demoted,
+                _n_xgb_promoted,
+                _n_xgb_demoted,
             )
             # Rebuild plasmid_records after XGBoost rescoring
             plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
@@ -931,8 +990,10 @@ def run_pipeline(
             if cid in pred_by_id and pred_by_id[cid].label != "plasmid":
                 old = pred_by_id[cid]
                 pred_by_id[cid] = Prediction(
-                    sequence_id=cid, label="plasmid",
-                    confidence=0.97, scores={**old.scores, "plasmid": 0.97},
+                    sequence_id=cid,
+                    label="plasmid",
+                    confidence=0.97,
+                    scores={**old.scores, "plasmid": 0.97},
                 )
         plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
 
@@ -995,12 +1056,10 @@ def run_pipeline(
         pathogens_by_contig = detect_pathogens(taxonomy_by_contig)
         if pathogens_by_contig:
             from collections import Counter
-            by_level: Counter[str] = Counter(
-                p.threat_level for p in pathogens_by_contig.values()
-            )
+
+            by_level: Counter[str] = Counter(p.threat_level for p in pathogens_by_contig.values())
             logger.info(
-                "Pathogen detection: %d pathogenic contigs "
-                "(critical=%d, high=%d, medium=%d)",
+                "Pathogen detection: %d pathogenic contigs " "(critical=%d, high=%d, medium=%d)",
                 len(pathogens_by_contig),
                 by_level.get("critical", 0),
                 by_level.get("high", 0),

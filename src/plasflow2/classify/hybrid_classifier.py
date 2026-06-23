@@ -54,25 +54,30 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HYBRID_PATH = Path(__file__).parent.parent.parent.parent / "data" / "models" / "hybrid_clf.pkl"
+DEFAULT_HYBRID_PATH = (
+    Path(__file__).parent.parent.parent.parent / "data" / "models" / "hybrid_clf.pkl"
+)
 
 
 @dataclass
 class MarkerFeatures:
     """Per-sequence marker gene hit counts."""
-    rep_hits:     int = 0   # replication protein hits
-    relaxase_hits: int = 0   # relaxase / mobilisation protein hits
-    mpf_hits:     int = 0   # mating-pair-formation protein hits
-    phage_hits:   int = 0   # phage structural protein hits
-    chr_hits:     int = 0   # single-copy chromosome marker hits (recA, rpoB, etc.)
+
+    rep_hits: int = 0  # replication protein hits
+    relaxase_hits: int = 0  # relaxase / mobilisation protein hits
+    mpf_hits: int = 0  # mating-pair-formation protein hits
+    phage_hits: int = 0  # phage structural protein hits
+    chr_hits: int = 0  # single-copy chromosome marker hits (recA, rpoB, etc.)
 
     def to_array(self) -> np.ndarray:
-        return np.array([self.rep_hits, self.relaxase_hits, self.mpf_hits,
-                         self.phage_hits, self.chr_hits], dtype=np.float32)
+        return np.array(
+            [self.rep_hits, self.relaxase_hits, self.mpf_hits, self.phage_hits, self.chr_hits],
+            dtype=np.float32,
+        )
 
 
 def build_hybrid_feature_matrix(
-    mlp_scores: list[dict[str, float]],   # [{plasmid: 0.3, chromosome: 0.6, phage: 0.1}, ...]
+    mlp_scores: list[dict[str, float]],  # [{plasmid: 0.3, chromosome: 0.6, phage: 0.1}, ...]
     marker_features: list[MarkerFeatures],
     seq_lengths: list[int],
 ) -> np.ndarray:
@@ -100,15 +105,19 @@ def build_hybrid_feature_matrix(
 # Marker feature extraction from existing annotation results
 # ---------------------------------------------------------------------------
 
+
 def markers_from_pipeline_row(row: dict) -> MarkerFeatures:
     """Extract MarkerFeatures from a pipeline all_predictions.tsv row.
 
     Works with the existing PlasFlow v2 output format — no extra DIAMOND
     runs needed if predictions have already been computed.
     """
+
     def _int(val, default=0):
-        try: return int(val) if val else default
-        except (ValueError, TypeError): return default
+        try:
+            return int(val) if val else default
+        except (ValueError, TypeError):
+            return default
 
     # Rep proteins: pipeline stores count in 'rep_protein_hits' or similar
     rep = max(
@@ -130,13 +139,13 @@ def markers_from_pipeline_row(row: dict) -> MarkerFeatures:
     # Phage markers
     phage = _int(row.get("phage_marker_hits", 0))
 
-    return MarkerFeatures(rep_hits=rep, relaxase_hits=relaxase,
-                          mpf_hits=mpf, phage_hits=phage)
+    return MarkerFeatures(rep_hits=rep, relaxase_hits=relaxase, mpf_hits=mpf, phage_hits=phage)
 
 
 # ---------------------------------------------------------------------------
 # Hybrid classifier training and inference
 # ---------------------------------------------------------------------------
+
 
 class HybridClassifier:
     """Wraps a meta-classifier (XGBoost or LR) that refines MLP predictions
@@ -209,15 +218,23 @@ def train_hybrid(
     if use_xgb:
         try:
             from xgboost import XGBClassifier  # type: ignore
-            clf = XGBClassifier(n_estimators=200, max_depth=4, learning_rate=0.05,
-                                use_label_encoder=False, eval_metric="mlogloss",
-                                n_jobs=-1, random_state=42)
+
+            clf = XGBClassifier(
+                n_estimators=200,
+                max_depth=4,
+                learning_rate=0.05,
+                use_label_encoder=False,
+                eval_metric="mlogloss",
+                n_jobs=-1,
+                random_state=42,
+            )
         except ImportError:
             logger.warning("XGBoost not available — falling back to LogisticRegression")
             use_xgb = False
 
     if not use_xgb:
         from sklearn.linear_model import LogisticRegression  # type: ignore
+
         clf = LogisticRegression(multi_class="multinomial", max_iter=500, C=1.0)
 
     clf.fit(X, y)

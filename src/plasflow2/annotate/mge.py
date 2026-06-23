@@ -142,8 +142,8 @@ def load_mge_metadata(tsv_path: Path | str) -> dict[str, dict]:  # type: ignore
     with open(tsv_path, newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
         for row in reader:
-            sub  = row.get("Sub_class", "").strip()
-            cls  = row.get("Class", "").strip()
+            sub = row.get("Sub_class", "").strip()
+            cls = row.get("Class", "").strip()
             entry = {"sub_class": sub, "mge_class": cls}
 
             # Index by gene_name (e.g. "tnpA") — primary lookup key
@@ -169,10 +169,10 @@ class MGEHit:
     """Single DIAMOND hit against the ISfinder MGE protein database."""
 
     contig_id: str
-    is_name: str     # ISfinder element name, e.g. "ISAba1"
-    is_family: str   # IS family from mge_database or inferred, e.g. "IS26", "Tn3"
-    mge_class: str   # Broader class: "Insertion sequences", "Transposons", "Integron"
-    description: str # Free-text description from ISfinder header
+    is_name: str  # ISfinder element name, e.g. "ISAba1"
+    is_family: str  # IS family from mge_database or inferred, e.g. "IS26", "Tn3"
+    mge_class: str  # Broader class: "Insertion sequences", "Transposons", "Integron"
+    description: str  # Free-text description from ISfinder header
     identity: float  # % amino-acid identity to ISfinder reference
     coverage: float  # % query coverage
     evalue: float
@@ -289,10 +289,12 @@ def parse_mge_hits(
             gene_key_exact = gene_name.lower()
             gene_key_no_suffix = re.sub(r"_\d+$", "", gene_name).lower()
             gene_key_no_digits = re.sub(r"\d+$", "", gene_name).lower()
-            entry = (meta.get(gene_key_exact)
-                     or meta.get(gene_key_no_suffix)
-                     or meta.get(gene_key_no_digits)
-                     or {})
+            entry = (
+                meta.get(gene_key_exact)
+                or meta.get(gene_key_no_suffix)
+                or meta.get(gene_key_no_digits)
+                or {}
+            )
             is_family = entry.get("sub_class") or _infer_is_family(gene_name, description)
             mge_class = entry.get("mge_class", "")
 
@@ -351,8 +353,9 @@ def annotate_mge(
 
     # Load MGE family metadata from mge_database.xlsx (auto-detect from DB dir)
     mge_db_path = Path(mge_db)
-    meta_candidates = list(mge_db_path.parent.glob("mge_database.tsv")) + \
-                      list(mge_db_path.parent.glob("*.tsv"))
+    meta_candidates = list(mge_db_path.parent.glob("mge_database.tsv")) + list(
+        mge_db_path.parent.glob("*.tsv")
+    )
     mge_meta = load_mge_metadata(meta_candidates[0]) if meta_candidates else {}
 
     if mge_tsv.exists() and mge_tsv.stat().st_size > 0:

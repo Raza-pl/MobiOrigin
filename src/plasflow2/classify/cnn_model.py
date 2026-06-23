@@ -59,15 +59,23 @@ MAX_SEQ_LEN = 10_000
 
 # One-hot encoding: A=0, C=1, G=2, T=3
 _BASE_TO_OH_IDX = {
-    'A': 0, 'a': 0, 'C': 1, 'c': 1, 'G': 2, 'g': 2, 'T': 3, 't': 3,
+    "A": 0,
+    "a": 0,
+    "C": 1,
+    "c": 1,
+    "G": 2,
+    "g": 2,
+    "T": 3,
+    "t": 3,
 }
 
-NUM_CLASSES = 3   # plasmid, chromosome, phage
+NUM_CLASSES = 3  # plasmid, chromosome, phage
 
 
 # ---------------------------------------------------------------------------
 # One-hot encoding
 # ---------------------------------------------------------------------------
+
 
 def one_hot_encode(seq: str, max_len: int = MAX_SEQ_LEN) -> np.ndarray:
     """One-hot encode a DNA string to shape (max_len, 4).
@@ -94,11 +102,12 @@ def batch_one_hot(sequences: list[str], max_len: int = MAX_SEQ_LEN) -> np.ndarra
 # CNN model definition (PyTorch)
 # ---------------------------------------------------------------------------
 
+
 def build_cnn(
     seq_len: int = MAX_SEQ_LEN,
     num_classes: int = NUM_CLASSES,
     dropout: float = 0.3,
-) -> "torch.nn.Module":
+) -> torch.nn.Module:  # noqa: F821
     """Build the 1D CNN classifier.
 
     Returns a PyTorch Module.  Input shape: (N, seq_len, 4).
@@ -113,25 +122,31 @@ def build_cnn(
 
             # Three parallel convolutional towers with different kernel sizes.
             # Each tower captures patterns at a different scale.
-            self.tower8  = nn.Sequential(
-                nn.Conv1d(4, 256, kernel_size=8,  padding=4),
-                nn.BatchNorm1d(256), nn.GELU(),
+            self.tower8 = nn.Sequential(
+                nn.Conv1d(4, 256, kernel_size=8, padding=4),
+                nn.BatchNorm1d(256),
+                nn.GELU(),
                 nn.Conv1d(256, 128, kernel_size=4, padding=2),
-                nn.BatchNorm1d(128), nn.GELU(),
-                nn.AdaptiveMaxPool1d(1),   # (N, 128, 1)
+                nn.BatchNorm1d(128),
+                nn.GELU(),
+                nn.AdaptiveMaxPool1d(1),  # (N, 128, 1)
             )
             self.tower16 = nn.Sequential(
                 nn.Conv1d(4, 256, kernel_size=16, padding=8),
-                nn.BatchNorm1d(256), nn.GELU(),
+                nn.BatchNorm1d(256),
+                nn.GELU(),
                 nn.Conv1d(256, 128, kernel_size=8, padding=4),
-                nn.BatchNorm1d(128), nn.GELU(),
+                nn.BatchNorm1d(128),
+                nn.GELU(),
                 nn.AdaptiveMaxPool1d(1),
             )
             self.tower32 = nn.Sequential(
                 nn.Conv1d(4, 128, kernel_size=32, padding=16),
-                nn.BatchNorm1d(128), nn.GELU(),
+                nn.BatchNorm1d(128),
+                nn.GELU(),
                 nn.Conv1d(128, 64, kernel_size=16, padding=8),
-                nn.BatchNorm1d(64),  nn.GELU(),
+                nn.BatchNorm1d(64),
+                nn.GELU(),
                 nn.AdaptiveMaxPool1d(1),
             )
 
@@ -149,10 +164,10 @@ def build_cnn(
                 nn.Linear(64, num_classes),
             )
 
-        def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
             # x: (N, seq_len, 4) → transpose to (N, 4, seq_len) for Conv1d
             x = x.permute(0, 2, 1).float()
-            t8  = self.tower8(x).squeeze(-1)   # (N, 128)
+            t8 = self.tower8(x).squeeze(-1)  # (N, 128)
             t16 = self.tower16(x).squeeze(-1)  # (N, 128)
             t32 = self.tower32(x).squeeze(-1)  # (N, 64)
             merged = torch.cat([t8, t16, t32], dim=1)  # (N, 320)
@@ -165,10 +180,11 @@ def build_cnn(
 # Training
 # ---------------------------------------------------------------------------
 
+
 def train_cnn(
-    model: "torch.nn.Module",
+    model: torch.nn.Module,  # noqa: F821
     train_seqs: list[str],
-    train_labels: list[int],   # 0=plasmid, 1=chromosome, 2=phage
+    train_labels: list[int],  # 0=plasmid, 1=chromosome, 2=phage
     val_seqs: list[str],
     val_labels: list[int],
     epochs: int = 30,
@@ -176,15 +192,18 @@ def train_cnn(
     lr: float = 1e-3,
     patience: int = 5,
     max_len: int = MAX_SEQ_LEN,
-) -> "torch.nn.Module":
+) -> torch.nn.Module:  # noqa: F821
     """Train the CNN with early stopping on validation accuracy."""
     import torch
     import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
     from sklearn.metrics import accuracy_score  # type: ignore
+    from torch.utils.data import DataLoader, TensorDataset
 
-    device = torch.device("mps" if torch.backends.mps.is_available() else
-                          "cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda" if torch.cuda.is_available() else "cpu"
+    )
     logger.info("Training CNN on device: %s", device)
     model = model.to(device)
 
@@ -195,8 +214,9 @@ def train_cnn(
     X_va = torch.tensor(batch_one_hot(val_seqs, max_len)).to(device)
     y_va_np = np.array(val_labels)
 
-    loader = DataLoader(TensorDataset(X_tr, y_tr), batch_size=batch_size,
-                        shuffle=True, num_workers=0)
+    loader = DataLoader(
+        TensorDataset(X_tr, y_tr), batch_size=batch_size, shuffle=True, num_workers=0
+    )
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -231,8 +251,14 @@ def train_cnn(
             no_improve += 1
 
         if epoch % 5 == 0 or epoch == 1:
-            logger.info("Epoch %3d/%d — loss %.4f  val_acc %.4f  best %.4f",
-                        epoch, epochs, total_loss / len(loader), acc, best_acc)
+            logger.info(
+                "Epoch %3d/%d — loss %.4f  val_acc %.4f  best %.4f",
+                epoch,
+                epochs,
+                total_loss / len(loader),
+                acc,
+                best_acc,
+            )
         if no_improve >= patience:
             logger.info("Early stopping at epoch %d", epoch)
             break
@@ -247,8 +273,9 @@ def train_cnn(
 # Inference
 # ---------------------------------------------------------------------------
 
+
 def predict_cnn(
-    model: "torch.nn.Module",
+    model: torch.nn.Module,  # noqa: F821
     sequences: list[str],
     batch_size: int = 16,
     max_len: int = MAX_SEQ_LEN,
@@ -279,20 +306,23 @@ def predict_cnn(
 # Save / Load
 # ---------------------------------------------------------------------------
 
-def save_cnn(model: "torch.nn.Module", path: Path | str) -> None:
+
+def save_cnn(model: torch.nn.Module, path: Path | str) -> None:  # noqa: F821
     """Save CNN weights."""
     import torch
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.cpu().state_dict(), str(path))
     logger.info("Saved CNN weights → %s", path)
 
 
-def load_cnn(path: Path | str,
-             seq_len: int = MAX_SEQ_LEN,
-             num_classes: int = NUM_CLASSES) -> "torch.nn.Module":
+def load_cnn(
+    path: Path | str, seq_len: int = MAX_SEQ_LEN, num_classes: int = NUM_CLASSES
+) -> torch.nn.Module:  # noqa: F821
     """Load CNN weights."""
     import torch
+
     model = build_cnn(seq_len=seq_len, num_classes=num_classes)
     state = torch.load(str(path), map_location="cpu")
     model.load_state_dict(state)

@@ -41,9 +41,6 @@ import csv
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-
-import numpy as np
 
 from plasflow2.classify.features import extract_features
 from plasflow2.utils.device import IDX_TO_CLASS, get_device
@@ -51,8 +48,8 @@ from plasflow2.utils.device import IDX_TO_CLASS, get_device
 logger = logging.getLogger(__name__)
 
 # Default confidence thresholds (class-specific)
-DEFAULT_THRESHOLD        = 0.70   # chromosome
-DEFAULT_PHAGE_THRESHOLD  = 0.85   # phage — raised from 0.70 to suppress FPs on chr fragments
+DEFAULT_THRESHOLD = 0.70  # chromosome
+DEFAULT_PHAGE_THRESHOLD = 0.85  # phage — raised from 0.70 to suppress FPs on chr fragments
 DEFAULT_PLASMID_THRESHOLD = 0.95  # plasmid — higher bar to correct for class-prior imbalance
 
 # Per-length plasmid threshold multipliers.
@@ -81,12 +78,12 @@ LENGTH_THRESHOLD_TIERS = [
     #            Hard-negative training cut FPs from 223→57. Lowered 0.94→0.93.
     #   >20kb:   6 plasmids; opt=0.94 (TP=4, FP=12, F1=0.364).
     #            Lowered 0.97→0.94 for better recall on long plasmids.
-    (2_000,  0.99,  0.95, 0.80),   # <2kb:   very strict (no benchmark plasmids here)
-    (4_999,  0.95,  0.90, 0.75),   # 2-5kb:  chr p99=0.978 makes any threshold costly
-    (9_999,  0.98,  0.87, 0.72),   # 5-10kb: keep strict; 0.97 adds 116 FPs for 1 TP
-                                   # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
-    (19_999, 0.93,  0.85, 0.70),   # 10-20kb: 0.94→0.93 (hard-neg retrain, FP: 223→57)
-    (float('inf'), 0.94, 0.82, 0.68),  # >20kb: 0.97→0.94 (TP: 3→4, F1: 0.286→0.364)
+    (2_000, 0.99, 0.95, 0.80),  # <2kb:   very strict (no benchmark plasmids here)
+    (4_999, 0.95, 0.90, 0.75),  # 2-5kb:  chr p99=0.978 makes any threshold costly
+    (9_999, 0.98, 0.87, 0.72),  # 5-10kb: keep strict; 0.97 adds 116 FPs for 1 TP
+    # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
+    (19_999, 0.93, 0.85, 0.70),  # 10-20kb: 0.94→0.93 (hard-neg retrain, FP: 223→57)
+    (float("inf"), 0.94, 0.82, 0.68),  # >20kb: 0.97→0.94 (TP: 3→4, F1: 0.286→0.364)
 ]
 
 
@@ -97,16 +94,17 @@ def _get_length_thresholds(seq_len: int) -> tuple[float, float, float]:
             return plas_t, phage_t, chr_t
     return DEFAULT_PLASMID_THRESHOLD, DEFAULT_PHAGE_THRESHOLD, DEFAULT_THRESHOLD
 
+
 # Class prior distributions by sample context.
 # The MLP is trained on balanced classes (33%/33%/33%) but real metagenomes
 # are dominated by chromosomal sequences. Bayesian correction:
 #   corrected[c] = mlp_score[c] * prior[c] / sum_k(mlp_score[k] * prior[k])
 # This reduces false-positive plasmid and phage calls substantially.
 CONTEXT_PRIORS: dict[str, dict[str, float]] = {
-    "wastewater":    {"plasmid": 0.030, "chromosome": 0.930, "phage": 0.040},
-    "clinical":      {"plasmid": 0.050, "chromosome": 0.900, "phage": 0.050},
+    "wastewater": {"plasmid": 0.030, "chromosome": 0.930, "phage": 0.040},
+    "clinical": {"plasmid": 0.050, "chromosome": 0.900, "phage": 0.050},
     "environmental": {"plasmid": 0.020, "chromosome": 0.950, "phage": 0.030},
-    "unspecified":   {"plasmid": 0.333, "chromosome": 0.334, "phage": 0.333},
+    "unspecified": {"plasmid": 0.333, "chromosome": 0.334, "phage": 0.333},
 }
 
 
@@ -150,6 +148,7 @@ class Prediction:
 # Annotation TSV loader (for pre-computed DIAMOND hits)
 # ---------------------------------------------------------------------------
 
+
 def _load_annotation_tsv(tsv_path: Path | str) -> dict[str, dict[str, float]]:
     """Load pre-computed DIAMOND annotation features from TSV.
 
@@ -170,13 +169,28 @@ def _load_annotation_tsv(tsv_path: Path | str) -> dict[str, dict[str, float]]:
     annotations: dict[str, dict[str, float]] = {}
     _FLOAT_COLS = {
         # MOB-suite
-        "is_conjugative", "is_mobilizable", "has_replicon", "has_ice",
-        "has_rep_protein", "n_arg_per_kb", "n_mge_per_kb", "n_ice_per_kb",
+        "is_conjugative",
+        "is_mobilizable",
+        "has_replicon",
+        "has_ice",
+        "has_rep_protein",
+        "n_arg_per_kb",
+        "n_mge_per_kb",
+        "n_ice_per_kb",
         "n_rep_per_kb",
         # geNomad SPM (present when annotation TSV was built with --genomad-genes)
-        "p_marker_freq", "c_marker_freq", "v_marker_freq", "pp_marker_freq",
-        "median_p_spm", "median_c_spm", "median_v_spm", "p_vs_c_logistic",
-        "strand_switch_rate", "no_rbs_freq", "canonical_sd_freq", "n_plasmid_markers",
+        "p_marker_freq",
+        "c_marker_freq",
+        "v_marker_freq",
+        "pp_marker_freq",
+        "median_p_spm",
+        "median_c_spm",
+        "median_v_spm",
+        "p_vs_c_logistic",
+        "strand_switch_rate",
+        "no_rbs_freq",
+        "canonical_sd_freq",
+        "n_plasmid_markers",
     }
     try:
         with open(tsv_path, newline="") as fh:
@@ -185,8 +199,7 @@ def _load_annotation_tsv(tsv_path: Path | str) -> dict[str, dict[str, float]]:
                 cid = row.get("contig_id", "").strip()
                 if not cid:
                     continue
-                feats = {k: float(row.get(k, 0.0) or 0.0)
-                         for k in _FLOAT_COLS if k in row}
+                feats = {k: float(row.get(k, 0.0) or 0.0) for k in _FLOAT_COLS if k in row}
                 annotations[cid] = feats
         logger.info("Loaded annotations for %d contigs from %s", len(annotations), tsv_path)
     except Exception as e:
@@ -197,6 +210,7 @@ def _load_annotation_tsv(tsv_path: Path | str) -> dict[str, dict[str, float]]:
 # ---------------------------------------------------------------------------
 # ORF prediction helper (pyrodigal, optional)
 # ---------------------------------------------------------------------------
+
 
 def _run_pyrodigal(
     sequences: list[str],
@@ -225,6 +239,7 @@ def _run_pyrodigal(
 # Label assignment (shared logic)
 # ---------------------------------------------------------------------------
 
+
 def _assign_label(
     scores: dict[str, float],
     seq_len: int,
@@ -239,7 +254,7 @@ def _assign_label(
     plas_t, phage_t, chr_t = _get_length_thresholds(seq_len)
     if seq_len < 5_000:
         plas_t = max(plas_t, plasmid_threshold)
-        chr_t  = min(chr_t,  threshold)
+        chr_t = min(chr_t, threshold)
 
     if best_class == "plasmid":
         applicable_threshold = plas_t
@@ -262,6 +277,7 @@ def _assign_label(
 # Main predict function
 # ---------------------------------------------------------------------------
 
+
 def predict(
     sequences: list[str],
     sequence_ids: list[str],
@@ -273,9 +289,9 @@ def predict(
     source_context: str = "unspecified",
     apply_prior: bool = True,
     # --- Marker XGBoost (second stage) ---
-    marker_model_path: Optional[Path | str] = None,
+    marker_model_path: Path | str | None = None,
     use_pyrodigal: bool = True,
-    annotation_tsv: Optional[Path | str] = None,
+    annotation_tsv: Path | str | None = None,
     marker_alpha_base: float = 0.3,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
@@ -360,7 +376,6 @@ def predict(
         from plasflow2.classify.marker_classifier import (
             ContigMarkerFeatures,
             MarkerClassifier,
-            aggregate_scores,
         )
 
         marker_clf = MarkerClassifier.load(marker_model_path)
@@ -380,14 +395,13 @@ def predict(
 
         # Build marker feature matrix for all sequences at once (faster)
         import numpy as _np
+
         from plasflow2.classify.marker_classifier import N_MARKER_FEATURES
 
         n = len(sequences)
         X_marker = _np.zeros((n, N_MARKER_FEATURES), dtype=_np.float32)
 
-        for i, (sid, seq, mlp_scores) in enumerate(
-            zip(sequence_ids, sequences, all_scores)
-        ):
+        for i, (sid, seq, mlp_scores) in enumerate(zip(sequence_ids, sequences, all_scores)):
             length_bp = max(len(seq), 1)
             length_kb = length_bp / 1000.0
             seq_upper = seq.upper()
@@ -397,9 +411,7 @@ def predict(
             orf = orf_data.get(sid, {})
             n_orfs = orf.get("n_orfs", 0)
             covered_bp = orf.get("covered_bp", 0)
-            cod_density = (
-                min(covered_bp / length_bp, 1.0) if covered_bp > 0 else 0.85
-            )
+            cod_density = min(covered_bp / length_bp, 1.0) if covered_bp > 0 else 0.85
             n_orfs_kb = n_orfs / max(length_kb, 0.001) if n_orfs > 0 else 1.0
 
             # Biological markers from annotation TSV (or zeros)
@@ -470,12 +482,14 @@ def predict(
 
             # Soft blending for all other sequences (including mobilizable and
             # rep-protein-only hits — XGBoost learned to handle the chromosome noise)
-            bio_positive = sum([
-                ann.get("is_mobilizable", 0.0),
-                ann.get("has_replicon", 0.0),
-                ann.get("has_ice", 0.0),
-                ann.get("has_rep_protein", 0.0),
-            ])
+            bio_positive = sum(
+                [
+                    ann.get("is_mobilizable", 0.0),
+                    ann.get("has_replicon", 0.0),
+                    ann.get("has_ice", 0.0),
+                    ann.get("has_rep_protein", 0.0),
+                ]
+            )
             marker_gene_fraction = bio_positive / 4.0
             # Binary models already output high plasmid scores (0.97+) for true
             # plasmids; any alpha_base > 0 drags those scores below threshold
@@ -529,7 +543,7 @@ def predict(
                         transfer = non_plas * 0.55
                         s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
                         s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
-                        s2["phage"]      = s2.get("phage", 0.0)      * 0.45
+                        s2["phage"] = s2.get("phage", 0.0) * 0.45
                         total = sum(s2.values()) or 1.0
                         all_scores[i] = {c: v / total for c, v in s2.items()}
                         n_hallmark_boosts += 1
@@ -564,14 +578,14 @@ def predict(
                 n_orfs_est = n_orfs_per_kb * length_bp_ann / 1000.0
                 n_virus_est = v_marker * n_orfs_est
                 # Allow phage prediction only if ≥10 % of genes AND ≥2 genes are viral
-                has_viral_evidence = (v_marker >= 0.10 and n_virus_est >= 2.0)
+                has_viral_evidence = v_marker >= 0.10 and n_virus_est >= 2.0
                 if not has_viral_evidence:
                     phage_mass = s["phage"]
                     # Redistribute phage score to chromosome (85%) and plasmid (5%)
                     s2 = dict(s)
-                    s2["phage"]      = phage_mass * 0.10
+                    s2["phage"] = phage_mass * 0.10
                     s2["chromosome"] = s2.get("chromosome", 0.0) + phage_mass * 0.85
-                    s2["plasmid"]    = s2.get("plasmid", 0.0)    + phage_mass * 0.05
+                    s2["plasmid"] = s2.get("plasmid", 0.0) + phage_mass * 0.05
                     total = sum(s2.values()) or 1.0
                     all_scores[i] = {c: v / total for c, v in s2.items()}
                     n_phage_suppressed += 1
@@ -583,16 +597,24 @@ def predict(
                 )
 
         n_with_bio = sum(
-            1 for sid in sequence_ids if any(
+            1
+            for sid in sequence_ids
+            if any(
                 annotations.get(sid, {}).get(k, 0.0) > 0
-                for k in ("is_conjugative", "is_mobilizable", "has_replicon",
-                           "has_ice", "has_rep_protein")
+                for k in (
+                    "is_conjugative",
+                    "is_mobilizable",
+                    "has_replicon",
+                    "has_ice",
+                    "has_rep_protein",
+                )
             )
         )
         logger.info(
             "Marker XGBoost applied: %d sequences with biological evidence "
             "(effective_alpha_base=%.2f%s)",
-            n_with_bio, effective_alpha_base,
+            n_with_bio,
+            effective_alpha_base,
             " [binary model override]" if is_binary_model else "",
         )
     elif marker_model_path:

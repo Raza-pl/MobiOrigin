@@ -63,9 +63,7 @@ import logging
 import re
 import subprocess
 from collections import Counter
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 from plasflow2.annotate.taxonomy import TaxResult
 
@@ -73,8 +71,8 @@ logger = logging.getLogger(__name__)
 
 # GTDB rank prefixes for lineage parsing (shared with taxonomy.py)
 _GTDB_RANK_PREFIXES = ["d__", "p__", "c__", "o__", "f__", "g__", "s__"]
-_GTDB_RANK_NAMES    = ["domain", "phylum", "class", "order", "family", "genus", "species"]
-_PREFIX_TO_RANK     = dict(zip(_GTDB_RANK_PREFIXES, _GTDB_RANK_NAMES))
+_GTDB_RANK_NAMES = ["domain", "phylum", "class", "order", "family", "genus", "species"]
+_PREFIX_TO_RANK = dict(zip(_GTDB_RANK_PREFIXES, _GTDB_RANK_NAMES))
 
 # NCBI rank names mapped to our GTDB-style rank names (for ncbi lineage mode)
 _NCBI_RANK_MAP = {
@@ -95,6 +93,7 @@ _MIN_AGREEMENT = 0.5
 # Availability check
 # ---------------------------------------------------------------------------
 
+
 def kaiju_available() -> bool:
     """Return True if kaiju and kaiju-addTaxonNames are both on PATH."""
     for tool in ("kaiju", "kaiju-addTaxonNames"):
@@ -108,6 +107,7 @@ def kaiju_available() -> bool:
 # ---------------------------------------------------------------------------
 # Database auto-detection
 # ---------------------------------------------------------------------------
+
 
 def find_kaiju_db(kaiju_dir: Path) -> Path | None:
     """Find the first .fmi file in *kaiju_dir*.
@@ -123,6 +123,7 @@ def find_kaiju_db(kaiju_dir: Path) -> Path | None:
 # ---------------------------------------------------------------------------
 # Run kaiju
 # ---------------------------------------------------------------------------
+
 
 def run_kaiju(
     protein_fasta: Path | str,
@@ -153,20 +154,25 @@ def run_kaiju(
         Path to the raw kaiju output TSV.
     """
     protein_fasta = Path(protein_fasta)
-    kaiju_db      = Path(kaiju_db)
-    nodes_dmp     = Path(nodes_dmp)
-    out_tsv       = Path(out_tsv)
+    kaiju_db = Path(kaiju_db)
+    nodes_dmp = Path(nodes_dmp)
+    out_tsv = Path(out_tsv)
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         "kaiju",
-        "-t", str(nodes_dmp),
-        "-f", str(kaiju_db),
-        "-i", str(protein_fasta),
-        "-o", str(out_tsv),
-        "-z", str(threads),
-        "-p",           # protein mode — input is already amino acids
-        "-v",           # verbose (writes progress to stderr)
+        "-t",
+        str(nodes_dmp),
+        "-f",
+        str(kaiju_db),
+        "-i",
+        str(protein_fasta),
+        "-o",
+        str(out_tsv),
+        "-z",
+        str(threads),
+        "-p",  # protein mode — input is already amino acids
+        "-v",  # verbose (writes progress to stderr)
     ]
     if greedy_mode:
         cmd += ["-a", "greedy", "-e", str(greedy_mismatches)]
@@ -184,6 +190,7 @@ def run_kaiju(
 # ---------------------------------------------------------------------------
 # Add taxonomy names (taxid → full lineage string)
 # ---------------------------------------------------------------------------
+
 
 def add_taxon_names(
     kaiju_tsv: Path | str,
@@ -206,19 +213,24 @@ def add_taxon_names(
     Returns:
         Path to the named TSV.
     """
-    kaiju_tsv  = Path(kaiju_tsv)
-    nodes_dmp  = Path(nodes_dmp)
-    names_dmp  = Path(names_dmp)
-    named_tsv  = Path(named_tsv)
+    kaiju_tsv = Path(kaiju_tsv)
+    nodes_dmp = Path(nodes_dmp)
+    names_dmp = Path(names_dmp)
+    named_tsv = Path(named_tsv)
 
     cmd = [
         "kaiju-addTaxonNames",
-        "-t", str(nodes_dmp),
-        "-n", str(names_dmp),
-        "-i", str(kaiju_tsv),
-        "-o", str(named_tsv),
-        "-r", ranks,
-        "-p",   # protein mode flag (pass-through)
+        "-t",
+        str(nodes_dmp),
+        "-n",
+        str(names_dmp),
+        "-i",
+        str(kaiju_tsv),
+        "-o",
+        str(named_tsv),
+        "-r",
+        ranks,
+        "-p",  # protein mode flag (pass-through)
     ]
     logger.info("Running kaiju-addTaxonNames: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -232,6 +244,7 @@ def add_taxon_names(
 # Parse kaiju-addTaxonNames output
 # ---------------------------------------------------------------------------
 
+
 def _ncbi_lineage_to_gtdb_style(rank_values: dict[str, str]) -> tuple[str, str, str]:
     """Convert NCBI rank→name dict to GTDB-style lineage, rank, taxon strings.
 
@@ -244,12 +257,12 @@ def _ncbi_lineage_to_gtdb_style(rank_values: dict[str, str]) -> tuple[str, str, 
     """
     prefix_map = {
         "superkingdom": "d__",
-        "phylum":       "p__",
-        "class":        "c__",
-        "order":        "o__",
-        "family":       "f__",
-        "genus":        "g__",
-        "species":      "s__",
+        "phylum": "p__",
+        "class": "c__",
+        "order": "o__",
+        "family": "f__",
+        "genus": "g__",
+        "species": "s__",
     }
     rank_order = ["superkingdom", "phylum", "class", "order", "family", "genus", "species"]
 
@@ -321,6 +334,7 @@ def parse_kaiju_named(named_tsv: Path | str) -> dict[str, list[tuple[str, str, s
 # LCA aggregation: ORF-level hits → contig-level TaxResult
 # ---------------------------------------------------------------------------
 
+
 def _lca_from_orf_hits(
     orf_hits: list[tuple[str, str, str]],
     min_agreement: float = _MIN_AGREEMENT,
@@ -335,12 +349,12 @@ def _lca_from_orf_hits(
     """
     rank_order = ["species", "genus", "family", "order", "class", "phylum", "domain"]
     prefix_map = {
-        "domain":  "d__",
-        "phylum":  "p__",
-        "class":   "c__",
-        "order":   "o__",
-        "family":  "f__",
-        "genus":   "g__",
+        "domain": "d__",
+        "phylum": "p__",
+        "class": "c__",
+        "order": "o__",
+        "family": "f__",
+        "genus": "g__",
         "species": "s__",
     }
 
@@ -349,9 +363,9 @@ def _lca_from_orf_hits(
         return "", "unclassified", ""
 
     # Extract taxon name at each rank for every hit
-    def _extract_at_rank(lineage: str, target_prefix: str) -> str:
+    def _extract_at_rank(lineage: str, targetprefix: str) -> str:
         for part in lineage.split(";"):
-            if part.startswith(target_prefix):
+            if part.startswith(targetprefix):
                 return part
         return ""
 
@@ -409,7 +423,7 @@ def aggregate_kaiju_by_contig(
             continue
         # Compute agreement fraction at the resolved rank
         n = len(hits)
-        prefix = taxon[:3] if taxon else ""
+        prefix = taxon[:3] if taxon else ""  # noqa: F841
         agree = sum(1 for lin, _, _ in hits if taxon in lin) / max(n, 1)
         results[contig_id] = TaxResult(
             contig_id=contig_id,
@@ -431,6 +445,7 @@ def aggregate_kaiju_by_contig(
 # ---------------------------------------------------------------------------
 # Main entry point — mirrors assign_taxonomy() interface
 # ---------------------------------------------------------------------------
+
 
 def assign_taxonomy_kaiju(
     protein_fasta: Path | str,
@@ -464,13 +479,13 @@ def assign_taxonomy_kaiju(
         Dict mapping contig_id → TaxResult, identical structure to DIAMOND path.
     """
     protein_fasta = Path(protein_fasta)
-    kaiju_db      = Path(kaiju_db)
-    nodes_dmp     = Path(nodes_dmp)
-    names_dmp     = Path(names_dmp)
-    work_dir      = Path(work_dir)
+    kaiju_db = Path(kaiju_db)
+    nodes_dmp = Path(nodes_dmp)
+    names_dmp = Path(names_dmp)
+    work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_tsv   = work_dir / "kaiju_raw.tsv"
+    raw_tsv = work_dir / "kaiju_raw.tsv"
     named_tsv = work_dir / "kaiju_named.tsv"
 
     # 1. Run kaiju

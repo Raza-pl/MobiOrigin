@@ -27,11 +27,9 @@ Database setup:
 
 from __future__ import annotations
 
-import csv
 import logging
 import re
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from plasflow2.annotate.mobility import MobilityResult
@@ -46,28 +44,23 @@ MPF_MIN_IDENTITY = 50.0
 MPF_MIN_COVERAGE = 70.0
 
 # Replicon detection via minimap2
-REP_MIN_COV = 60.0   # % query coverage for replicon hit
+REP_MIN_COV = 60.0  # % query coverage for replicon hit
 
 # MOB family names in the mob.proteins.faa headers
 # Header format: >accession|MOB_family|...  OR  >MOBXxx_...
-_MOB_FAMILY_RE = re.compile(
-    r"\b(MOB[FPHQCVM][A-Za-z0-9_]*)\b", re.IGNORECASE
-)
+_MOB_FAMILY_RE = re.compile(r"\b(MOB[FPHQCVM][A-Za-z0-9_]*)\b", re.IGNORECASE)
 
 # MPF family names
-_MPF_FAMILY_RE = re.compile(
-    r"\b(MPF[_\s]?[FTGIBC])\b", re.IGNORECASE
-)
+_MPF_FAMILY_RE = re.compile(r"\b(MPF[_\s]?[FTGIBC])\b", re.IGNORECASE)
 
 # Replicon (Inc group) names from rep_db headers
-_INC_RE = re.compile(
-    r"\b(Inc[A-Za-z0-9/]+|rep_cluster_\d+|Col[A-Za-z0-9]+)\b", re.IGNORECASE
-)
+_INC_RE = re.compile(r"\b(Inc[A-Za-z0-9/]+|rep_cluster_\d+|Col[A-Za-z0-9]+)\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
 # Database auto-detection
 # ---------------------------------------------------------------------------
+
 
 def find_mob_diamond_dbs(
     mob_suite_dir: Path,
@@ -92,8 +85,11 @@ def find_mob_diamond_dbs(
         None,
     )
     rep_fasta = next(
-        (mob_suite_dir / n for n in ("rep.dna.fas", "rep_db.fasta", "replicons.fasta")
-         if (mob_suite_dir / n).exists()),
+        (
+            mob_suite_dir / n
+            for n in ("rep.dna.fas", "rep_db.fasta", "replicons.fasta")
+            if (mob_suite_dir / n).exists()
+        ),
         None,
     )
     return mob_dmnd, mpf_dmnd, rep_protein_dmnd, rep_fasta
@@ -102,6 +98,7 @@ def find_mob_diamond_dbs(
 # ---------------------------------------------------------------------------
 # DIAMOND search helpers
 # ---------------------------------------------------------------------------
+
 
 def _run_diamond_blastp(
     query_fasta: Path,
@@ -115,16 +112,31 @@ def _run_diamond_blastp(
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
     db_stem = str(db).removesuffix(".dmnd")
     cmd = [
-        "diamond", "blastp",
-        "--query",        str(query_fasta),
-        "--db",           db_stem,
-        "--out",          str(out_tsv),
-        "--outfmt", "6",  "qseqid", "sseqid", "pident", "qcovhsp", "evalue", "stitle",
-        "--id",           str(min_identity),
-        "--query-cover",  str(min_coverage),
-        "--threads",      str(threads),
+        "diamond",
+        "blastp",
+        "--query",
+        str(query_fasta),
+        "--db",
+        db_stem,
+        "--out",
+        str(out_tsv),
+        "--outfmt",
+        "6",
+        "qseqid",
+        "sseqid",
+        "pident",
+        "qcovhsp",
+        "evalue",
+        "stitle",
+        "--id",
+        str(min_identity),
+        "--query-cover",
+        str(min_coverage),
+        "--threads",
+        str(threads),
         "--sensitive",
-        "--max-target-seqs", "1",
+        "--max-target-seqs",
+        "1",
         "--quiet",
     ]
     logger.info("Running DIAMOND: %s", " ".join(cmd))
@@ -161,6 +173,7 @@ def _orf_to_contig(orf_id: str) -> str:
 # Replicon typing via minimap2
 # ---------------------------------------------------------------------------
 
+
 def _run_minimap2_rep(
     query_fasta: Path,
     rep_db: Path,
@@ -175,9 +188,12 @@ def _run_minimap2_rep(
     """
     out_paf.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "minimap2", "-x", "asm5",      # assembled-to-assembled, ~5% divergence
+        "minimap2",
+        "-x",
+        "asm5",  # assembled-to-assembled, ~5% divergence
         "--secondary=no",
-        "-t", str(threads),
+        "-t",
+        str(threads),
         str(rep_db),
         str(query_fasta),
     ]
@@ -206,12 +222,12 @@ def _parse_rep_paf(paf_path: Path, min_cov: float = REP_MIN_COV) -> dict[str, st
             parts = line.strip().split("\t")
             if len(parts) < 12:
                 continue
-            qname   = parts[0]
-            tname   = parts[5]
-            tlen    = int(parts[6])   # replicon length
-            tstart  = int(parts[7])   # replicon alignment start
-            tend    = int(parts[8])   # replicon alignment end
-            mapq    = int(parts[11])
+            qname = parts[0]
+            tname = parts[5]
+            tlen = int(parts[6])  # replicon length
+            tstart = int(parts[7])  # replicon alignment start
+            tend = int(parts[8])  # replicon alignment end
+            mapq = int(parts[11])
 
             if mapq < 5:
                 continue
@@ -231,6 +247,7 @@ def _parse_rep_paf(paf_path: Path, min_cov: float = REP_MIN_COV) -> dict[str, st
 # ---------------------------------------------------------------------------
 # Mobility classification logic (mirrors mob_typer rules)
 # ---------------------------------------------------------------------------
+
 
 def _classify_mobility(
     has_relaxase: bool,
@@ -266,6 +283,7 @@ def _extract_mpf_type(sseqid: str, stitle: str) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def annotate_mobility_diamond(
     plasmid_fasta: Path | str,
     mob_suite_dir: Path | str,
@@ -297,7 +315,7 @@ def annotate_mobility_diamond(
 
     plasmid_fasta = Path(plasmid_fasta)
     mob_suite_dir = Path(mob_suite_dir)
-    work_dir      = Path(work_dir)
+    work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
     mob_dmnd, mpf_dmnd, _rep_protein_dmnd, rep_fasta = find_mob_diamond_dbs(mob_suite_dir)
@@ -317,6 +335,7 @@ def annotate_mobility_diamond(
     # Predict ORFs if proteins not pre-computed
     if proteins_faa is None or not Path(proteins_faa).exists():
         from plasflow2.annotate.args import call_orfs
+
         prot_path = work_dir / "mob_proteins.faa"
         call_orfs(plasmid_fasta, prot_path)
         proteins_faa = prot_path
@@ -325,13 +344,17 @@ def annotate_mobility_diamond(
         logger.info("Reusing pre-predicted ORFs from %s", proteins_faa)
 
     # ── 1. Search MOB relaxase database ──────────────────────────────────────
-    mob_hits_by_contig: dict[str, tuple[str, str]] = {}   # contig → (family, accession)
+    mob_hits_by_contig: dict[str, tuple[str, str]] = {}  # contig → (family, accession)
     if mob_dmnd is not None:
         mob_tsv = work_dir / "mob_hits.tsv"
         try:
             _run_diamond_blastp(
-                proteins_faa, mob_dmnd, mob_tsv, threads,
-                min_identity=MOB_MIN_IDENTITY, min_coverage=MOB_MIN_COVERAGE,
+                proteins_faa,
+                mob_dmnd,
+                mob_tsv,
+                threads,
+                min_identity=MOB_MIN_IDENTITY,
+                min_coverage=MOB_MIN_COVERAGE,
             )
             for orf_id, hits in _parse_diamond_hits(mob_tsv).items():
                 cid = _orf_to_contig(orf_id)
@@ -343,13 +366,17 @@ def annotate_mobility_diamond(
             logger.warning("MOB relaxase search failed: %s", exc)
 
     # ── 2. Search MPF database ────────────────────────────────────────────────
-    mpf_hits_by_contig: dict[str, str] = {}   # contig → mpf_type
+    mpf_hits_by_contig: dict[str, str] = {}  # contig → mpf_type
     if mpf_dmnd is not None:
         mpf_tsv = work_dir / "mpf_hits.tsv"
         try:
             _run_diamond_blastp(
-                proteins_faa, mpf_dmnd, mpf_tsv, threads,
-                min_identity=MPF_MIN_IDENTITY, min_coverage=MPF_MIN_COVERAGE,
+                proteins_faa,
+                mpf_dmnd,
+                mpf_tsv,
+                threads,
+                min_identity=MPF_MIN_IDENTITY,
+                min_coverage=MPF_MIN_COVERAGE,
             )
             for orf_id, hits in _parse_diamond_hits(mpf_tsv).items():
                 cid = _orf_to_contig(orf_id)
@@ -361,7 +388,7 @@ def annotate_mobility_diamond(
             logger.warning("MPF search failed: %s", exc)
 
     # ── 3. Replicon typing via minimap2 ───────────────────────────────────────
-    rep_by_contig: dict[str, str] = {}   # contig → Inc group
+    rep_by_contig: dict[str, str] = {}  # contig → Inc group
     if rep_fasta is not None:
         try:
             rep_paf = work_dir / "rep_hits.paf"
@@ -381,7 +408,7 @@ def annotate_mobility_diamond(
         rep_type = rep_by_contig.get(cid, "-")
 
         has_relaxase = mob_family not in ("none", "MOBU")
-        has_mpf      = mpf_type not in ("none", "MPF_U")
+        has_mpf = mpf_type not in ("none", "MPF_U")
 
         mobility_class = _classify_mobility(has_relaxase, has_mpf)
 
@@ -404,10 +431,12 @@ def annotate_mobility_diamond(
         )
 
     n_conj = sum(1 for r in results if r.mobility_class == "conjugative")
-    n_mob  = sum(1 for r in results if r.mobility_class == "mobilizable")
-    n_non  = sum(1 for r in results if r.mobility_class == "non-mobilizable")
+    n_mob = sum(1 for r in results if r.mobility_class == "mobilizable")
+    n_non = sum(1 for r in results if r.mobility_class == "non-mobilizable")
     logger.info(
         "Mobility (DIAMOND): %d conjugative | %d mobilizable | %d non-mobilizable",
-        n_conj, n_mob, n_non,
+        n_conj,
+        n_mob,
+        n_non,
     )
     return results

@@ -317,8 +317,13 @@ def run_diamond_taxonomy(
         # Note: --faster flag was removed — not supported in all DIAMOND versions.
         # Speed comes from block_size=4.0 (large RAM chunks) + blastp (vs blastx).
     ]
-    logger.info("Running DIAMOND taxonomy (%s, block_size=%.1f, threads=%d): %s",
-                mode, block_size, threads, " ".join(cmd))
+    logger.info(
+        "Running DIAMOND taxonomy (%s, block_size=%.1f, threads=%d): %s",
+        mode,
+        block_size,
+        threads,
+        " ".join(cmd),
+    )
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logger.error("DIAMOND taxonomy stderr: %s", result.stderr)
@@ -508,8 +513,11 @@ def lca_for_contig(
             best_agreement = agreement
             # Build consensus lineage up to this rank
             agreeing_levels = next(
-                (lvs for lvs in parsed
-                 if any(p == prefix and t == most_common_taxon for p, t in lvs)),
+                (
+                    lvs
+                    for lvs in parsed
+                    if any(p == prefix and t == most_common_taxon for p, t in lvs)
+                ),
                 parsed[0],
             )
             truncated = []
@@ -551,7 +559,7 @@ def assign_taxonomy(
     block_size: float = 4.0,
     protein_fasta: Path | str | None = None,
     return_raw_hits: bool = False,
-) -> "dict[str, TaxResult] | tuple[dict[str, TaxResult], dict[str, list[TaxHit]]]":
+) -> dict[str, TaxResult] | tuple[dict[str, TaxResult], dict[str, list[TaxHit]]]:
     """End-to-end taxonomy assignment: DIAMOND → parse → LCA per contig.
 
     Args:

@@ -13,50 +13,60 @@ all SVG maps, linked from the main plasmid report.
 from __future__ import annotations
 
 import math
-from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Colour scheme
 # ---------------------------------------------------------------------------
 
 COLOURS = {
-    "arg":      "#e74c3c",   # red        — antibiotic resistance
-    "vf":       "#e67e22",   # orange     — virulence factor
-    "mge":      "#8e44ad",   # purple     — mobile genetic element
-    "bacmet":   "#16a085",   # teal       — biocide/metal resistance
-    "ice":      "#2471a3",   # blue       — integrative conjugative element
-    "mobility": "#1a5276",   # navy       — relaxase / MPF / TraG etc.
-    "other":    "#bdc3c7",   # light grey — unannotated ORF
+    "arg": "#e74c3c",  # red        — antibiotic resistance
+    "vf": "#e67e22",  # orange     — virulence factor
+    "mge": "#8e44ad",  # purple     — mobile genetic element
+    "bacmet": "#16a085",  # teal       — biocide/metal resistance
+    "ice": "#2471a3",  # blue       — integrative conjugative element
+    "mobility": "#1a5276",  # navy       — relaxase / MPF / TraG etc.
+    "other": "#bdc3c7",  # light grey — unannotated ORF
 }
 
 LEGEND = [
-    ("ARG",            COLOURS["arg"]),
-    ("Virulence",      COLOURS["vf"]),
-    ("MGE/IS",         COLOURS["mge"]),
-    ("BacMet",         COLOURS["bacmet"]),
-    ("ICE",            COLOURS["ice"]),
-    ("Mobility gene",  COLOURS["mobility"]),
-    ("Other ORF",      COLOURS["other"]),
+    ("ARG", COLOURS["arg"]),
+    ("Virulence", COLOURS["vf"]),
+    ("MGE/IS", COLOURS["mge"]),
+    ("BacMet", COLOURS["bacmet"]),
+    ("ICE", COLOURS["ice"]),
+    ("Mobility gene", COLOURS["mobility"]),
+    ("Other ORF", COLOURS["other"]),
 ]
 
-_MOBILITY_KW = frozenset([
-    "conjugat", "relaxase", "mpf", "trag", "trai", "traj",
-    "mob", "orit", "virb", "vird", "trb",
-])
+_MOBILITY_KW = frozenset(
+    [
+        "conjugat",
+        "relaxase",
+        "mpf",
+        "trag",
+        "trai",
+        "traj",
+        "mob",
+        "orit",
+        "virb",
+        "vird",
+        "trb",
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
 # Gene type classification
 # ---------------------------------------------------------------------------
 
+
 def _gene_type(
     orf_id: str,
-    arg_orf_ids:    set[str],
-    vf_orf_ids:     set[str],
-    mge_orf_ids:    set[str],
+    arg_orf_ids: set[str],
+    vf_orf_ids: set[str],
+    mge_orf_ids: set[str],
     bacmet_orf_ids: set[str],
-    ice_orf_ids:    set[str],
+    ice_orf_ids: set[str],
     gene_name: str = "",
 ) -> str:
     if orf_id in arg_orf_ids:
@@ -78,6 +88,7 @@ def _gene_type(
 # SVG geometry helpers
 # ---------------------------------------------------------------------------
 
+
 def _polar(cx: float, cy: float, r: float, angle_deg: float) -> tuple[float, float]:
     """Convert polar coordinates to Cartesian (SVG convention: 0° = top, CW)."""
     rad = math.radians(angle_deg - 90)
@@ -85,9 +96,11 @@ def _polar(cx: float, cy: float, r: float, angle_deg: float) -> tuple[float, flo
 
 
 def _arc_path(
-    cx: float, cy: float,
+    cx: float,
+    cy: float,
     r: float,
-    start_deg: float, end_deg: float,
+    start_deg: float,
+    end_deg: float,
     width: float,
 ) -> str:
     """Return an SVG path string for a filled arc (annular sector)."""
@@ -98,8 +111,8 @@ def _arc_path(
     large = 1 if sweep > 180 else 0
     r_inner = r - width
 
-    x1o, y1o = _polar(cx, cy, r,       start_deg)
-    x2o, y2o = _polar(cx, cy, r,       start_deg + sweep)
+    x1o, y1o = _polar(cx, cy, r, start_deg)
+    x2o, y2o = _polar(cx, cy, r, start_deg + sweep)
     x1i, y1i = _polar(cx, cy, r_inner, start_deg + sweep)
     x2i, y2i = _polar(cx, cy, r_inner, start_deg)
 
@@ -116,26 +129,27 @@ def _arc_path(
 # SVG builder for one contig
 # ---------------------------------------------------------------------------
 
+
 def build_circular_svg(
     contig_id: str,
     contig_length: int,
-    orfs: list,                   # list[ORF]
-    arg_orf_ids:    set[str],
-    vf_orf_ids:     set[str],
-    mge_orf_ids:    set[str],
+    orfs: list,  # list[ORF]
+    arg_orf_ids: set[str],
+    vf_orf_ids: set[str],
+    mge_orf_ids: set[str],
     bacmet_orf_ids: set[str],
-    ice_orf_ids:    set[str],
-    name_by_orf:    dict[str, str],  # orf_id → gene name (for labels)
+    ice_orf_ids: set[str],
+    name_by_orf: dict[str, str],  # orf_id → gene name (for labels)
     size: int = 420,
 ) -> str:
     """Return a self-contained SVG string for one circular plasmid map."""
     cx = cy = size / 2
-    r_outer_fwd = cx * 0.72   # forward-strand track outer radius
-    r_outer_rev = cx * 0.62   # reverse-strand track outer radius
-    track_w     = cx * 0.09   # track width
-    r_backbone  = cx * 0.67   # backbone circle radius
-    r_tick_out  = cx * 0.77   # tick outer edge
-    r_tick_in   = cx * 0.74   # tick inner edge
+    r_outer_fwd = cx * 0.72  # forward-strand track outer radius
+    r_outer_rev = cx * 0.62  # reverse-strand track outer radius
+    track_w = cx * 0.09  # track width
+    r_backbone = cx * 0.67  # backbone circle radius
+    r_tick_out = cx * 0.77  # tick outer edge
+    r_tick_in = cx * 0.74  # tick inner edge
 
     def bp_to_deg(bp: int) -> float:
         return 360.0 * bp / contig_length
@@ -145,26 +159,30 @@ def build_circular_svg(
     used_labels: set[str] = set()
 
     for orf in orfs:
-        oid   = orf.orf_id
+        oid = orf.orf_id
         start = max(orf.start, 1)
-        end   = min(orf.end,   contig_length)
+        end = min(orf.end, contig_length)
         if end <= start:
             continue
 
         gtype = _gene_type(
-            oid, arg_orf_ids, vf_orf_ids, mge_orf_ids,
-            bacmet_orf_ids, ice_orf_ids,
+            oid,
+            arg_orf_ids,
+            vf_orf_ids,
+            mge_orf_ids,
+            bacmet_orf_ids,
+            ice_orf_ids,
         )
         colour = COLOURS[gtype]
         r_outer = r_outer_fwd if orf.strand >= 0 else r_outer_rev
 
         s_deg = bp_to_deg(start - 1)
         e_deg = bp_to_deg(end)
-        path  = _arc_path(cx, cy, r_outer, s_deg, e_deg, track_w)
+        path = _arc_path(cx, cy, r_outer, s_deg, e_deg, track_w)
         title = name_by_orf.get(oid, oid)
         paths.append(
             f'<path d="{path}" fill="{colour}" opacity="0.88">'
-            f'<title>{title} ({start}–{end})</title></path>'
+            f"<title>{title} ({start}–{end})</title></path>"
         )
 
         # Label named genes (ARG, VFG, BacMet, ICE) — avoid crowding
@@ -172,7 +190,7 @@ def build_circular_svg(
         if gene_name and gtype in ("arg", "vf", "bacmet", "ice") and gene_name not in used_labels:
             used_labels.add(gene_name)
             mid_deg = bp_to_deg((start + end) // 2)
-            lx1, ly1 = _polar(cx, cy, r_tick_in,  mid_deg)
+            lx1, ly1 = _polar(cx, cy, r_tick_in, mid_deg)
             lx2, ly2 = _polar(cx, cy, r_tick_out, mid_deg)
             # Text anchor based on position
             anchor = "start" if lx2 >= cx else "end"
@@ -184,7 +202,7 @@ def build_circular_svg(
                 f'<text x="{tx:.1f}" y="{ly2:.1f}" '
                 f'font-size="9" font-family="monospace" fill="{colour}" '
                 f'text-anchor="{anchor}" dominant-baseline="middle">'
-                f'{gene_name}</text>'
+                f"{gene_name}</text>"
             )
 
     # ── Position tick marks every ~1 kb ──────────────────────────────────
@@ -195,8 +213,8 @@ def build_circular_svg(
         deg = bp_to_deg(pos)
         tx1, ty1 = _polar(cx, cy, r_backbone - 4, deg)
         tx2, ty2 = _polar(cx, cy, r_backbone + 4, deg)
-        lx, ly   = _polar(cx, cy, r_backbone + 13, deg)
-        anchor   = "middle"
+        lx, ly = _polar(cx, cy, r_backbone + 13, deg)
+        anchor = "middle"
         kb_label = f"{pos//1000}k" if pos > 0 else "0"
         ticks.append(
             f'<line x1="{tx1:.1f}" y1="{ty1:.1f}" x2="{tx2:.1f}" y2="{ty2:.1f}" '
@@ -219,7 +237,7 @@ def build_circular_svg(
         )
 
     kb = contig_length / 1000
-    title_text = f"{contig_id}  ({kb:.1f} kb)"
+    _title_text = f"{contig_id}  ({kb:.1f} kb)"
 
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">
   <title>{contig_id}</title>
@@ -253,6 +271,7 @@ def build_circular_svg(
 # Full HTML page builder
 # ---------------------------------------------------------------------------
 
+
 def build_circular_maps_page(
     pipeline_result,
     topology_map: dict[str, str],
@@ -272,17 +291,20 @@ def build_circular_maps_page(
         orfs_by_contig[orf.contig_id].append(orf)
 
     if not all_orfs:
-        return _wrap_html("", input_file,
-                          "<p style='color:#888;margin:40px'>No ORF data available "
-                          "(requires full pipeline run).</p>")
+        return _wrap_html(
+            "",
+            input_file,
+            "<p style='color:#888;margin:40px'>No ORF data available "
+            "(requires full pipeline run).</p>",
+        )
 
     # Build annotation lookup sets per ORF
-    arg_orf_ids:    set[str] = set()
-    vf_orf_ids:     set[str] = set()
-    mge_orf_ids:    set[str] = set()
+    arg_orf_ids: set[str] = set()
+    vf_orf_ids: set[str] = set()
+    mge_orf_ids: set[str] = set()
     bacmet_orf_ids: set[str] = set()
-    ice_orf_ids:    set[str] = set()
-    name_by_orf:    dict[str, str] = {}
+    ice_orf_ids: set[str] = set()
+    name_by_orf: dict[str, str] = {}
 
     for cr in pipeline_result.plasmid_results:
         for h in cr.arg_hits:
@@ -312,35 +334,41 @@ def build_circular_maps_page(
 
     # Find circular plasmid contigs
     circular_results = [
-        cr for cr in pipeline_result.plasmid_results
+        cr
+        for cr in pipeline_result.plasmid_results
         if topology_map.get(cr.record.id, "") == "circular"
     ]
 
     if not circular_results:
-        return _wrap_html("", input_file,
-                          "<p style='color:#888;margin:40px'>"
-                          "No circular plasmid contigs detected in this assembly.</p>")
+        return _wrap_html(
+            "",
+            input_file,
+            "<p style='color:#888;margin:40px'>"
+            "No circular plasmid contigs detected in this assembly.</p>",
+        )
 
     # Sort by length descending (largest / most complete plasmids first)
     circular_results.sort(key=lambda cr: -len(cr.record.seq))
 
     svgs: list[str] = []
     for cr in circular_results:
-        cid   = cr.record.id
-        clen  = len(cr.record.seq)
-        orfs  = orfs_by_contig.get(cid, [])
+        cid = cr.record.id
+        clen = len(cr.record.seq)
+        orfs = orfs_by_contig.get(cid, [])
 
         # Summary line for this plasmid
-        n_args   = len(cr.arg_hits)
-        n_vf     = len(getattr(cr, "vf_hits",     []))
-        n_mge    = len(getattr(cr, "mge_hits",    []))
-        n_bm     = len(getattr(cr, "bacmet_hits", []))
-        n_ice    = len(getattr(cr, "ice_hits",    []))
-        risk     = cr.risk.score
-        mob      = cr.mobility.mobility_class if cr.mobility else "unknown"
-        summary  = (f"Risk {risk} · {mob} · {len(orfs)} ORFs · "
-                    f"{n_args} ARGs · {n_vf} VFs · {n_mge} MGEs · "
-                    f"{n_bm} BacMet · {n_ice} ICE")
+        n_args = len(cr.arg_hits)
+        n_vf = len(getattr(cr, "vf_hits", []))
+        n_mge = len(getattr(cr, "mge_hits", []))
+        n_bm = len(getattr(cr, "bacmet_hits", []))
+        n_ice = len(getattr(cr, "ice_hits", []))
+        risk = cr.risk.score
+        mob = cr.mobility.mobility_class if cr.mobility else "unknown"
+        summary = (
+            f"Risk {risk} · {mob} · {len(orfs)} ORFs · "
+            f"{n_args} ARGs · {n_vf} VFs · {n_mge} MGEs · "
+            f"{n_bm} BacMet · {n_ice} ICE"
+        )
 
         svg = build_circular_svg(
             contig_id=cid,
@@ -358,15 +386,18 @@ def build_circular_maps_page(
             f'<div class="map-card">'
             f'<p class="cid">{cid}</p>'
             f'<p class="meta">{summary}</p>'
-            f'{svg}'
-            f'</div>'
+            f"{svg}"
+            f"</div>"
         )
 
     maps_html = "\n".join(svgs)
-    return _wrap_html(maps_html, input_file,
-                      f"<p class='subtitle'>{len(circular_results)} circular plasmid"
-                      f"{'s' if len(circular_results)!=1 else ''} · "
-                      f"outer track = forward strand · inner track = reverse strand</p>")
+    return _wrap_html(
+        maps_html,
+        input_file,
+        f"<p class='subtitle'>{len(circular_results)} circular plasmid"
+        f"{'s' if len(circular_results)!=1 else ''} · "
+        f"outer track = forward strand · inner track = reverse strand</p>",
+    )
 
 
 def _wrap_html(maps_html: str, input_file: str, subtitle: str) -> str:

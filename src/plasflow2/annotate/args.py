@@ -94,8 +94,8 @@ class ORF:
     contig_id: str
     orf_id: str  # full pyrodigal ID: <contig>_<n>
     sequence: str  # amino-acid sequence
-    start: int = 0   # 1-indexed start coordinate on contig
-    end: int = 0     # 1-indexed end coordinate on contig
+    start: int = 0  # 1-indexed start coordinate on contig
+    end: int = 0  # 1-indexed end coordinate on contig
     strand: int = 1  # 1 = forward, -1 = reverse
 
 
@@ -256,14 +256,16 @@ def call_orfs(
                     continue
                 orf_id = f"{contig_id}_{i}"
                 fh.write(f">{orf_id}\n{aa}\n")
-                orfs.append(ORF(
-                    contig_id=contig_id,
-                    orf_id=orf_id,
-                    sequence=aa,
-                    start=gene.begin,
-                    end=gene.end,
-                    strand=gene.strand,
-                ))
+                orfs.append(
+                    ORF(
+                        contig_id=contig_id,
+                        orf_id=orf_id,
+                        sequence=aa,
+                        start=gene.begin,
+                        end=gene.end,
+                        strand=gene.strand,
+                    )
+                )
 
     logger.info("Predicted %d ORFs from %d contigs → %s", len(orfs), len(records), out_proteins)
     return orfs
@@ -508,27 +510,27 @@ _AMRPROT_BRACKET_RE = re.compile(r"\[([^\]]+)\]\s*$")
 
 # Keyword → drug class mapping (description text, case-insensitive)
 _DRUG_CLASS_KEYWORDS: list[tuple[str, str]] = [
-    ("metallo-beta-lactamase",    "beta-lactam"),
-    ("beta-lactamase",            "beta-lactam"),
-    ("carbapenemase",             "beta-lactam"),
-    ("penicillinase",             "beta-lactam"),
-    ("cephalosporinase",          "beta-lactam"),
-    ("aminoglycoside",            "aminoglycoside antibiotic"),
-    ("tetracycline",              "tetracycline antibiotic"),
-    ("chloramphenicol",           "phenicol antibiotic"),
-    ("sulfonamide",               "sulfonamide antibiotic"),
-    ("trimethoprim",              "diaminopyrimidine antibiotic"),
-    ("quinolone",                 "fluoroquinolone antibiotic"),
-    ("fluoroquinolone",           "fluoroquinolone antibiotic"),
-    ("rifamycin",                 "rifamycin antibiotic"),
-    ("vancomycin",                "glycopeptide antibiotic"),
-    ("glycopeptide",              "glycopeptide antibiotic"),
-    ("colistin",                  "peptide antibiotic"),
-    ("polymyxin",                 "peptide antibiotic"),
-    ("fosfomycin",                "fosfomycin"),
-    ("macrolide",                 "macrolide antibiotic"),
-    ("efflux",                    "efflux"),
-    ("multidrug",                 "multidrug"),
+    ("metallo-beta-lactamase", "beta-lactam"),
+    ("beta-lactamase", "beta-lactam"),
+    ("carbapenemase", "beta-lactam"),
+    ("penicillinase", "beta-lactam"),
+    ("cephalosporinase", "beta-lactam"),
+    ("aminoglycoside", "aminoglycoside antibiotic"),
+    ("tetracycline", "tetracycline antibiotic"),
+    ("chloramphenicol", "phenicol antibiotic"),
+    ("sulfonamide", "sulfonamide antibiotic"),
+    ("trimethoprim", "diaminopyrimidine antibiotic"),
+    ("quinolone", "fluoroquinolone antibiotic"),
+    ("fluoroquinolone", "fluoroquinolone antibiotic"),
+    ("rifamycin", "rifamycin antibiotic"),
+    ("vancomycin", "glycopeptide antibiotic"),
+    ("glycopeptide", "glycopeptide antibiotic"),
+    ("colistin", "peptide antibiotic"),
+    ("polymyxin", "peptide antibiotic"),
+    ("fosfomycin", "fosfomycin"),
+    ("macrolide", "macrolide antibiotic"),
+    ("efflux", "efflux"),
+    ("multidrug", "multidrug"),
 ]
 
 
@@ -551,7 +553,10 @@ def load_amrfinder_metadata(fam_tab_path: Path | str) -> dict[str, dict]:  # typ
     meta: dict[str, dict] = {}  # type: ignore[type-arg]
     fam_tab_path = Path(fam_tab_path)
     if not fam_tab_path.exists():
-        logger.warning("AMRFinder fam.tab not found at %s — drug classes will be inferred from headers", fam_tab_path)
+        logger.warning(
+            "AMRFinder fam.tab not found at %s — drug classes will be inferred from headers",
+            fam_tab_path,
+        )
         return meta
 
     with open(fam_tab_path, newline="") as fh:
@@ -606,7 +611,12 @@ def parse_amrprot_hits(
             if len(parts) < 6:
                 continue
             qseqid, sseqid, pident, qcovhsp, evalue, stitle = (
-                parts[0], parts[1], parts[2], parts[3], parts[4], parts[5],
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+                parts[4],
+                parts[5],
             )
             contig_id = re.sub(r"_\d+$", "", qseqid)
 
@@ -616,20 +626,20 @@ def parse_amrprot_hits(
             #       → gene_name = "VIM-97", description = "subclass B1 metallo-beta-lactamase"
             bracket_match = _AMRPROT_BRACKET_RE.search(stitle)
             if bracket_match:
-                pre_bracket = stitle[:bracket_match.start()].strip()
+                pre_bracket = stitle[: bracket_match.start()].strip()
             else:
                 pre_bracket = stitle.strip()
 
             pre_tokens = pre_bracket.split()
             # Skip accession (first token), gene = last token, description = middle
             if len(pre_tokens) >= 3:
-                gene_name  = pre_tokens[-1]
+                gene_name = pre_tokens[-1]
                 description = " ".join(pre_tokens[1:-1])
             elif len(pre_tokens) == 2:
-                gene_name  = pre_tokens[-1]
+                gene_name = pre_tokens[-1]
                 description = pre_tokens[0]
             else:
-                gene_name  = sseqid
+                gene_name = sseqid
                 description = stitle
 
             # Drug class: fam.tab lookup → keyword inference from description
@@ -645,19 +655,21 @@ def parse_amrprot_hits(
                 else:
                     drug_class = _infer_drug_class(description)
 
-            hits.append(ARGHit(
-                contig_id=contig_id,
-                gene_name=gene_name,
-                aro_accession=sseqid,
-                amr_family=gene_name,
-                drug_class=drug_class,
-                resistance_mechanism="unknown",
-                identity=float(pident),
-                coverage=float(qcovhsp),
-                evalue=float(evalue),
-                source="AMR",
-                _orf_id=qseqid,
-            ))
+            hits.append(
+                ARGHit(
+                    contig_id=contig_id,
+                    gene_name=gene_name,
+                    aro_accession=sseqid,
+                    amr_family=gene_name,
+                    drug_class=drug_class,
+                    resistance_mechanism="unknown",
+                    identity=float(pident),
+                    coverage=float(qcovhsp),
+                    evalue=float(evalue),
+                    source="AMR",
+                    _orf_id=qseqid,
+                )
+            )
 
     logger.info("Parsed %d AMRFinderPlus DB hits from %s", len(hits), tsv_path)
     return hits
@@ -703,7 +715,10 @@ def merge_arg_hits(
     merged = card_hits + amr_only + sarg_only
     logger.info(
         "Merged ARG hits: %d CARD + %d AMR-only + %d SARG-only = %d total",
-        len(card_hits), len(amr_only), len(sarg_only), len(merged),
+        len(card_hits),
+        len(amr_only),
+        len(sarg_only),
+        len(merged),
     )
     return merged
 
@@ -741,10 +756,14 @@ def annotate_contigs_with_orfs(
         logger.info("Reusing cached ORFs from %s", proteins_path)
         from Bio import SeqIO  # type: ignore[import]
         from Bio.SeqRecord import SeqRecord as _SR  # noqa: F401
-        records = list(SeqIO.parse(str(fasta_path), "fasta"))
+
+        records = list(SeqIO.parse(str(fasta_path), "fasta"))  # noqa: F841
         orfs = [
-            ORF(contig_id="_".join(r.id.rsplit("_", 1)[:-1]) if "_" in r.id else r.id,
-                orf_id=r.id, sequence=str(r.seq))
+            ORF(
+                contig_id="_".join(r.id.rsplit("_", 1)[:-1]) if "_" in r.id else r.id,
+                orf_id=r.id,
+                sequence=str(r.seq),
+            )
             for r in SeqIO.parse(str(proteins_path), "fasta")
         ]
         logger.info("Loaded %d cached ORFs", len(orfs))
@@ -755,8 +774,14 @@ def annotate_contigs_with_orfs(
     if card_tsv.exists() and card_tsv.stat().st_size > 0:
         logger.info("Reusing cached CARD hits from %s", card_tsv)
     else:
-        run_diamond(proteins_path, card_db, card_tsv, threads=threads,
-                    min_identity=min_identity, min_coverage=min_coverage)
+        run_diamond(
+            proteins_path,
+            card_db,
+            card_tsv,
+            threads=threads,
+            min_identity=min_identity,
+            min_coverage=min_coverage,
+        )
 
     metadata = load_card_metadata(aro_index_path)
     card_hits = parse_diamond_hits(card_tsv, metadata)
@@ -769,8 +794,14 @@ def annotate_contigs_with_orfs(
             if sarg_tsv.exists() and sarg_tsv.stat().st_size > 0:
                 logger.info("Reusing cached SARG hits from %s", sarg_tsv)
             else:
-                run_diamond(proteins_path, sarg_db_path, sarg_tsv, threads=threads,
-                            min_identity=min_identity, min_coverage=min_coverage)
+                run_diamond(
+                    proteins_path,
+                    sarg_db_path,
+                    sarg_tsv,
+                    threads=threads,
+                    min_identity=min_identity,
+                    min_coverage=min_coverage,
+                )
             sarg_hits = parse_sarg_hits(sarg_tsv)
         else:
             logger.warning("SARG database not found at %s — skipping", sarg_db)
@@ -783,8 +814,14 @@ def annotate_contigs_with_orfs(
             if amrprot_tsv.exists() and amrprot_tsv.stat().st_size > 0:
                 logger.info("Reusing cached AMRProt hits from %s", amrprot_tsv)
             else:
-                run_diamond(proteins_path, amrprot_db_path, amrprot_tsv, threads=threads,
-                            min_identity=min_identity, min_coverage=min_coverage)
+                run_diamond(
+                    proteins_path,
+                    amrprot_db_path,
+                    amrprot_tsv,
+                    threads=threads,
+                    min_identity=min_identity,
+                    min_coverage=min_coverage,
+                )
             # Load fam.tab from same directory as the DB for drug class metadata
             fam_tab = amrprot_db_path.parent / "fam.tab"
             amr_meta = load_amrfinder_metadata(fam_tab)

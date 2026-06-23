@@ -33,11 +33,12 @@ _BACMET_ID_RE = re.compile(r"^(BAC\d+)\|([^|]+)")
 @dataclass
 class BacMetHit:
     """Single DIAMOND hit against BacMet2."""
+
     contig_id: str
-    gene_name: str          # e.g. "abeM"
-    bacmet_id: str          # e.g. "BAC0001"
-    resistance_class: str   # "Bio" | "Met" | "Bio/Met"
-    compound: str           # comma-separated compound names (shortened)
+    gene_name: str  # e.g. "abeM"
+    bacmet_id: str  # e.g. "BAC0001"
+    resistance_class: str  # "Bio" | "Met" | "Bio/Met"
+    compound: str  # comma-separated compound names (shortened)
     identity: float
     coverage: float
     evalue: float
@@ -103,8 +104,13 @@ def parse_bacmet_hits(
             parts = line.split("\t")
             if len(parts) < 6:
                 continue
-            qseqid, sseqid, pident, qcovhsp, evalue, stitle = (
-                parts[0], parts[1], parts[2], parts[3], parts[4], parts[5],
+            qseqid, sseqid, pident, qcovhsp, evalue, _stitle = (
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+                parts[4],
+                parts[5],
             )
             try:
                 ident = float(pident)
@@ -124,17 +130,19 @@ def parse_bacmet_hits(
                 gene_name = sseqid
 
             entry = meta.get(bacmet_id, {})
-            hits.append(BacMetHit(
-                contig_id=contig_id,
-                gene_name=entry.get("gene_name", gene_name),
-                bacmet_id=bacmet_id,
-                resistance_class=entry.get("resistance_class", "unknown"),
-                compound=entry.get("compound", ""),
-                identity=ident,
-                coverage=cov,
-                evalue=float(evalue),
-                _orf_id=qseqid,
-            ))
+            hits.append(
+                BacMetHit(
+                    contig_id=contig_id,
+                    gene_name=entry.get("gene_name", gene_name),
+                    bacmet_id=bacmet_id,
+                    resistance_class=entry.get("resistance_class", "unknown"),
+                    compound=entry.get("compound", ""),
+                    identity=ident,
+                    coverage=cov,
+                    evalue=float(evalue),
+                    _orf_id=qseqid,
+                )
+            )
 
     logger.info("Parsed %d BacMet hits from %s", len(hits), tsv_path)
     return hits
@@ -155,8 +163,9 @@ def annotate_bacmet(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # Load metadata from xlsx in same directory as the DB
-    meta_candidates = list(bacmet_db.parent.glob("Bacmet_list.tsv")) + \
-                      list(bacmet_db.parent.glob("*.tsv"))
+    meta_candidates = list(bacmet_db.parent.glob("Bacmet_list.tsv")) + list(
+        bacmet_db.parent.glob("*.tsv")
+    )
     bacmet_meta = load_bacmet_metadata(meta_candidates[0]) if meta_candidates else {}
 
     out_tsv = work_dir / "bacmet_hits.tsv"
@@ -165,15 +174,32 @@ def annotate_bacmet(
     else:
         db_stem = str(bacmet_db).removesuffix(".dmnd")
         cmd = [
-            "diamond", "blastp",
-            "--query", str(proteins_faa),
-            "--db", db_stem,
-            "--out", str(out_tsv),
-            "--outfmt", "6", "qseqid", "sseqid", "pident", "qcovhsp", "evalue", "stitle",
-            "--id", str(min_identity),
-            "--query-cover", str(min_coverage),
-            "--threads", str(threads),
-            "--sensitive", "--max-target-seqs", "1", "--quiet",
+            "diamond",
+            "blastp",
+            "--query",
+            str(proteins_faa),
+            "--db",
+            db_stem,
+            "--out",
+            str(out_tsv),
+            "--outfmt",
+            "6",
+            "qseqid",
+            "sseqid",
+            "pident",
+            "qcovhsp",
+            "evalue",
+            "stitle",
+            "--id",
+            str(min_identity),
+            "--query-cover",
+            str(min_coverage),
+            "--threads",
+            str(threads),
+            "--sensitive",
+            "--max-target-seqs",
+            "1",
+            "--quiet",
         ]
         logger.info("Running DIAMOND BacMet: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True)
