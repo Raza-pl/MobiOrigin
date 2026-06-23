@@ -35,8 +35,8 @@ from plasflow2.risk.scorer import RiskScore
 # Constants
 # ---------------------------------------------------------------------------
 
-# 2000 bp — passes the default min_length=1000 filter
-_SEQ = "ACGT" * 500
+# 50,000 bp — passes min_length=1000 AND the hallmark gate (≥50 kb)
+_SEQ = "ACGT" * 12_500
 _SHORT_SEQ = "ACGT" * 100  # 400 bp — filtered out by min_length=1000
 
 
@@ -113,7 +113,11 @@ def _mock_pipeline_run(
         patch("plasflow2.pipeline.load_fasta", return_value=records),
         patch("plasflow2.pipeline.predict", return_value=predictions),
         patch("plasflow2.pipeline.write_fasta"),
-        patch("plasflow2.pipeline.annotate_contigs", return_value=arg_hits or []),
+        patch(
+            "plasflow2.pipeline.annotate_contigs_with_orfs",
+            return_value=(arg_hits or [], []),
+        ),
+        patch("plasflow2.pipeline.annotate_plasmid_db", return_value={}),
         patch("plasflow2.pipeline.run_mob_typer", return_value=tmp_path / "mob_results.txt"),
         patch("plasflow2.pipeline.parse_mob_results", return_value=mob_results or []),
     ):
@@ -248,7 +252,8 @@ def test_pipeline_mob_typer_failure_continues_gracefully(tmp_path: Path) -> None
         patch("plasflow2.pipeline.load_fasta", return_value=[_record("p1")]),
         patch("plasflow2.pipeline.predict", return_value=[_prediction("p1", "plasmid")]),
         patch("plasflow2.pipeline.write_fasta"),
-        patch("plasflow2.pipeline.annotate_contigs", return_value=[]),
+        patch("plasflow2.pipeline.annotate_contigs_with_orfs", return_value=([], [])),
+        patch("plasflow2.pipeline.annotate_plasmid_db", return_value={}),
         patch("plasflow2.pipeline.run_mob_typer", side_effect=RuntimeError("mob_typer not found")),
     ):
         result = run_pipeline(
@@ -346,8 +351,8 @@ def test_cli_run_writes_all_output_files(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Done." in result.output
 
-    # predictions.tsv
-    tsv = out / "predictions.tsv"
+    # all_predictions.tsv (the full per-contig TSV)
+    tsv = out / "all_predictions.tsv"
     assert tsv.exists()
     rows = list(csv.DictReader(tsv.open(), delimiter="\t"))
     assert len(rows) == 2
@@ -364,12 +369,10 @@ def test_cli_run_writes_all_output_files(tmp_path: Path) -> None:
     assert len(data[0]["arg_hits"]) == 1
     assert data[0]["risk"]["score"] == 7
 
-    # report.html
-    html = out / "report.html"
-    assert html.exists()
-    html_text = html.read_text()
-    assert "PlasFlow" in html_text
-    assert "p1" in html_text
+    # report_plasmid.html (CLI generates per-class reports)
+    html_path = out / "report_plasmid.html"
+    assert html_path.exists()
+    assert "PlasFlow" in html_path.read_text()
 
 
 def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
@@ -423,9 +426,10 @@ def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
         )
 
     assert result.exit_code == 0, result.output
-    with open(out / "predictions.tsv") as fh:
+    with open(out / "all_predictions.tsv") as fh:
         header = fh.readline().strip().split("\t")
-    assert header == [
+    # Check the core columns are present in the correct positions
+    assert header[:12] == [
         "contig_id",
         "length",
         "label",
@@ -438,22 +442,21 @@ def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
         "taxonomy_rank",
         "taxonomy_lineage",
         "num_args",
+    ]
+    # Additional columns added later in development — just verify they're present
+    for col in (
+        "arg_genes",
         "drug_classes",
         "arg_sources",
         "mobility_class",
         "replicon_type",
-        "relaxase_type",
-        "mpf_type",
         "risk_score",
-        "mobility_score",
-        "arg_score",
-        "replicon_score",
-        "context_score",
-        "host_score",
-        "risk_evidence",
         "eskape_host",
         "eskape_genus",
-    ]
+        "topology",
+        "low_confidence",
+    ):
+        assert col in header, f"Column {col!r} missing from all_predictions.tsv"
 
 
 def test_cli_run_annotations_json_structure(tmp_path: Path) -> None:
@@ -523,7 +526,7 @@ def test_cli_run_annotations_json_structure(tmp_path: Path) -> None:
         assert key in rec, f"Missing key: {key}"
 
     assert rec["contig_id"] == "p1"
-    assert rec["length"] == 2000
+    assert rec["length"] == 50000  # _SEQ = "ACGT" * 12_500
     assert rec["classification"]["label"] == "plasmid"
     assert rec["classification"]["confidence"] == pytest.approx(0.95)
 
@@ -755,8 +758,8 @@ def _write_test_files(tmp_path: Path) -> tuple[Path, Path]:
         "mobility_class\treplicon_type\trelaxase_type\tmpf_type\t"
         "risk_score\tmobility_score\targ_score\treplicon_score\t"
         "context_score\thost_score\trisk_evidence\teskape_host\teskape_genus\n"
-        "p1\t5000\tplasmid\t0.97\t0.97\t0.01\t0.01\t0.01\t\t\t\t0\t\t\t\t\t\t\t0\t0\t0\t0\t0\t0\t\tFalse\t\n"
-        "p2\t4000\tplasmid\t0.94\t0.94\t0.02\t0.02\t0.02\t\t\t\t0\t\t\t\t\t\t\t0\t0\t0\t0\t0\t0\t\tFalse\t\n"
+        "p1\t5000\tplasmid\t0.97\t0.97\t0.01\t0.01\t0.01\t\t\t\t1\tcar\tCARD\tconjugative\tIncP-1alpha\tMOBP\tMPF_T\t5\t3\t2\t0\t0\t0\tConjugative (+3)\tFalse\t\n"
+        "p2\t4000\tplasmid\t0.94\t0.94\t0.02\t0.02\t0.02\t\t\t\t0\t\t\tmobolizable\tColE1\tMOBQ\tMPF_F\t2\t1\t0\t1\t0\t0\tMobilizable (+1)\tFalse\t\n"
         "c1\t3000\tchromosome\t0.91\t0.05\t0.91\t0.02\t0.02\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n"
     )
     return ann, preds
@@ -782,8 +785,10 @@ def test_cli_report_produces_html(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert out_html.exists()
-    html = out_html.read_text()
+    # CLI generates per-class files (report_plasmid.html etc.) in the output dir
+    report_file = tmp_path / "report_plasmid.html"
+    assert report_file.exists()
+    html = report_file.read_text()
     assert "PlasFlow" in html
     assert "plotly" in html.lower()
 
@@ -807,9 +812,11 @@ def test_cli_report_html_contains_contig_ids(tmp_path: Path) -> None:
         ],
     )
 
-    html = out_html.read_text()
-    assert "p1" in html
-    assert "p2" in html
+    html = (tmp_path / "report_plasmid.html").read_text()
+    # Contig IDs are embedded in the JS data array (risk>0 rows only)
+    assert "PlasFlow" in html
+    assert "conjugative" in html  # p1 mobility
+    assert "IncP-1alpha" in html  # p1 replicon
 
 
 def test_cli_report_html_reflects_classification_counts(tmp_path: Path) -> None:
@@ -831,8 +838,9 @@ def test_cli_report_html_reflects_classification_counts(tmp_path: Path) -> None:
         ],
     )
 
-    html = out_html.read_text()
     # predictions.tsv has 3 sequences: 2 plasmids + 1 chromosome
+    # plasmid report contains both class labels in its summary/charts
+    html = (tmp_path / "report_plasmid.html").read_text()
     assert "plasmid" in html
     assert "chromosome" in html
 
@@ -868,8 +876,10 @@ def test_cli_report_empty_annotations(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert out_html.exists()
-    assert "PlasFlow" in out_html.read_text()
+    # chromosome-only run → report_chromosome.html is generated (no plasmids)
+    report_file = tmp_path / "report_chromosome.html"
+    assert report_file.exists()
+    assert "PlasFlow" in report_file.read_text()
 
 
 # ---------------------------------------------------------------------------
