@@ -1,10 +1,11 @@
 """Unit tests for k-mer feature extraction.
 
-FEATURE_DIM = 1281: 256 (4-mer) + 1024 (5-mer) + 1 (log10 length).
+FEATURE_DIM = 9557: k=1–5 (1364) + k=7 canonical (8192) + log10 length (1).
 """
 
 import numpy as np
 from plasflow2.classify.features import (
+    K7_CANON_SIZE,
     _KMER_DIM,
     FEATURE_DIM,
     extract_features,
@@ -72,10 +73,10 @@ def test_reverse_complement_correctness() -> None:
     assert _reverse_complement("ATCG") == "CGAT"
 
 
-def test_feature_dim_is_1281() -> None:
-    """FEATURE_DIM must equal _KMER_DIM + 1 (length feature)."""
-    assert FEATURE_DIM == _KMER_DIM + 1
-    assert FEATURE_DIM == 1281
+def test_feature_dim_is_9557() -> None:
+    """FEATURE_DIM must equal _KMER_DIM + K7_CANON_SIZE + 1 (length feature)."""
+    assert FEATURE_DIM == _KMER_DIM + K7_CANON_SIZE + 1
+    assert FEATURE_DIM == 9557
 
 
 def test_length_feature_increases_with_sequence_length() -> None:

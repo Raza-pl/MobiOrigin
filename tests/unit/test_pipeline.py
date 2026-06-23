@@ -22,7 +22,7 @@ from plasflow2.risk.scorer import RiskScore
 # Helpers for synthetic data
 # ---------------------------------------------------------------------------
 
-_SEQ = "ACGT" * 500  # 2000 bp — passes min_length=1000
+_SEQ = "ACGT" * 12_500  # 50,000 bp — passes min_length=1000 and hallmark gate (≥50 kb)
 
 
 def _record(name: str, seq: str = _SEQ) -> SeqRecord:
@@ -77,6 +77,7 @@ def _mock_pipeline(
     arg_hits: list[ARGHit] | None = None,
     mob_results: list[MobilityResult] | None = None,
     skip_mobility: bool = False,
+    plasmid_db_hits: dict | None = None,
 ) -> PipelineResult:
     """Run run_pipeline() with all external I/O mocked."""
     fasta = tmp_path / "contigs.fasta"
@@ -95,7 +96,7 @@ def _mock_pipeline(
         patch("plasflow2.pipeline.predict", return_value=predictions),
         patch("plasflow2.pipeline.write_fasta"),
         patch("plasflow2.pipeline.annotate_contigs_with_orfs", return_value=(arg_hits or [], [])),
-        patch("plasflow2.pipeline.annotate_plasmid_db", return_value={}),
+        patch("plasflow2.pipeline.annotate_plasmid_db", return_value=plasmid_db_hits or {}),
         patch("plasflow2.pipeline.run_mob_typer", return_value=tmp_path / "mob.txt"),
         patch("plasflow2.pipeline.parse_mob_results", return_value=mob_results or []),
     ):

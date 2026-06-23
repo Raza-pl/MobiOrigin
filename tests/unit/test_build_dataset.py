@@ -81,7 +81,7 @@ def test_labels_are_correct_class_index(tmp_path: Path) -> None:
 
     fa = tmp_path / "test.fna"
     _write_fasta(fa, [("s1", _SEQ), ("s2", _SEQ)])
-    for class_name in ("plasmid", "chromosome", "phage", "archaea"):
+    for class_name in ("plasmid", "chromosome", "phage"):  # archaea removed from binary model
         _, _, labels = load_and_subsample(fa, class_name, max_per_class=10)
         expected_idx = CLASS_TO_IDX[class_name]
         assert all(
