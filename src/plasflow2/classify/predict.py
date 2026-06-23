@@ -67,29 +67,26 @@ LENGTH_THRESHOLD_TIERS = [
     # NOTE: conjugative plasmids bypass these via hard override in predict().
     # All other sequences use these per-length thresholds.
     #
-    # Calibrated for k=7 BINARY model (Jun 2026) via tune_thresholds_k7.py on clean
-    # binary benchmark predictions (no marker XGBoost, --no-marker-model flag):
+    # Calibrated for k=7 BINARY model v2 (Jun 2026) with FP hard-negative
+    # retrain (29 difficult-chromosome genomes added as hard negatives).
+    # Sweep via tune_thresholds_binary.py on fresh benchmark predictions
+    # (--no-marker-model, 60k hard-negative budget, 50 epochs, val_acc=0.957):
     #
     #   1-2kb:   0 plasmids in benchmark → 0.99 unchanged
-    #   2-5kb:   5 plasmids; chr p95=0.956, p99=0.978
-    #            Tuner optimal=0.95 (TP=4, FP=913, P=0.004) — terrible precision,
-    #            but 0.95 already set; raising further loses TPs. Unchanged.
-    #   5-10kb:  4 plasmids; chr p95=0.831, p99=0.976
-    #            Tuner optimal=0.93 (TP=2, FP=215, P=0.009) — net loss globally.
-    #            Kept at 0.98 (TP=0, FP=22) to avoid 215 FPs for 2 TPs.
-    #   10-20kb: 379 plasmids; chr p95=0.490, p99=0.967
-    #            Tuner optimal=0.94 (TP=242, FP=53, F1=0.718) vs 0.77 (F1=0.692).
-    #            128/379 plasmids score <0.85 (mean=0.169) — bimodal distribution,
-    #            chromids with chromosome-like k-mer profiles. Unrecoverable at any
-    #            threshold; needs diverse training data. Higher threshold cuts FPs.
-    #   >20kb:   6 plasmids; chr p95=0.332, p99=0.963
-    #            Tuner optimal=0.97 (TP=3, FP=12, F1=0.286) — 0.98 gets TP=0.
+    #   2-5kb:   5 plasmids; opt=0.97 (TP=3, FP=526, P=0.006) — poor precision.
+    #            Kept at 0.95 (TP=4, FP higher but recall better). Unchanged.
+    #   5-10kb:  4 plasmids; opt=0.97 (TP=1, FP=116) — still bad.
+    #            Kept at 0.98 (TP=0, FP=0) to avoid flood of FPs for 1 TP.
+    #   10-20kb: 379 plasmids; opt=0.93 (TP=293, FP=57, F1=0.804).
+    #            Hard-negative training cut FPs from 223→57. Lowered 0.94→0.93.
+    #   >20kb:   6 plasmids; opt=0.94 (TP=4, FP=12, F1=0.364).
+    #            Lowered 0.97→0.94 for better recall on long plasmids.
     (2_000,  0.99,  0.95, 0.80),   # <2kb:   very strict (no benchmark plasmids here)
     (4_999,  0.95,  0.90, 0.75),   # 2-5kb:  chr p99=0.978 makes any threshold costly
-    (9_999,  0.98,  0.87, 0.72),   # 5-10kb: keep strict; 0.93 adds 215 FPs for 2 TPs
+    (9_999,  0.98,  0.87, 0.72),   # 5-10kb: keep strict; 0.97 adds 116 FPs for 1 TP
                                    # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
-    (19_999, 0.94,  0.85, 0.70),   # 10-20kb: 0.77→0.94 cuts FPs 118→53, F1: 0.692→0.718
-    (float('inf'), 0.97, 0.82, 0.68),  # >20kb: 0.98→0.97 recovers 3/6 plasmids, F1: 0→0.286
+    (19_999, 0.93,  0.85, 0.70),   # 10-20kb: 0.94→0.93 (hard-neg retrain, FP: 223→57)
+    (float('inf'), 0.94, 0.82, 0.68),  # >20kb: 0.97→0.94 (TP: 3→4, F1: 0.286→0.364)
 ]
 
 

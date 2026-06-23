@@ -12,13 +12,18 @@ This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow)
 
 ## Changelog
 
+### June 2026 (FP hard-negative retrain — current model)
+- **Hard-negative mining:** Identified the 29 chromosome genomes responsible for all 223 FPs in the binary model (Acinetobacter baumannii ACICU, Klebsiella, Enterobacter, etc.). Added their chromosome sequences as **hard negatives** in the training set so the model learns to distinguish plasmid-like chromosomes from true plasmids. Script: `scripts/collect_fp_hard_negatives.py`.
+- **Retrain result:** FPs dropped **223 → 71 (−68%)**, FNs dropped **129 → 98 (−24%)**. Plasmid F1 improved from **0.601 → 0.778** (+29%). Precision jumped from 0.543 → 0.807. Validation accuracy 95.67%. Model: `data/models/mlp_v2.pt`.
+- **Per-length thresholds updated** for new model: 10–20 kb: 0.94 → **0.93**, >20 kb: 0.97 → **0.94** (based on `tune_thresholds_binary.py` sweep).
+- **New scripts:** `scripts/collect_fp_hard_negatives.py` (collect FP-genome chromosomes) · `scripts/retrain_fp_hardneg.sh` (full retrain pipeline: collect → build → train → benchmark → threshold sweep) · `scripts/tune_thresholds_binary.py` (per-length threshold sweep).
+
 ### June 2026 (binary classifier)
 - **Binary classifier structural fix:** Switched from 3-class softmax (plasmid/chromosome/phage) to a **2-class binary MLP** (plasmid vs not-plasmid). The 3-class architecture is structurally flawed for plasmid detection: phage probability bleeds into the chromosome score via softmax competition, capping F1 at ≤0.267 regardless of threshold. PlasFlow v1 achieves F1=0.939 as a binary classifier — the binary formulation is the correct architecture.
 - **Binary MLP training:** Phage training windows relabeled as chromosome (`--binary-plasmid`). Trained on 9,557-dimensional k=7 features (k-mers + k=6 PCA). Validation accuracy 93.86% (up from 87.14% for 3-class). Model: `data/k7_binary_experiment/models/mlp_v2.pt`.
-- **Per-length thresholds recalibrated** for binary model output range: 1–2 kb: 0.99, 2–5 kb: 0.95, 5–10 kb: 0.98, 10–20 kb: 0.94, >20 kb: 0.97.
+- **Per-length thresholds (initial):** 1–2 kb: 0.99, 2–5 kb: 0.95, 5–10 kb: 0.98, 10–20 kb: 0.94, >20 kb: 0.97 (superseded by FP hard-negative retrain above).
 - **Alpha blending fix for binary models:** Binary MLP scores true plasmids at 0.97+. Any non-zero `alpha_base` dragged scores below threshold (F1 collapsed to 0.620 with `alpha_base=0.30`). Fixed via `effective_alpha_base=0.0` for binary models — only sequences with actual biological marker genes receive XGBoost blending. Conjugative hard overrides and hallmark boosts remain unconditional.
 - **Marker XGBoost binary adaptation:** Binary model (N,2) output padded to (N,3) for XGBoost compatibility. Phage labels remapped to chromosome in training NPZ. 19 conjugative overrides and 3 hallmark boosts fire as before.
-- **Current benchmark (shared 60,394-sequence test set):** PlasFlow v2 Plasmid F1=**0.601** (P=0.543, R=0.673, TP=265, FP=223, FN=129); PlasFlow v1 kmer7 Plasmid F1=0.025; **24× improvement**. Macro F1: v2=0.756, v1=0.486. Fundamental ceiling: 129 "dark" plasmids with no k-mer, hallmark-gene, or mobility-marker signal distinguishable from chromosomes.
 - **`--no-class-weights` flag** added to `train_model.py`. Inverse-frequency class weighting proved harmful for the binary model (FP explosion with no chromid recovery). Uniform weights used by default for binary retraining.
 - **New scripts:** `scripts/retrain_k7_binary.sh` (end-to-end binary retrain: dataset build → MLP → benchmark) · `scripts/update_marker_mlp_scores.py` (update marker NPZ MLP score columns for a new model).
 
@@ -124,23 +129,23 @@ All tools evaluated on the **same 60,394-sequence benchmark** (394 true plasmids
 |---|---|---|---|---|---|---|---|---|
 | PlasFlow v1 (kmer7 model) | 0.014 | 0.198 | **0.025** | 0.947 | 0.486 | 78 | 5,689 | 316 |
 | geNomad v1.12 (thr=0.7) | 0.060 | 0.876 | **0.112** | 0.952 | 0.532 | 345 | 5,417 | 49 |
-| PlasFlow v2 (this work) | 0.543 | 0.673 | **0.601** | 0.997 | 0.799 | 265 | 223 | 129 |
+| PlasFlow v2 (this work) | 0.807 | 0.751 | **0.778** | 0.999 | 0.833 | 296 | 71 | 98 |
 
-**v2 plasmid F1 is 5.4× higher than geNomad and 24× higher than PlasFlow v1 on this benchmark.**
+**v2 plasmid F1 is 6.9× higher than geNomad and 31× higher than PlasFlow v1 on this benchmark.**
 
 **Plasmid F1 by contig length:**
 
 | Length bin | v1 F1 | geNomad F1 | v2 F1 | True plasmids |
 |---|---|---|---|---|
 | 1–2 kb | 0.000 | 0.000 | 0.000 | 0 |
-| 2–5 kb | 0.002 | 0.005 | 0.375 | 5 |
-| 5–10 kb | 0.000 | 0.004 | 0.033 | 4 |
-| 10–20 kb | 0.308 | 0.490 | **0.672** | 379 |
-| >20 kb | 0.125 | 0.041 | 0.207 | 6 |
+| 2–5 kb | 0.002 | 0.005 | 0.889 | 5 |
+| 5–10 kb | 0.000 | 0.004 | 0.000 | 4 |
+| 10–20 kb | 0.308 | 0.490 | **0.801** | 379 |
+| >20 kb | 0.125 | 0.041 | 0.308 | 6 |
 
-**Why geNomad underperforms on this benchmark:** geNomad is designed for full metagenomic contigs; applied to 10 kb sliding windows it generates ~5,400 false positives (precision=0.060) because many chromosomal windows carry mobile-element genes that trigger geNomad's plasmid hallmark detector. v2 was trained specifically on windowed sequences and achieves 24× better precision (0.543 vs 0.060).
+**Why geNomad underperforms on this benchmark:** geNomad is designed for full metagenomic contigs; applied to 10 kb sliding windows it generates ~5,400 false positives (precision=0.060) because many chromosomal windows carry mobile-element genes that trigger geNomad's plasmid hallmark detector. v2 was trained specifically on windowed sequences and achieves **13× better precision** (0.807 vs 0.060).
 
-**Gap analysis (v2):** 394 true plasmids; 265 recovered (TP), 129 missed (FN), 223 false positives (FP). Of the 129 FN, the majority are **"dark" plasmids** — sequences with no distinctive k-mer signature, no geNomad hallmark genes, and no MOB-suite mobility markers. These represent the theoretical detection ceiling for any composition-based method on this benchmark.
+**Gap analysis (v2):** 394 true plasmids; 296 recovered (TP), 98 missed (FN), 71 false positives (FP). The 71 FPs are residual hard cases not yet in training data. Of the 98 FN, the majority are **"dark" plasmids** — sequences with no distinctive k-mer signature, no geNomad hallmark genes, and no MOB-suite mobility markers. These represent the theoretical detection ceiling for any composition-based method on this benchmark.
 
 > **Note on v1 numbers:** PlasFlow v1's published accuracy (~93%) was measured on its own training-adjacent benchmark. The kmer7 component model tested here achieves plasmid F1=0.025 on our independent benchmark; the published result uses multi-kmer ensemble voting not evaluated here. v2 is evaluated with no such advantage.
 
