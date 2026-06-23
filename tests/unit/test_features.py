@@ -5,9 +5,9 @@ FEATURE_DIM = 9557: k=1–5 (1364) + k=7 canonical (8192) + log10 length (1).
 
 import numpy as np
 from plasflow2.classify.features import (
-    K7_CANON_SIZE,
     _KMER_DIM,
     FEATURE_DIM,
+    K7_CANON_SIZE,
     extract_features,
     kmer_vector,
 )

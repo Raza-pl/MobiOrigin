@@ -42,22 +42,22 @@ logger = logging.getLogger(__name__)
 # NCBI rank names → GTDB-style rank names
 _NCBI_TO_GTDB_RANK = {
     "superkingdom": "domain",
-    "phylum":       "phylum",
-    "class":        "class",
-    "order":        "order",
-    "family":       "family",
-    "genus":        "genus",
-    "species":      "species",
+    "phylum": "phylum",
+    "class": "class",
+    "order": "order",
+    "family": "family",
+    "genus": "genus",
+    "species": "species",
 }
 
 # GTDB prefix for each rank
 _RANK_PREFIX = {
-    "domain":  "d__",
-    "phylum":  "p__",
-    "class":   "c__",
-    "order":   "o__",
-    "family":  "f__",
-    "genus":   "g__",
+    "domain": "d__",
+    "phylum": "p__",
+    "class": "c__",
+    "order": "o__",
+    "family": "f__",
+    "genus": "g__",
     "species": "s__",
 }
 
@@ -67,6 +67,7 @@ _RANK_ORDER = ["domain", "phylum", "class", "order", "family", "genus", "species
 # ---------------------------------------------------------------------------
 # Availability check
 # ---------------------------------------------------------------------------
+
 
 def kraken2_available() -> bool:
     """Return True if kraken2 is on PATH."""
@@ -98,6 +99,7 @@ def find_kraken2_db(search_dirs: list[Path] | None = None) -> Path | None:
 # NCBI taxonomy loader (reuses nodes/names.dmp from Kaiju setup)
 # ---------------------------------------------------------------------------
 
+
 def _load_ncbi_taxonomy(
     nodes_dmp: Path,
     names_dmp: Path,
@@ -110,8 +112,8 @@ def _load_ncbi_taxonomy(
         name:   taxid → scientific name
     """
     parent: dict[int, int] = {}
-    rank:   dict[int, str] = {}
-    name:   dict[int, str] = {}
+    rank: dict[int, str] = {}
+    name: dict[int, str] = {}
 
     logger.debug("Loading NCBI taxonomy from %s …", nodes_dmp)
     with open(nodes_dmp) as fh:
@@ -119,19 +121,19 @@ def _load_ncbi_taxonomy(
             parts = line.split("|")
             if len(parts) < 3:
                 continue
-            taxid  = int(parts[0].strip())
+            taxid = int(parts[0].strip())
             ptaxid = int(parts[1].strip())
-            rk     = parts[2].strip().lower()
+            rk = parts[2].strip().lower()
             parent[taxid] = ptaxid
-            rank[taxid]   = rk
+            rank[taxid] = rk
 
     with open(names_dmp) as fh:
         for line in fh:
             parts = line.split("|")
             if len(parts) < 4:
                 continue
-            taxid    = int(parts[0].strip())
-            nm       = parts[1].strip()
+            taxid = int(parts[0].strip())
+            nm = parts[1].strip()
             nm_class = parts[3].strip()
             if nm_class == "scientific name":
                 name[taxid] = nm
@@ -170,7 +172,7 @@ def taxid_to_lineage(
     if not parts:
         return "", "unclassified", ""
 
-    deepest_rank  = next((r for r in reversed(_RANK_ORDER) if r in levels), "unclassified")
+    deepest_rank = next((r for r in reversed(_RANK_ORDER) if r in levels), "unclassified")
     deepest_taxon = levels.get(deepest_rank, "")
     return ";".join(parts), deepest_rank, deepest_taxon
 
@@ -178,6 +180,7 @@ def taxid_to_lineage(
 # ---------------------------------------------------------------------------
 # Run Kraken2
 # ---------------------------------------------------------------------------
+
 
 def run_kraken2(
     fasta_path: Path | str,
@@ -202,19 +205,24 @@ def run_kraken2(
     Returns:
         Path to the per-sequence output file.
     """
-    fasta_path  = Path(fasta_path)
-    db_dir      = Path(db_dir)
-    out_file    = Path(out_file)
+    fasta_path = Path(fasta_path)
+    db_dir = Path(db_dir)
+    out_file = Path(out_file)
     report_file = Path(report_file)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         "kraken2",
-        "--db",         str(db_dir),
-        "--threads",    str(threads),
-        "--confidence", str(confidence),
-        "--output",     str(out_file),
-        "--report",     str(report_file),
+        "--db",
+        str(db_dir),
+        "--threads",
+        str(threads),
+        "--confidence",
+        str(confidence),
+        "--output",
+        str(out_file),
+        "--report",
+        str(report_file),
         "--report-minimizer-data",
         str(fasta_path),
     ]
@@ -226,7 +234,9 @@ def run_kraken2(
 
     logger.info(
         "Running Kraken2 (threads=%d, confidence=%.2f): %s",
-        threads, confidence, " ".join(cmd),
+        threads,
+        confidence,
+        " ".join(cmd),
     )
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -244,6 +254,7 @@ def run_kraken2(
 # ---------------------------------------------------------------------------
 # Parse Kraken2 output
 # ---------------------------------------------------------------------------
+
 
 def parse_kraken2_output(out_file: Path | str) -> dict[str, int]:
     """Parse Kraken2 per-sequence output → contig_id → taxid.
@@ -284,6 +295,7 @@ def parse_kraken2_output(out_file: Path | str) -> dict[str, int]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def assign_taxonomy_kraken2(
     fasta_path: Path | str,
     db_dir: Path | str,
@@ -314,13 +326,13 @@ def assign_taxonomy_kraken2(
         (the caller merges them into the existing dict).
     """
     fasta_path = Path(fasta_path)
-    db_dir     = Path(db_dir)
-    nodes_dmp  = Path(nodes_dmp)
-    names_dmp  = Path(names_dmp)
-    work_dir   = Path(work_dir)
+    db_dir = Path(db_dir)
+    nodes_dmp = Path(nodes_dmp)
+    names_dmp = Path(names_dmp)
+    work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    out_file    = work_dir / "kraken2_output.txt"
+    out_file = work_dir / "kraken2_output.txt"
     report_file = work_dir / "kraken2_report.txt"
 
     # 1. Run Kraken2 (or reuse cached result)
@@ -342,8 +354,7 @@ def assign_taxonomy_kraken2(
     # Filter to only contigs missing from DIAMOND results
     if existing_taxonomy:
         taxid_by_contig = {
-            cid: tid for cid, tid in taxid_by_contig.items()
-            if cid not in existing_taxonomy
+            cid: tid for cid, tid in taxid_by_contig.items() if cid not in existing_taxonomy
         }
         logger.info(
             "Kraken2 fallback: %d new classifications for contigs missing from DIAMOND",
@@ -370,13 +381,15 @@ def assign_taxonomy_kraken2(
             lineage=lineage,
             rank=deepest_rank,
             taxon=deepest_taxon,
-            num_hits=1,        # Kraken2 gives single classification
+            num_hits=1,  # Kraken2 gives single classification
             agreement=1.0,
         )
 
     classified = len(results)
     logger.info(
         "Kraken2: %d contigs → TaxResult (%d resolved lineage, %d dropped/root-level)",
-        len(taxid_by_contig), classified, unclassified,
+        len(taxid_by_contig),
+        classified,
+        unclassified,
     )
     return results

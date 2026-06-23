@@ -36,15 +36,15 @@ logger = logging.getLogger(__name__)
 Topology = Literal["circular", "linear", "too_short"]
 
 # Default parameters
-_DEFAULT_WINDOW = 500       # bp examined at each end
-_DEFAULT_MIN_ID  = 0.90     # fraction identity required (90 %)
-_DEFAULT_MIN_LEN = 50       # minimum matching run to confirm DTR
+_DEFAULT_WINDOW = 500  # bp examined at each end
+_DEFAULT_MIN_ID = 0.90  # fraction identity required (90 %)
+_DEFAULT_MIN_LEN = 50  # minimum matching run to confirm DTR
 
 
 def _terminal_identity(seq: str, window: int) -> float:
     """Compute fractional identity between the first and last *window* bp."""
     start = seq[:window].upper()
-    end   = seq[-window:].upper()
+    end = seq[-window:].upper()
     matches = sum(a == b for a, b in zip(start, end))
     return matches / window
 
@@ -102,12 +102,12 @@ def detect_topology(
     # Bandage: "topology=circular"
     # Canu:   "suggestCircular=yes"
     _CIRCULAR_TOKENS = (
-        "circular",            # covers SPAdes, Flye, Unicycler "circular=true"
-        "topology=circular",   # NCBI/Bandage explicit
-        "complete sequence",   # NCBI complete genomes
+        "circular",  # covers SPAdes, Flye, Unicycler "circular=true"
+        "topology=circular",  # NCBI/Bandage explicit
+        "complete sequence",  # NCBI complete genomes
         "complete genome",
-        "suggestcircular=yes", # Canu
-        "closedcircle",        # some custom assemblers
+        "suggestcircular=yes",  # Canu
+        "closedcircle",  # some custom assemblers
     )
     if any(tok in header for tok in _CIRCULAR_TOKENS):
         return "circular"

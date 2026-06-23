@@ -52,9 +52,12 @@ def run_amrfinder(
 
     cmd = [
         "amrfinder",
-        "--protein",  str(protein_fasta),
-        "--output",   str(out_tsv),
-        "--threads",  str(safe_threads),
+        "--protein",
+        str(protein_fasta),
+        "--output",
+        str(out_tsv),
+        "--threads",
+        str(safe_threads),
         "--plus",
     ]
     if organism:
@@ -91,10 +94,10 @@ def parse_amrfinder_hits(
             if identity < min_identity or coverage < min_coverage:
                 continue
 
-            orf_id    = row.get("Protein identifier", "").strip()
+            orf_id = row.get("Protein identifier", "").strip()
             gene_name = row.get("Gene symbol", "").strip() or row.get("Sequence name", "")
-            drug_cls  = row.get("Class", "unknown").strip() or "unknown"
-            subclass  = row.get("Subclass", "").strip()
+            drug_cls = row.get("Class", "unknown").strip() or "unknown"
+            subclass = row.get("Subclass", "").strip()
             accession = row.get("Accession of closest sequence", "").strip()
             mechanism = row.get("Method", "unknown").strip()
             contig_id = re.sub(r"_\d+$", "", orf_id) if orf_id else ""
@@ -103,19 +106,21 @@ def parse_amrfinder_hits(
             except (ValueError, KeyError):
                 evalue = 0.0
 
-            hits.append(ARGHit(
-                contig_id=contig_id,
-                gene_name=gene_name,
-                aro_accession=accession,
-                amr_family=subclass or drug_cls,
-                drug_class=drug_cls,
-                resistance_mechanism=mechanism,
-                identity=identity,
-                coverage=coverage,
-                evalue=evalue,
-                source="AMR",
-                _orf_id=orf_id,
-            ))
+            hits.append(
+                ARGHit(
+                    contig_id=contig_id,
+                    gene_name=gene_name,
+                    aro_accession=accession,
+                    amr_family=subclass or drug_cls,
+                    drug_class=drug_cls,
+                    resistance_mechanism=mechanism,
+                    identity=identity,
+                    coverage=coverage,
+                    evalue=evalue,
+                    source="AMR",
+                    _orf_id=orf_id,
+                )
+            )
 
     logger.info("Parsed %d AMRFinderPlus hits from %s", len(hits), tsv_path)
     return hits

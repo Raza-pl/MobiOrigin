@@ -87,11 +87,11 @@ class VFHit:
     """Single DIAMOND hit against the VFDB virulence factor database."""
 
     contig_id: str
-    gene_name: str   # e.g. "mgtC", "stx1A"
-    vfg_id: str      # VFDB gene ID, e.g. "VFG000068"
-    vf_group: str    # VF group name, e.g. "mgtC (VF0091)"
-    vf_category: str # Functional category from vfdb_indx.txt, e.g. "Adherence", "Toxin"
-    organism: str    # Source organism, e.g. "Salmonella enterica"
+    gene_name: str  # e.g. "mgtC", "stx1A"
+    vfg_id: str  # VFDB gene ID, e.g. "VFG000068"
+    vf_group: str  # VF group name, e.g. "mgtC (VF0091)"
+    vf_category: str  # Functional category from vfdb_indx.txt, e.g. "Adherence", "Toxin"
+    organism: str  # Source organism, e.g. "Salmonella enterica"
     identity: float  # % amino-acid identity
     coverage: float  # % query coverage
     evalue: float
@@ -261,8 +261,9 @@ def annotate_vf(
 
     # Load VFDB category index (auto-detect from DB directory)
     vfdb_path = Path(vfdb)
-    idx_candidates = list(vfdb_path.parent.glob("vfdb_indx.txt")) + \
-                     list(vfdb_path.parent.glob("*.txt"))
+    idx_candidates = list(vfdb_path.parent.glob("vfdb_indx.txt")) + list(
+        vfdb_path.parent.glob("*.txt")
+    )
     vfdb_meta = load_vfdb_metadata(idx_candidates[0]) if idx_candidates else {}
 
     if vfdb_tsv.exists() and vfdb_tsv.stat().st_size > 0:
