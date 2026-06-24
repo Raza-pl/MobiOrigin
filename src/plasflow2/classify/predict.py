@@ -676,12 +676,15 @@ CASCADE_PLASMID_THRESHOLD_TIERS = [
     # phage_t:   Stage 2 threshold  (binary chr/phage classifier)
     # chr_t:     Stage 2 threshold  (binary chr/phage classifier)
     #
-    # Initial values — RECALIBRATE after training using tune_cascade_thresholds.py
-    (2_000,        0.90, 0.80, 0.60),   # <2kb   — strict plasmid, moderate phage
-    (4_999,        0.70, 0.70, 0.55),   # 2-5kb
-    (9_999,        0.65, 0.70, 0.55),   # 5-10kb
-    (19_999,       0.60, 0.70, 0.50),   # 10-20kb  (main plasmid tier)
-    (float("inf"), 0.60, 0.70, 0.50),   # >20kb
+    # Calibrated from W1 WWTP length-stratified score distributions.
+    # Stage 1 binary model is bimodal (median=0.055, p90=0.945) but 65% of W1
+    # reads are <2kb → must use very high threshold for short contigs.
+    # Fine-tune further with run_benchmark_evaluation.py --stage1-model --stage2-model.
+    (2_000,        0.995, 0.980, 0.75),  # <2kb  — very conservative (noisy short frags)
+    (4_999,        0.970, 0.940, 0.72),  # 2-5kb
+    (9_999,        0.950, 0.910, 0.70),  # 5-10kb
+    (19_999,       0.930, 0.880, 0.68),  # 10-20kb
+    (float("inf"), 0.920, 0.860, 0.65),  # >20kb — long contigs have most evidence
 ]
 
 
