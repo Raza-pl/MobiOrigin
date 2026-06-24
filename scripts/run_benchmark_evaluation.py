@@ -493,6 +493,11 @@ def main() -> None:
                         help="Path to marker_xgb.pkl for second-stage XGBoost")
     parser.add_argument("--annotation-tsv",   type=Path, default=None,
                         help="Path to DIAMOND annotation TSV from annotate_sequences.py")
+    parser.add_argument("--stage1-model",     type=Path, default=None,
+                        help="Cascade Stage 1 model (plasmid vs. rest). "
+                             "When given with --stage2-model, uses cascade_predict().")
+    parser.add_argument("--stage2-model",     type=Path, default=None,
+                        help="Cascade Stage 2 model (chromosome vs. phage).")
     args = parser.parse_args()
 
     out_dir = args.out or (args.benchmark_dir / "results")
@@ -514,11 +519,14 @@ def main() -> None:
         logger.info("    %-12s  %6d", lbl, cnt)
 
     # ── PlasFlow v2 evaluation ─────────────────────────────────────────────
-    pf2_tsv = out_dir / "plasflow2_predictions.tsv"
-    # Cache is valid only for pure MLP runs. When a marker model or annotation
-    # TSV is supplied the predictions will differ — always re-run in that case.
+    use_cascade = bool(args.stage1_model and args.stage2_model)
+    pf2_tsv = out_dir / ("plasflow2_cascade_predictions.tsv" if use_cascade
+                         else "plasflow2_predictions.tsv")
+
+    # Cache is valid only for pure MLP runs (not cascade, not marker, not annotation).
     use_cache = (
-        pf2_tsv.exists()
+        not use_cascade
+        and pf2_tsv.exists()
         and pf2_tsv.stat().st_size > 0
         and args.marker_model is None
         and args.annotation_tsv is None
@@ -532,6 +540,35 @@ def main() -> None:
                 p["chromosome_score"] = float(p["chromosome_score"])
                 p["phage_score"]      = float(p["phage_score"])
                 p["confidence"]       = float(p["confidence"])
+    elif use_cascade:
+        logger.info("Cascade mode: Stage1=%s  Stage2=%s", args.stage1_model, args.stage2_model)
+        from plasflow2.utils.fasta import load_fasta
+        from plasflow2.classify.predict import cascade_predict
+        records   = load_fasta(str(fasta_path), min_length=1)
+        sequences = [str(r.seq) for r in records]
+        seq_ids   = [r.id for r in records]
+        preds = cascade_predict(
+            sequences=sequences,
+            sequence_ids=seq_ids,
+            stage1_model_path=args.stage1_model,
+            stage2_model_path=args.stage2_model,
+        )
+        pf2_preds = [
+            {
+                "contig_id":        p.sequence_id,
+                "predicted":        p.label,
+                "confidence":       p.confidence,
+                "plasmid_score":    p.scores.get("plasmid", 0.0),
+                "chromosome_score": p.scores.get("chromosome", 0.0),
+                "phage_score":      p.scores.get("phage", 0.0),
+            }
+            for p in preds
+        ]
+        pf2_tsv.parent.mkdir(parents=True, exist_ok=True)
+        with open(pf2_tsv, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=pf2_preds[0].keys(), delimiter="\t")
+            writer.writeheader()
+            writer.writerows(pf2_preds)
     else:
         if pf2_tsv.exists() and (args.marker_model or args.annotation_tsv):
             logger.info("Marker model/annotation provided — ignoring cached predictions")
