@@ -149,8 +149,8 @@ sys.path.insert(0, "src")
 from plasflow2.classify.marker_classifier import MarkerClassifier
 import numpy as np
 
-clf = MarkerClassifier()
-clf.load("data/models/marker_xgb.pkl")
+# load() is a @classmethod — returns a new instance
+clf = MarkerClassifier.load("data/models/marker_xgb.pkl")
 
 # Quick smoke test: random 5-row input, 28 features
 np.random.seed(0)
