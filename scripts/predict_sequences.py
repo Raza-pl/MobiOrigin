@@ -94,11 +94,37 @@ def main() -> None:
     parser.add_argument("--context", type=str, default="unspecified",
                         choices=["unspecified", "wastewater", "clinical", "environmental"],
                         help="Sample context for Bayesian prior correction (default: unspecified)")
+    # Cascade mode
+    parser.add_argument("--stage1-model", type=Path, default=None,
+                        help="Cascade Stage 1 model (.pt, plasmid vs. rest). "
+                             "When given with --stage2-model, uses cascade_predict() "
+                             "instead of the 3-class predict(). Ignores --model.")
+    parser.add_argument("--stage2-model", type=Path, default=None,
+                        help="Cascade Stage 2 model (.pt, chromosome vs. phage).")
     args = parser.parse_args()
 
-    # Auto-detect marker model and annotation TSV at standard locations
+    # ── Cascade mode auto-detect ──────────────────────────────────────────────
+    use_cascade = False
+    if args.stage1_model and args.stage2_model:
+        use_cascade = True
+        logger.info("  [cascade] Stage 1: %s", args.stage1_model)
+        logger.info("  [cascade] Stage 2: %s", args.stage2_model)
+    elif (args.stage1_model is None) != (args.stage2_model is None):
+        # Only one stage given — check for both in data/models/
+        s1_default = ROOT / "data/models/mlp_cascade_stage1.pt"
+        s2_default = ROOT / "data/models/mlp_cascade_stage2.pt"
+        if s1_default.exists() and s2_default.exists():
+            args.stage1_model = s1_default
+            args.stage2_model = s2_default
+            use_cascade = True
+            logger.info("  [cascade auto] Stage 1: %s", args.stage1_model)
+            logger.info("  [cascade auto] Stage 2: %s", args.stage2_model)
+
+    # ── Marker model (3-class mode only) ─────────────────────────────────────
     marker_model_path = args.marker_model
-    if args.no_marker_model:
+    if use_cascade:
+        marker_model_path = None  # cascade doesn't use marker model yet
+    elif args.no_marker_model:
         marker_model_path = None
         logger.info("  [--no-marker-model] Skipping marker XGBoost stage")
     elif marker_model_path is None:
@@ -108,7 +134,7 @@ def main() -> None:
             logger.info("  [auto] Marker XGBoost: %s", marker_model_path)
 
     annotation_tsv = args.annotation_tsv
-    if annotation_tsv is None:
+    if annotation_tsv is None and not use_cascade:
         # try same directory as input, same stem
         candidate = args.input.parent / (args.input.name.split(".")[0] + "_annotations.tsv")
         if candidate.exists():
@@ -132,22 +158,32 @@ def main() -> None:
         logger.error("No sequences to classify.")
         sys.exit(1)
 
-    # Import predict (deferred so sys.path manipulation takes effect first)
-    from plasflow2.classify.predict import predict  # noqa: E402
-
     # Run prediction
     logger.info("Running prediction …")
     t0 = time.time()
-    results = predict(
-        sequences=seqs,
-        sequence_ids=ids,
-        model_path=str(args.model),
-        marker_model_path=str(marker_model_path) if marker_model_path else None,
-        annotation_tsv=str(annotation_tsv) if annotation_tsv else None,
-        marker_alpha_base=args.alpha_base,
-        batch_size=args.batch_size,
-        source_context=args.context,
-    )
+
+    if use_cascade:
+        from plasflow2.classify.predict import cascade_predict  # noqa: E402
+        results = cascade_predict(
+            sequences=seqs,
+            sequence_ids=ids,
+            stage1_model_path=str(args.stage1_model),
+            stage2_model_path=str(args.stage2_model),
+            batch_size=args.batch_size,
+        )
+    else:
+        from plasflow2.classify.predict import predict  # noqa: E402
+        results = predict(
+            sequences=seqs,
+            sequence_ids=ids,
+            model_path=str(args.model),
+            marker_model_path=str(marker_model_path) if marker_model_path else None,
+            annotation_tsv=str(annotation_tsv) if annotation_tsv else None,
+            marker_alpha_base=args.alpha_base,
+            batch_size=args.batch_size,
+            source_context=args.context,
+        )
+
     elapsed = time.time() - t0
     logger.info("  Prediction done in %.1f s", elapsed)
 

@@ -228,6 +228,11 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--no-class-weights", action="store_true",
                         help="Disable inverse-frequency class weighting (use uniform weights)")
+    parser.add_argument("--class-filter", type=str, default=None,
+                        help="Comma-separated original class indices to keep, e.g. '1,2'. "
+                             "Filtered classes are renumbered 0,1,... in sorted order. "
+                             "Useful for Stage 2 cascade training (chr+phage only). "
+                             "MmapDataset reads only the retained rows from disk.")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -266,10 +271,24 @@ def main() -> None:
         n = len(y_all)
         logger.info("Total samples: %d", n)
 
+        # Optional class filter — keeps only specified classes and renumbers them.
+        # MmapDataset uses the original indices into the features file, so no
+        # feature copying is needed even when filtering to a subset of classes.
+        if args.class_filter:
+            keep = sorted(int(c) for c in args.class_filter.split(","))
+            mask = np.isin(y_all, keep)
+            remap = {orig: new for new, orig in enumerate(keep)}
+            # idx_all stores ORIGINAL row indices into features.npy
+            idx_all = np.where(mask)[0]
+            y_all   = np.array([remap[int(y)] for y in y_all[mask]], dtype=np.int64)
+            n = len(y_all)
+            logger.info("Class filter %s → renumbered 0..%d  (%d samples kept)",
+                        keep, len(keep) - 1, n)
+        else:
+            idx_all = np.arange(n)
+
         num_classes = int(len(np.unique(y_all)))
         logger.info("Unique labels: %s  (num_classes=%d)", np.unique(y_all).tolist(), num_classes)
-
-        idx_all = np.arange(n)
         idx_trainval, idx_te, y_trainval, _ = train_test_split(
             idx_all, y_all, test_size=0.10, stratify=y_all, random_state=_SEED,
         )

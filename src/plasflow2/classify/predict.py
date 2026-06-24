@@ -654,3 +654,164 @@ def predict(
         marker_model_path is not None,
     )
     return results
+
+
+# ---------------------------------------------------------------------------
+# Cascade predict (Stage 1: plasmid/rest  +  Stage 2: chr/phage)
+# ---------------------------------------------------------------------------
+
+# Per-length thresholds for the CASCADE model.
+# After training, run scripts/tune_cascade_thresholds.py to calibrate these
+# on a held-out validation set.  Initial values are conservative to favour
+# precision; lower stage1_plasmid_* if recall is more important.
+#
+# Cascade thresholds differ from the 3-class model because:
+#   - Stage 1 is binary (plasmid vs. rest) → full softmax mass on 2 classes
+#     → plasmid probs are ~2× higher than in the 3-class model for true plasmids
+#   - Stage 2 is binary (chr vs. phage) → no plasmid competition
+#   - Both stages are separately calibrated → better discrimination per decision
+CASCADE_PLASMID_THRESHOLD_TIERS = [
+    # (max_length_bp, plasmid_t, phage_t, chr_t)
+    # plasmid_t: Stage 1 threshold  (binary plasmid classifier)
+    # phage_t:   Stage 2 threshold  (binary chr/phage classifier)
+    # chr_t:     Stage 2 threshold  (binary chr/phage classifier)
+    #
+    # Initial values — RECALIBRATE after training using tune_cascade_thresholds.py
+    (2_000,        0.90, 0.80, 0.60),   # <2kb   — strict plasmid, moderate phage
+    (4_999,        0.70, 0.70, 0.55),   # 2-5kb
+    (9_999,        0.65, 0.70, 0.55),   # 5-10kb
+    (19_999,       0.60, 0.70, 0.50),   # 10-20kb  (main plasmid tier)
+    (float("inf"), 0.60, 0.70, 0.50),   # >20kb
+]
+
+
+def _get_cascade_thresholds(seq_len: int) -> tuple[float, float, float]:
+    for max_len, plas_t, phage_t, chr_t in CASCADE_PLASMID_THRESHOLD_TIERS:
+        if seq_len <= max_len:
+            return plas_t, phage_t, chr_t
+    return CASCADE_PLASMID_THRESHOLD_TIERS[-1][1:]
+
+
+def cascade_predict(
+    sequences: list[str],
+    sequence_ids: list[str],
+    stage1_model_path: Path | str,
+    stage2_model_path: Path | str,
+    batch_size: int = 512,
+    argmax_fallback: bool = False,
+) -> list[Prediction]:
+    """Two-stage cascade classifier (plasmid / chromosome / phage).
+
+    Stage 1 — binary plasmid detector trained on (plasmid=1 vs. chr+phage=0).
+    Stage 2 — binary chr/phage discriminator trained on (chr=0 vs. phage=1).
+
+    Features are extracted ONCE and shared between both forward passes,
+    so wall time is only marginally longer than a single MLP run.
+
+    Decision logic (per-length thresholds from CASCADE_PLASMID_THRESHOLD_TIERS):
+        if Stage1_plasmid_prob  ≥ plasmid_t  → plasmid
+        elif Stage2_phage_prob  ≥ phage_t    → phage
+        elif Stage2_chr_prob    ≥ chr_t      → chromosome
+        else                                 → unclassified
+
+    Args:
+        sequences:          DNA strings.
+        sequence_ids:       Identifiers corresponding to each sequence.
+        stage1_model_path:  Path to Stage 1 .pt (plasmid vs. rest binary MLP).
+        stage2_model_path:  Path to Stage 2 .pt (chr vs. phage binary MLP).
+        batch_size:         Inference batch size.
+        argmax_fallback:    When True, unclassified sequences receive the
+                            argmax label instead.
+
+    Returns:
+        List of Prediction objects. scores dict contains:
+            "plasmid"    — Stage 1 plasmid probability
+            "chromosome" — Stage 2 chromosome probability
+            "phage"      — Stage 2 phage probability
+    """
+    import torch
+
+    from plasflow2.classify.model import load_model
+
+    device = get_device()
+
+    logger.info("Loading Stage 1 model from %s …", stage1_model_path)
+    s1_model = load_model(stage1_model_path, device=device)
+    s1_model.eval()
+
+    logger.info("Loading Stage 2 model from %s …", stage2_model_path)
+    s2_model = load_model(stage2_model_path, device=device)
+    s2_model.eval()
+
+    # ── Feature extraction (once, shared) ────────────────────────────────────
+    logger.info("Extracting features for %d sequences …", len(sequences))
+    X = extract_features(sequences)
+
+    # ── Stage 1: plasmid vs. rest → prob[:, 1] = P(plasmid) ─────────────────
+    s1_plasmid_probs: list[float] = []
+    for start in range(0, len(X), batch_size):
+        batch = torch.tensor(X[start: start + batch_size]).to(device)
+        with torch.no_grad():
+            logits = s1_model(batch)
+            probs  = torch.softmax(logits, dim=-1).cpu().numpy()
+        s1_plasmid_probs.extend(float(p[1]) for p in probs)  # index 1 = plasmid
+
+    # ── Stage 2: chr vs. phage → prob[:, 0]=P(chr)  prob[:, 1]=P(phage) ─────
+    s2_chr_probs:   list[float] = []
+    s2_phage_probs: list[float] = []
+    for start in range(0, len(X), batch_size):
+        batch = torch.tensor(X[start: start + batch_size]).to(device)
+        with torch.no_grad():
+            logits = s2_model(batch)
+            probs  = torch.softmax(logits, dim=-1).cpu().numpy()
+        s2_chr_probs.extend(float(p[0]) for p in probs)    # index 0 = chr
+        s2_phage_probs.extend(float(p[1]) for p in probs)  # index 1 = phage
+
+    # ── Combine via per-length thresholds ────────────────────────────────────
+    results: list[Prediction] = []
+    for i, (sid, seq) in enumerate(zip(sequence_ids, sequences)):
+        plasmid_prob = s1_plasmid_probs[i]
+        chr_prob     = s2_chr_probs[i]
+        phage_prob   = s2_phage_probs[i]
+
+        scores = {
+            "plasmid":    plasmid_prob,
+            "chromosome": chr_prob,
+            "phage":      phage_prob,
+        }
+
+        plas_t, phage_t, chr_t = _get_cascade_thresholds(len(seq))
+
+        if plasmid_prob >= plas_t:
+            label      = "plasmid"
+            confidence = plasmid_prob
+        elif phage_prob >= phage_t:
+            label      = "phage"
+            confidence = phage_prob
+        elif chr_prob >= chr_t:
+            label      = "chromosome"
+            confidence = chr_prob
+        elif argmax_fallback:
+            label      = max(scores, key=scores.__getitem__)
+            confidence = scores[label]
+        else:
+            label      = "unclassified"
+            confidence = max(plasmid_prob, chr_prob, phage_prob)
+
+        results.append(Prediction(
+            sequence_id=sid,
+            label=label,
+            confidence=confidence,
+            scores=scores,
+        ))
+
+    n_by_label: dict[str, int] = {}
+    for r in results:
+        n_by_label[r.label] = n_by_label.get(r.label, 0) + 1
+    n_unc = n_by_label.get("unclassified", 0)
+    logger.info(
+        "Cascade classified %d sequences (unclassified=%d): %s",
+        len(results), n_unc,
+        "  ".join(f"{k}={v:,}" for k, v in sorted(n_by_label.items())),
+    )
+    return results
