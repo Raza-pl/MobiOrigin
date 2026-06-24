@@ -1,0 +1,4 @@
+tool	wall_sec	wall_hms	peak_ram_mb	plasmid_calls	chromosome_calls	phage_calls	unclassified_calls
+plasflow_v2	400	00:06:40	3108	2747	145498	6345	51055
+plasflow_v1	N/A	N/A	N/A	N/A	N/A	N/A	N/A
+genomad	10940	03:02:20	?	1179	199943	4523	0

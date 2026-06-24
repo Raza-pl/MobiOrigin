@@ -89,11 +89,19 @@ def main() -> None:
                         help="Inference batch size (default: 512)")
     parser.add_argument("--alpha-base", type=float, default=0.3,
                         help="Base alpha for marker blending (default: 0.3)")
+    parser.add_argument("--no-marker-model", action="store_true",
+                        help="Skip marker XGBoost second stage even if marker_xgb.pkl exists")
+    parser.add_argument("--context", type=str, default="unspecified",
+                        choices=["unspecified", "wastewater", "clinical", "environmental"],
+                        help="Sample context for Bayesian prior correction (default: unspecified)")
     args = parser.parse_args()
 
     # Auto-detect marker model and annotation TSV at standard locations
     marker_model_path = args.marker_model
-    if marker_model_path is None:
+    if args.no_marker_model:
+        marker_model_path = None
+        logger.info("  [--no-marker-model] Skipping marker XGBoost stage")
+    elif marker_model_path is None:
         default_mm = ROOT / "data/models/marker_xgb.pkl"
         if default_mm.exists():
             marker_model_path = default_mm
@@ -138,6 +146,7 @@ def main() -> None:
         annotation_tsv=str(annotation_tsv) if annotation_tsv else None,
         marker_alpha_base=args.alpha_base,
         batch_size=args.batch_size,
+        source_context=args.context,
     )
     elapsed = time.time() - t0
     logger.info("  Prediction done in %.1f s", elapsed)

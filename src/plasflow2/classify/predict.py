@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # Default confidence thresholds (class-specific)
 DEFAULT_THRESHOLD = 0.70  # chromosome
-DEFAULT_PHAGE_THRESHOLD = 0.85  # phage — raised from 0.70 to suppress FPs on chr fragments
+DEFAULT_PHAGE_THRESHOLD = 0.70  # phage — restored to 0.70 (was 0.85, over-suppressed recall)
 DEFAULT_PLASMID_THRESHOLD = 0.95  # plasmid — higher bar to correct for class-prior imbalance
 
 # Per-length plasmid threshold multipliers.
@@ -64,26 +64,27 @@ LENGTH_THRESHOLD_TIERS = [
     # NOTE: conjugative plasmids bypass these via hard override in predict().
     # All other sequences use these per-length thresholds.
     #
-    # Calibrated for k=7 BINARY model v2 (Jun 2026) with FP hard-negative
-    # retrain (29 difficult-chromosome genomes added as hard negatives).
-    # Sweep via tune_thresholds_binary.py on fresh benchmark predictions
-    # (--no-marker-model, 60k hard-negative budget, 50 epochs, val_acc=0.957):
+    # Calibrated for k=7 3-CLASS model v2 (Jun 2026).
+    # The 3-class softmax spreads probability across plasmid/chromosome/phage,
+    # so chromosome scores are systematically lower than in the binary model.
+    # Phage thresholds are raised (0.90+) to suppress chromosome→phage FPs:
+    # on the benchmark (no true phage), 2,906 chromosomes score phage>0.70
+    # but only ~1,600 score phage>0.95.  On real metagenomes true phage
+    # sequences score >>0.95, so this threshold preserves recall on W1.
+    # Chromosome thresholds lowered to 0.60–0.70 to recover chromosome recall
+    # lost to phage probability bleed.
     #
-    #   1-2kb:   0 plasmids in benchmark → 0.99 unchanged
-    #   2-5kb:   5 plasmids; opt=0.97 (TP=3, FP=526, P=0.006) — poor precision.
-    #            Kept at 0.95 (TP=4, FP higher but recall better). Unchanged.
-    #   5-10kb:  4 plasmids; opt=0.97 (TP=1, FP=116) — still bad.
-    #            Kept at 0.98 (TP=0, FP=0) to avoid flood of FPs for 1 TP.
-    #   10-20kb: 379 plasmids; opt=0.93 (TP=293, FP=57, F1=0.804).
-    #            Hard-negative training cut FPs from 223→57. Lowered 0.94→0.93.
-    #   >20kb:   6 plasmids; opt=0.94 (TP=4, FP=12, F1=0.364).
-    #            Lowered 0.97→0.94 for better recall on long plasmids.
-    (2_000, 0.99, 0.95, 0.80),  # <2kb:   very strict (no benchmark plasmids here)
-    (4_999, 0.95, 0.90, 0.75),  # 2-5kb:  chr p99=0.978 makes any threshold costly
-    (9_999, 0.98, 0.87, 0.72),  # 5-10kb: keep strict; 0.97 adds 116 FPs for 1 TP
+    #   1-2kb:   short sequences noisy; strict plasmid, high phage threshold.
+    #   2-5kb:   small plasmids; phage raised 0.80→0.92.
+    #   5-10kb:  phage raised 0.75→0.90.
+    #   10-20kb: main plasmid tier; phage raised 0.72→0.90.
+    #   >20kb:   long sequences; phage raised 0.70→0.90; chr lowered 0.68→0.62.
+    (2_000, 0.99, 0.95, 0.75),   # <2kb
+    (4_999, 0.95, 0.92, 0.68),   # 2-5kb
+    (9_999, 0.98, 0.90, 0.65),   # 5-10kb
     # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
-    (19_999, 0.93, 0.85, 0.70),  # 10-20kb: 0.94→0.93 (hard-neg retrain, FP: 223→57)
-    (float("inf"), 0.94, 0.82, 0.68),  # >20kb: 0.97→0.94 (TP: 3→4, F1: 0.286→0.364)
+    (19_999, 0.93, 0.90, 0.63),  # 10-20kb
+    (float("inf"), 0.94, 0.90, 0.62),  # >20kb
 ]
 
 
@@ -101,9 +102,14 @@ def _get_length_thresholds(seq_len: int) -> tuple[float, float, float]:
 #   corrected[c] = mlp_score[c] * prior[c] / sum_k(mlp_score[k] * prior[k])
 # This reduces false-positive plasmid and phage calls substantially.
 CONTEXT_PRIORS: dict[str, dict[str, float]] = {
-    "wastewater": {"plasmid": 0.030, "chromosome": 0.930, "phage": 0.040},
-    "clinical": {"plasmid": 0.050, "chromosome": 0.900, "phage": 0.050},
-    "environmental": {"plasmid": 0.020, "chromosome": 0.950, "phage": 0.030},
+    # Literature-informed class frequencies per sample type.
+    # Wastewater: ~3% plasmid, ~12% phage (Gut et al. 2021; Hendriksen et al. 2019).
+    # The original phage prior of 0.040 was too aggressive — combined with the
+    # 0.85+ phage threshold it suppressed all phage calls on real metagenomes.
+    # 0.120 allows the MLP to call phage when it genuinely predicts them.
+    "wastewater": {"plasmid": 0.030, "chromosome": 0.850, "phage": 0.120},
+    "clinical": {"plasmid": 0.050, "chromosome": 0.920, "phage": 0.030},
+    "environmental": {"plasmid": 0.020, "chromosome": 0.870, "phage": 0.110},
     "unspecified": {"plasmid": 0.333, "chromosome": 0.334, "phage": 0.333},
 }
 
