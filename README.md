@@ -179,20 +179,22 @@ The remaining 32 true FPs split into two types: **annotation-driven** (20 window
 
 Full validation output: `results/fp_validation/` · Script: `scripts/run_fp_minimap2.sh`
 
-### False negative analysis — two distinct failure modes
+### False negative analysis — composition failure, not novelty
 
-Of the 93 FNs counted in the F1 (true plasmids predicted as chromosome):
+All 157 FNs (93 predicted chromosome + 64 unclassified) were validated against PLSDB using minimap2. Every single FN window matches a PLSDB entry at **100% query coverage** — unsurprisingly, since the benchmark plasmids were sourced from PLSDB. There are no "dark" novel plasmids in the FN set.
+
+The FN problem is entirely a **k-mer composition distinguishability failure**, not a database gap:
 
 | Failure mode | Count | Characteristic |
 |---|---|---|
-| **Dark plasmids** | 78/93 (84%) | plasmid_score < 0.40, zero bio markers — completely invisible to both the MLP and XGBoost |
-| **Marker-present misses** | 15/93 (16%) | has mobilisation/rep protein signal but MLP score still too low to overcome it |
+| **Composition-invisible** | 78/93 (84%) | plasmid_score < 0.40, zero bio markers — window k-mer profile resembles chromosome despite coming from a known PLSDB plasmid |
+| **Marker-present miss** | 15/93 (16%) | has mobilisation/rep protein signal, but MLP score too low to overcome it |
 
-None of the 93 chromosome FNs scored ≥0.70 — they are not near-misses; the MLP confidently scored them as non-plasmid. These are plasmids whose tetramer composition is indistinguishable from chromosome on this benchmark, representing the **theoretical ceiling for any k-mer composition method** applied to 10 kb windows.
+None of the 93 chromosome FNs scored ≥0.40 — the MLP confidently calls them non-plasmid. These are plasmids whose 10 kb window has GC content and tetramer frequencies indistinguishable from their host chromosome, representing the **ceiling for any k-mer composition method** on this benchmark. Protein-level features (DIAMOND vs. PLSDB proteomes) or read-depth signals would be needed to recover them.
 
-An additional 64 true plasmids were unclassified (below the 0.95 plasmid threshold but above the chromosome threshold): 49 of these scored 0.70–0.95 and would be recovered by lowering the threshold, but at the cost of additional FPs.
+An additional 64 true plasmids scored 0.70–0.95 (below the 0.95 confidence threshold). These are genuinely near-miss plasmids — lowering the threshold from 0.95 → 0.80 would recover ~49 of them, but at the cost of additional FPs.
 
-Run `bash scripts/run_fn_minimap2.sh` to check which FNs have PLSDB/COMPASS matches (recoverable via reference-based search) vs. truly novel sequences with no plasmid database homology.
+Script: `bash scripts/run_fn_minimap2.sh`
 
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads
