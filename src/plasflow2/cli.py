@@ -154,6 +154,19 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "chromosome_score",
         "phage_score",
         "archaea_score",
+        # ── prediction evidence (populated when marker XGBoost was used) ─
+        "mlp_plasmid",      # raw MLP score before XGBoost blending
+        "mlp_chromosome",
+        "mlp_phage",
+        "xgb_plasmid",      # XGBoost second-stage plasmid score
+        "xgb_chromosome",
+        "is_conjugative",   # biological markers from annotation TSV
+        "is_mobilizable",
+        "has_replicon",
+        "has_ice",          # shown for users even though excluded from classification
+        "has_rep_protein",
+        "n_rep_per_kb",
+        "evidence_type",    # mlp_only | xgb_blend | conjugative_override | hallmark_boost
         "taxonomy",
         "taxonomy_rank",
         "taxonomy_lineage",
@@ -230,6 +243,9 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
             length = len(rec.seq) if rec else 0
 
             scores = pred.scores if hasattr(pred, "scores") and pred.scores else {}
+            mlp = pred.mlp_scores or {}
+            xgb = pred.xgb_scores or {}
+            bio = pred.bio_evidence or {}
             base_cols = [
                 cid,
                 length,
@@ -239,6 +255,19 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 f"{scores.get('chromosome', 0):.4f}",
                 f"{scores.get('phage', 0):.4f}",
                 f"{scores.get('archaea', 0):.4f}",
+                # Evidence columns
+                f"{mlp['plasmid']:.4f}" if "plasmid" in mlp else "",
+                f"{mlp['chromosome']:.4f}" if "chromosome" in mlp else "",
+                f"{mlp['phage']:.4f}" if "phage" in mlp else "",
+                f"{xgb['plasmid']:.4f}" if "plasmid" in xgb else "",
+                f"{xgb['chromosome']:.4f}" if "chromosome" in xgb else "",
+                int(bio.get("is_conjugative", 0)) if bio else "",
+                int(bio.get("is_mobilizable", 0)) if bio else "",
+                int(bio.get("has_replicon", 0)) if bio else "",
+                int(bio.get("has_ice", 0)) if bio else "",
+                int(bio.get("has_rep_protein", 0)) if bio else "",
+                f"{bio.get('n_rep_per_kb', 0):.3f}" if bio else "",
+                pred.evidence_type or "",
             ]
 
             # ── Plasmid: full annotation columns ─────────────────────────

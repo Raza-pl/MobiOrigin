@@ -106,6 +106,7 @@ def run_plasflow2_classify(
     context: str = "unspecified",
     marker_model_path: Path | None = None,
     annotation_tsv: Path | None = None,
+    marker_alpha_base: float = 0.3,
 ) -> list[dict]:
     """Run PlasFlow v2 MLP ± marker XGBoost classification."""
     from plasflow2.utils.fasta import load_fasta
@@ -135,19 +136,39 @@ def run_plasflow2_classify(
         marker_model_path=marker_model_path,
         annotation_tsv=annotation_tsv,
         use_pyrodigal=True,
+        marker_alpha_base=marker_alpha_base,
     )
 
-    rows = [
-        {
-            "contig_id": p.sequence_id,
-            "predicted": p.label,
-            "confidence": p.confidence,
-            "plasmid_score": p.scores.get("plasmid", 0.0),
-            "chromosome_score": p.scores.get("chromosome", 0.0),
-            "phage_score": p.scores.get("phage", 0.0),
-        }
-        for p in preds
-    ]
+    rows = []
+    for p in preds:
+        bio = p.bio_evidence or {}
+        mlp = p.mlp_scores or {}
+        xgb = p.xgb_scores or {}
+        rows.append({
+            "contig_id":        p.sequence_id,
+            "predicted":        p.label,
+            "confidence":       round(p.confidence, 6),
+            # Final blended scores (what drove the label decision)
+            "plasmid_score":    round(p.scores.get("plasmid", 0.0), 6),
+            "chromosome_score": round(p.scores.get("chromosome", 0.0), 6),
+            "phage_score":      round(p.scores.get("phage", 0.0), 6),
+            # Raw MLP scores before XGBoost blending (empty string if no marker stage)
+            "mlp_plasmid":      round(mlp["plasmid"], 6) if "plasmid" in mlp else "",
+            "mlp_chromosome":   round(mlp["chromosome"], 6) if "chromosome" in mlp else "",
+            "mlp_phage":        round(mlp["phage"], 6) if "phage" in mlp else "",
+            # XGBoost second-stage scores
+            "xgb_plasmid":      round(xgb["plasmid"], 6) if "plasmid" in xgb else "",
+            "xgb_chromosome":   round(xgb["chromosome"], 6) if "chromosome" in xgb else "",
+            # Biological evidence from annotation TSV (empty string if TSV not used)
+            "is_conjugative":   int(bio["is_conjugative"]) if "is_conjugative" in bio else "",
+            "is_mobilizable":   int(bio["is_mobilizable"]) if "is_mobilizable" in bio else "",
+            "has_replicon":     int(bio["has_replicon"]) if "has_replicon" in bio else "",
+            "has_ice":          int(bio["has_ice"]) if "has_ice" in bio else "",
+            "has_rep_protein":  int(bio["has_rep_protein"]) if "has_rep_protein" in bio else "",
+            "n_rep_per_kb":     round(bio["n_rep_per_kb"], 4) if "n_rep_per_kb" in bio else "",
+            # What drove the final prediction
+            "evidence_type":    p.evidence_type or "",
+        })
 
     # Write predictions
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
@@ -493,6 +514,8 @@ def main() -> None:
                         help="Path to marker_xgb.pkl for second-stage XGBoost")
     parser.add_argument("--annotation-tsv",   type=Path, default=None,
                         help="Path to DIAMOND annotation TSV from annotate_sequences.py")
+    parser.add_argument("--marker-alpha-base", type=float, default=0.3,
+                        help="Minimum XGBoost blend weight (default 0.3). Use 0.0 to blend only when biological evidence present.")
     parser.add_argument("--stage1-model",     type=Path, default=None,
                         help="Cascade Stage 1 model (plasmid vs. rest). "
                              "When given with --stage2-model, uses cascade_predict().")
@@ -578,6 +601,7 @@ def main() -> None:
             out_tsv=pf2_tsv,
             marker_model_path=args.marker_model,
             annotation_tsv=args.annotation_tsv,
+            marker_alpha_base=args.marker_alpha_base,
         )
 
     # Core metrics at default threshold

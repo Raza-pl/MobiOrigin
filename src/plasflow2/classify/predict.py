@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import csv
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from plasflow2.classify.features import extract_features
@@ -140,14 +140,40 @@ def apply_prior_correction(
 
 @dataclass
 class Prediction:
-    """Single-sequence prediction result."""
+    """Single-sequence prediction result.
+
+    Core fields (always populated):
+        sequence_id   Contig identifier.
+        label         Final class: plasmid | chromosome | phage | archaea | unclassified.
+        confidence    Final score for the winning class (after all blending/overrides).
+        scores        Per-class final probabilities (3-class, sum ≈ 1).
+
+    Evidence fields (populated when marker XGBoost is used; None otherwise):
+        mlp_scores      Raw MLP softmax BEFORE XGBoost blending.
+        xgb_scores      XGBoost class probabilities (marker second stage).
+        bio_evidence    Biological marker flags from the annotation TSV:
+                        is_conjugative, is_mobilizable, has_replicon, has_ice,
+                        has_rep_protein, n_rep_per_kb.  All float (0 or 1 for
+                        binary flags).  Empty dict when annotation TSV not used.
+        evidence_type   Human-readable summary of what drove the final call:
+                        "mlp_only"              — no XGBoost used.
+                        "xgb_blend"             — MLP + XGBoost soft blend.
+                        "conjugative_override"  — hard override (relaxase + MPF).
+                        "hallmark_boost"        — geNomad hallmark gene boost.
+    """
 
     sequence_id: str
     label: str  # plasmid | chromosome | phage | archaea | unclassified
     # Note: 'archaea' is assigned post-classification by the pipeline,
     # not by the MLP itself.
     confidence: float  # max softmax probability
-    scores: dict[str, float]  # per-class probabilities (3-class MLP output)
+    scores: dict[str, float]  # per-class probabilities (final blended output)
+
+    # Evidence transparency — None when marker model is not used
+    mlp_scores: dict[str, float] | None = field(default=None)
+    xgb_scores: dict[str, float] | None = field(default=None)
+    bio_evidence: dict[str, float] | None = field(default=None)
+    evidence_type: str | None = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -221,23 +247,39 @@ def _load_annotation_tsv(tsv_path: Path | str) -> dict[str, dict[str, float]]:
 def _run_pyrodigal(
     sequences: list[str],
     sequence_ids: list[str],
+    n_threads: int = 16,
 ) -> dict[str, dict]:
-    """Predict ORFs with pyrodigal. Returns dict: seq_id → {n_orfs, covered_bp}."""
+    """Predict ORFs with pyrodigal.
+
+    Returns dict: seq_id → {n_orfs, covered_bp, genes}.
+    The *genes* key holds the raw pyrodigal gene list so callers can pass it
+    directly to ``gene_content_vector()`` in features.py for MLP input.
+    Runs in parallel using ThreadPoolExecutor (pyrodigal releases the GIL).
+    """
     try:
         import pyrodigal  # type: ignore[import]
     except ImportError:
         logger.debug("pyrodigal not available — ORF features will use defaults")
         return {}
 
+    from concurrent.futures import ThreadPoolExecutor
+
     gene_pred = pyrodigal.GeneFinder(meta=True)
-    orf_data: dict[str, dict] = {}
-    for sid, seq in zip(sequence_ids, sequences):
+
+    def _process_one(sid_seq):
+        sid, seq = sid_seq
         try:
             genes = gene_pred.find_genes(seq.encode())
-            covered = sum(abs(g.end - g.begin) for g in genes)
-            orf_data[sid] = {"n_orfs": len(genes), "covered_bp": covered}
+            gene_list = list(genes)
+            covered = sum(abs(g.end - g.begin) for g in gene_list)
+            return sid, {"n_orfs": len(gene_list), "covered_bp": covered, "genes": gene_list}
         except Exception:
-            orf_data[sid] = {"n_orfs": 0, "covered_bp": 0}
+            return sid, {"n_orfs": 0, "covered_bp": 0, "genes": []}
+
+    orf_data: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=n_threads) as pool:
+        for sid, data in pool.map(_process_one, zip(sequence_ids, sequences)):
+            orf_data[sid] = data
     return orf_data
 
 
@@ -340,6 +382,17 @@ def predict(
     device = get_device()
     model = load_model(model_path, device=device)
 
+    # Detect expected input dimension from the loaded model's first layer.
+    # This determines whether gene content features should be appended to the
+    # k=7 feature vector (9563-dim model) or not (9557-dim model).
+    from plasflow2.classify.features import FEATURE_DIM, FEATURE_DIM_FULL
+    _model_input_dim: int = model.net[0].in_features  # inspect before any DataParallel wrap
+    _model_wants_gene_features: bool = (_model_input_dim == FEATURE_DIM_FULL)
+    if _model_wants_gene_features:
+        logger.info("Model expects %d-dim input — gene content features will be included", _model_input_dim)
+    else:
+        logger.info("Model expects %d-dim input — k=7 only (no gene content features)", _model_input_dim)
+
     # Multi-GPU: wrap in DataParallel when multiple CUDA devices are available.
     n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     if n_gpus > 1:
@@ -352,7 +405,23 @@ def predict(
 
     model.eval()
 
-    X = extract_features(sequences)
+    # ── ORF prediction (runs when pyrodigal available AND needed) ─────────────
+    # Gene objects are stored so Stage 2 (marker XGBoost) can reuse them
+    # without re-running pyrodigal.
+    orf_data_global: dict[str, dict] = {}
+    if use_pyrodigal and (_model_wants_gene_features or marker_model_path):
+        logger.info("Running pyrodigal for gene/ORF features …")
+        orf_data_global = _run_pyrodigal(sequences, sequence_ids)
+        if orf_data_global:
+            logger.info("  ORFs predicted for %d sequences", len(orf_data_global))
+
+    # Build gene_data dict (seq_id → gene list) for extract_features().
+    # Only pass gene_data when the loaded model was actually trained with them.
+    gene_data_for_extract: dict[str, list] | None = None
+    if _model_wants_gene_features and orf_data_global:
+        gene_data_for_extract = {sid: d.get("genes", []) for sid, d in orf_data_global.items()}
+
+    X = extract_features(sequences, gene_data=gene_data_for_extract, seq_ids=sequence_ids)
 
     # ── Stage 1: MLP softmax scores ──────────────────────────────────────────
     all_raw_scores: list[dict[str, float]] = []
@@ -376,6 +445,12 @@ def predict(
             all_scores.append(raw_scores)
 
     # ── Stage 2: Marker XGBoost (optional) ───────────────────────────────────
+    # Evidence dicts — populated inside the if-block; initialised here so the
+    # label-assignment loop can reference them unconditionally.
+    _xgb_scores_by_idx: dict[int, dict[str, float]] = {}
+    _bio_ev_by_idx: dict[int, dict[str, float]] = {}
+    _ev_type_by_idx: dict[int, str] = {}
+
     if marker_model_path and Path(marker_model_path).exists():
         logger.info("Running marker XGBoost second stage from %s", marker_model_path)
 
@@ -391,18 +466,19 @@ def predict(
         if annotation_tsv:
             annotations = _load_annotation_tsv(annotation_tsv)
 
-        # ORF prediction via pyrodigal (optional, for coding density / ORF count)
-        orf_data: dict[str, dict] = {}
-        if use_pyrodigal:
-            logger.info("  Predicting ORFs with pyrodigal …")
-            orf_data = _run_pyrodigal(sequences, sequence_ids)
-            if orf_data:
-                logger.info("  ORFs predicted for %d sequences", len(orf_data))
+        # Reuse ORF data from Stage 1 (pyrodigal already ran above for gene features).
+        orf_data: dict[str, dict] = orf_data_global
 
         # Build marker feature matrix for all sequences at once (faster)
         import numpy as _np
 
         from plasflow2.classify.marker_classifier import N_MARKER_FEATURES
+
+        # Canonical Shine-Dalgarno motifs — used to compute canonical_sd_freq
+        # directly from pyrodigal gene objects (no DIAMOND annotation required).
+        _CANONICAL_SD_MOTIFS: frozenset[str] = frozenset(
+            {"AGGAG", "GGAG", "AGGA", "AGG", "GGA", "GAGG"}
+        )
 
         n = len(sequences)
         X_marker = _np.zeros((n, N_MARKER_FEATURES), dtype=_np.float32)
@@ -413,12 +489,36 @@ def predict(
             seq_upper = seq.upper()
             gc = (seq_upper.count("G") + seq_upper.count("C")) / length_bp
 
-            # ORF features
+            # ORF features from pyrodigal gene objects
             orf = orf_data.get(sid, {})
-            n_orfs = orf.get("n_orfs", 0)
-            covered_bp = orf.get("covered_bp", 0)
-            cod_density = min(covered_bp / length_bp, 1.0) if covered_bp > 0 else 0.85
-            n_orfs_kb = n_orfs / max(length_kb, 0.001) if n_orfs > 0 else 1.0
+            genes = orf.get("genes", [])
+            n_orfs = len(genes) if genes else orf.get("n_orfs", 0)
+            covered_bp = (
+                sum(abs(g.end - g.begin) for g in genes)
+                if genes else orf.get("covered_bp", 0)
+            )
+            cod_density = min(covered_bp / length_bp, 1.0) if length_bp > 0 else 0.85
+            n_orfs_kb = n_orfs / max(length_kb, 0.001) if length_kb > 0 else 1.0
+
+            # Gene-content features computed directly from pyrodigal gene objects.
+            # Used as fallback when annotation_tsv is absent; TSV values override
+            # when available (DIAMOND annotation is more precise for motif detection).
+            if n_orfs > 1:
+                strands = [g.strand for g in genes]
+                switches = sum(1 for a, b in zip(strands, strands[1:]) if a != b)
+                strand_switch_rate_pyro = float(switches) / (n_orfs - 1)
+            else:
+                strand_switch_rate_pyro = 0.5  # uninformative for ≤1 ORF
+            if n_orfs > 0:
+                canonical_sd_pyro = (
+                    sum(1 for g in genes if g.rbs_motif in _CANONICAL_SD_MOTIFS) / n_orfs
+                )
+                no_rbs_pyro = (
+                    sum(1 for g in genes if not g.rbs_motif or g.rbs_motif == "None") / n_orfs
+                )
+            else:
+                canonical_sd_pyro = 0.0
+                no_rbs_pyro = 1.0  # no ORFs → RBS undefined for all genes
 
             # Biological markers from annotation TSV (or zeros)
             ann = annotations.get(sid, {})
@@ -431,11 +531,14 @@ def predict(
                 is_conjugative=ann.get("is_conjugative", 0.0),
                 is_mobilizable=ann.get("is_mobilizable", 0.0),
                 has_replicon=ann.get("has_replicon", 0.0),
-                has_ice=ann.get("has_ice", 0.0),
+                has_ice=0.0,             # ICE excluded from classification evidence:
+                # ICEs integrate into chromosomes and create FPs when used as plasmid
+                # signal. ICE annotations are preserved in output for users but do not
+                # drive XGBoost blending. Only MOB-type relaxase and MGE evidence is used.
                 has_rep_protein=ann.get("has_rep_protein", 0.0),
                 n_arg_per_kb=ann.get("n_arg_per_kb", 0.0),
                 n_mge_per_kb=ann.get("n_mge_per_kb", 0.0),
-                n_ice_per_kb=ann.get("n_ice_per_kb", 0.0),
+                n_ice_per_kb=0.0,        # ICE density excluded for same reason
                 n_rep_per_kb=ann.get("n_rep_per_kb", 0.0),
                 log10_length=float(_np.log10(length_bp)),
                 gc_content=gc,
@@ -450,21 +553,22 @@ def predict(
                 median_c_spm=ann.get("median_c_spm", 0.0),
                 median_v_spm=ann.get("median_v_spm", 0.0),
                 p_vs_c_logistic=ann.get("p_vs_c_logistic", 0.5),
-                strand_switch_rate=ann.get("strand_switch_rate", 0.0),
-                no_rbs_freq=ann.get("no_rbs_freq", 0.0),
-                canonical_sd_freq=ann.get("canonical_sd_freq", 0.0),
+                strand_switch_rate=ann.get("strand_switch_rate", strand_switch_rate_pyro),
+                no_rbs_freq=ann.get("no_rbs_freq", no_rbs_pyro),
+                canonical_sd_freq=ann.get("canonical_sd_freq", canonical_sd_pyro),
                 n_plasmid_markers=ann.get("n_plasmid_markers", 0.0),
             )
             X_marker[i] = feat.to_array()
 
         # Batch inference on marker XGBoost
-        marker_proba = marker_clf.predict_proba(X_marker)  # (N, 3)
+        marker_proba = marker_clf.predict_proba(X_marker)  # (N, 2) or (N, 3)
         classes = ["plasmid", "chromosome", "phage"]
 
-        # Detect binary model (2-class: plasmid + chromosome, no phage).
-        # Binary models lack "phage" in their score dicts; we must not let
-        # the 3-class marker XGBoost re-introduce spurious phage mass.
-        is_binary_model = "phage" not in (all_scores[0] if all_scores else {})
+        # Detect binary marker model (2-class output: plasmid + chromosome only).
+        # Check XGBoost output dimensions — NOT MLP scores (which are always 3-class).
+        n_marker_classes = marker_proba.shape[1]
+        is_binary_model = n_marker_classes < 3
+        marker_classes = classes[:n_marker_classes]  # ["plasmid","chromosome"] or all 3
 
         # Blend MLP + marker scores using attention weighting
         # Hard override ONLY for truly unambiguous conjugative plasmids
@@ -475,14 +579,24 @@ def predict(
         n_hard_overrides = 0
         for i in range(n):
             mlp_s = all_scores[i]
-            marker_s = {c: float(marker_proba[i, j]) for j, c in enumerate(classes)}
+            marker_s = {c: float(marker_proba[i, j]) for j, c in enumerate(marker_classes)}
+            _xgb_scores_by_idx[i] = dict(marker_s)
 
             ann = annotations.get(sequence_ids[i], {})
+            # Capture the biological evidence flags for this sequence
+            _bio_ev_by_idx[i] = {
+                k: float(ann.get(k, 0.0))
+                for k in (
+                    "is_conjugative", "is_mobilizable", "has_replicon",
+                    "has_ice", "has_rep_protein", "n_rep_per_kb",
+                )
+            }
 
             # Hard override: BOTH relaxase AND MPF present → conjugative plasmid
             # (FP rate for chromosomes carrying both is negligible)
             if ann.get("is_conjugative", 0.0) > 0:
                 all_scores[i] = {"plasmid": 0.999, "chromosome": 0.0005, "phage": 0.0005}
+                _ev_type_by_idx[i] = "conjugative_override"
                 n_hard_overrides += 1
                 continue
 
@@ -492,7 +606,7 @@ def predict(
                 [
                     ann.get("is_mobilizable", 0.0),
                     ann.get("has_replicon", 0.0),
-                    ann.get("has_ice", 0.0),
+                    # has_ice excluded: ICEs are chromosomal elements, not plasmid evidence
                     ann.get("has_rep_protein", 0.0),
                 ]
             )
@@ -515,6 +629,7 @@ def predict(
             }
             total = sum(blended.values()) or 1.0
             all_scores[i] = {c: v / total for c, v in blended.items()}
+            _ev_type_by_idx[i] = "xgb_blend"
 
         if n_hard_overrides:
             logger.info(
@@ -552,6 +667,7 @@ def predict(
                         s2["phage"] = s2.get("phage", 0.0) * 0.45
                         total = sum(s2.values()) or 1.0
                         all_scores[i] = {c: v / total for c, v in s2.items()}
+                        _ev_type_by_idx[i] = "hallmark_boost"
                         n_hallmark_boosts += 1
             if n_hallmark_boosts:
                 logger.info(
@@ -587,11 +703,13 @@ def predict(
                 has_viral_evidence = v_marker >= 0.10 and n_virus_est >= 2.0
                 if not has_viral_evidence:
                     phage_mass = s["phage"]
-                    # Redistribute phage score to chromosome (85%) and plasmid (5%)
+                    # Redistribute phage score to chromosome only (no plasmid bleed —
+                    # the 5% plasmid bleed was creating FPs on chromosomal sequences
+                    # that score high phage but lack viral geNomad evidence).
                     s2 = dict(s)
                     s2["phage"] = phage_mass * 0.10
-                    s2["chromosome"] = s2.get("chromosome", 0.0) + phage_mass * 0.85
-                    s2["plasmid"] = s2.get("plasmid", 0.0) + phage_mass * 0.05
+                    s2["chromosome"] = s2.get("chromosome", 0.0) + phage_mass * 0.90
+                    s2["plasmid"] = s2.get("plasmid", 0.0)
                     total = sum(s2.values()) or 1.0
                     all_scores[i] = {c: v / total for c, v in s2.items()}
                     n_phage_suppressed += 1
@@ -611,7 +729,7 @@ def predict(
                     "is_conjugative",
                     "is_mobilizable",
                     "has_replicon",
-                    "has_ice",
+                    # has_ice excluded from bio evidence count (ICEs are chromosomal)
                     "has_rep_protein",
                 )
             )
@@ -627,6 +745,10 @@ def predict(
         logger.warning("Marker model not found at %s — using MLP only", marker_model_path)
 
     # ── Label assignment ──────────────────────────────────────────────────────
+    # Check whether the marker stage populated evidence dicts (only when
+    # marker_model_path was provided and valid).
+    _marker_stage_ran = bool(marker_model_path and Path(marker_model_path).exists())
+
     results: list[Prediction] = []
     for i, (sid, scores) in enumerate(zip(sequence_ids, all_scores)):
         seq_len = len(sequences[i])
@@ -639,6 +761,11 @@ def predict(
                 label=label,
                 confidence=confidence,
                 scores=scores,
+                # Evidence fields — only populated when marker stage ran
+                mlp_scores=dict(all_raw_scores[i]) if _marker_stage_ran else None,
+                xgb_scores=_xgb_scores_by_idx.get(i) if _marker_stage_ran else None,
+                bio_evidence=_bio_ev_by_idx.get(i, {}) if _marker_stage_ran else None,
+                evidence_type=_ev_type_by_idx.get(i, "xgb_blend") if _marker_stage_ran else "mlp_only",
             )
         )
 
