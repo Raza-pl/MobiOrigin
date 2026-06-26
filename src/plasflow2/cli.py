@@ -104,6 +104,7 @@ _DEFAULT_TAXON_MAP = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
 _DEFAULT_KAIJU_DIR = _DB_ROOT / "kaiju"
 _DEFAULT_KAIJU_NODES = _DEFAULT_KAIJU_DIR / "nodes.dmp"
 _DEFAULT_KAIJU_NAMES = _DEFAULT_KAIJU_DIR / "names.dmp"
+_DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "marker_xgb.pkl"
 
 
 def _resolve_model(model_path: str | None) -> Path:
@@ -1158,9 +1159,44 @@ def run(
     type=click.Path(),
     help="Destination TSV file for predictions.",
 )
-@click.option("--model", "model_path", default=None, type=click.Path())
-@click.option("--threshold", default=0.7, show_default=True)
-@click.option("--min-length", "min_length", default=1000, show_default=True)
+@click.option("--model", "model_path", default=None, type=click.Path(),
+              help="MLP model path [auto-detected from data/models/mlp_v2.pt].")
+@click.option("--threshold", default=0.7, show_default=True,
+              help="Minimum confidence to emit a label (argmax fallback).")
+@click.option("--plasmid-threshold", "plasmid_threshold", default=0.95, show_default=True,
+              help="Minimum plasmid score to call a contig as plasmid.")
+@click.option("--min-length", "min_length", default=1000, show_default=True,
+              help="Minimum contig length in bp.")
+@click.option(
+    "--annotation-tsv",
+    "annotation_tsv",
+    default=None,
+    type=click.Path(exists=True),
+    help=(
+        "Pre-computed MOB-suite annotation TSV from 'plasflow2 prepare' or "
+        "scripts/annotate_sequences.py. Enables XGBoost stage-2 biological marker blending "
+        "and adds evidence columns (mlp_plasmid, xgb_plasmid, is_conjugative, …) to output."
+    ),
+)
+@click.option(
+    "--marker-model",
+    "marker_model_path",
+    default=None,
+    type=click.Path(),
+    help=(
+        "XGBoost marker model (.pkl) for stage-2 blending "
+        "[auto-detected from data/models/marker_xgb.pkl]."
+    ),
+)
+@click.option("--threads", default=4, show_default=True,
+              help="CPU threads for pyrodigal ORF prediction (used by stage-2 marker scoring).")
+@click.option(
+    "--no-marker-model",
+    "no_marker_model",
+    is_flag=True,
+    default=False,
+    help="Disable stage-2 XGBoost even if marker_xgb.pkl is present.",
+)
 @click.pass_context
 def classify(
     ctx: click.Context,
@@ -1168,10 +1204,37 @@ def classify(
     output_tsv: str,
     model_path: str | None,
     threshold: float,
+    plasmid_threshold: float,
     min_length: int,
+    annotation_tsv: str | None,
+    marker_model_path: str | None,
+    threads: int,
+    no_marker_model: bool,
 ) -> None:
-    """Classify sequences and write per-sequence predictions to TSV."""
+    """Classify sequences and write per-sequence predictions to TSV.
+
+    Without --annotation-tsv: fast MLP-only classification (no databases required).
+
+    With --annotation-tsv: enables XGBoost stage-2 blending for higher accuracy.
+    Generate the TSV first with:
+
+        plasflow2 prepare --input assembly.fasta --output annotations.tsv
+
+    """
     resolved_model = _resolve_model(model_path)
+
+    # Resolve marker model (auto-detect unless explicitly disabled)
+    resolved_marker: str | None = None
+    if not no_marker_model:
+        if marker_model_path:
+            resolved_marker = marker_model_path
+        elif _DEFAULT_MARKER_MODEL.exists():
+            resolved_marker = str(_DEFAULT_MARKER_MODEL)
+
+    if resolved_marker:
+        click.echo(f"Stage-2 marker XGBoost: {resolved_marker}")
+    if annotation_tsv:
+        click.echo(f"Annotation TSV: {annotation_tsv}")
 
     records = load_fasta(input_fasta, min_length=min_length)
     if not records:
@@ -1183,6 +1246,12 @@ def classify(
         [r.id for r in records],
         resolved_model,
         threshold=threshold,
+        plasmid_threshold=plasmid_threshold,
+        argmax_fallback=False,
+        marker_model_path=resolved_marker,
+        annotation_tsv=annotation_tsv,
+        use_pyrodigal=bool(resolved_marker),
+        marker_alpha_base=0.3,
     )
 
     out_path = Path(output_tsv)
@@ -1194,6 +1263,101 @@ def classify(
     summary = "  ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
     click.echo(f"Classified {len(predictions)} sequences — {summary}")
     click.echo(f"Predictions → {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# plasflow2 prepare  (generate annotation TSV for stage-2 XGBoost)
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option("--input", "-i", "input_fasta", required=True, type=click.Path(exists=True),
+              help="Input FASTA (any contigs — plasmid + chromosome).")
+@click.option("--output", "-o", "output_tsv", required=True, type=click.Path(),
+              help="Output annotation TSV (pass to 'classify --annotation-tsv').")
+@click.option("--threads", default=4, show_default=True,
+              help="CPU threads for MOB-suite DIAMOND searches.")
+@click.option("--genomad-genes", "genomad_genes", default=None, type=click.Path(exists=True),
+              help=(
+                  "Path to genomad annotate output *_genes.tsv. "
+                  "When provided, adds 9 geNomad SPM features to the annotation TSV "
+                  "(26 total features vs 17 without). "
+                  "Generate with: genomad annotate assembly.fasta genomad_out/ genomad_db/"
+              ))
+@click.pass_context
+def prepare(
+    ctx: click.Context,
+    input_fasta: str,
+    output_tsv: str,
+    threads: int,
+    genomad_genes: str | None,
+) -> None:
+    """Generate MOB-suite annotation TSV for XGBoost stage-2 classification.
+
+    Runs MOB-suite DIAMOND searches (mob_proteins, mpf_proteins, rep_proteins)
+    on all input contigs and writes a TSV with per-contig biological marker
+    features: is_conjugative, is_mobilizable, has_replicon, has_rep_protein,
+    n_rep_per_kb, coding_density, gc_content, n_orfs_per_kb, etc.
+
+    The output TSV is passed to 'classify --annotation-tsv' to enable
+    XGBoost stage-2 marker blending and full evidence columns in predictions.
+
+    Example workflow:
+
+    \b
+        # Step 1 — generate annotation TSV (~5–30 min depending on dataset size)
+        plasflow2 prepare --input assembly.fasta --output annotations.tsv
+
+        # Step 2 — classify with XGBoost stage-2 (evidence columns in output)
+        plasflow2 classify --input assembly.fasta --output predictions.tsv \\
+            --annotation-tsv annotations.tsv
+
+    Optional: add geNomad SPM features for higher accuracy (requires geNomad):
+
+    \b
+        genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
+        plasflow2 prepare --input assembly.fasta --output annotations.tsv \\
+            --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv
+    """
+    import subprocess
+    import sys
+
+    # Delegate to annotate_sequences.py which has the full MOB-suite pipeline
+    script = Path(__file__).parent.parent.parent / "scripts" / "annotate_sequences.py"
+    if not script.exists():
+        raise click.UsageError(
+            f"annotate_sequences.py not found at {script}. "
+            "Clone the full repository to use this command."
+        )
+
+    cmd = [
+        sys.executable, str(script),
+        "--fasta", input_fasta,
+        "--out", output_tsv,
+        "--threads", str(threads),
+    ]
+    if genomad_genes:
+        cmd += ["--genomad-genes", genomad_genes]
+
+    click.echo(f"Generating annotation TSV: {input_fasta} → {output_tsv}")
+    if genomad_genes:
+        click.echo(f"  geNomad genes: {genomad_genes}")
+    click.echo(f"  Threads: {threads}")
+    click.echo("  Running MOB-suite DIAMOND searches (this may take several minutes)…")
+
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"annotate_sequences.py exited with code {result.returncode}. "
+            "Check that MOB-suite is installed: conda install -c conda-forge -c bioconda mob_suite"
+        )
+
+    click.echo(f"Annotation TSV → {output_tsv}")
+    click.echo(
+        f"\nNext step:\n"
+        f"  plasflow2 classify --input {input_fasta} --output predictions.tsv "
+        f"--annotation-tsv {output_tsv}"
+    )
 
 
 # ---------------------------------------------------------------------------
