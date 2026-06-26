@@ -149,6 +149,51 @@ All tools evaluated on the **same 60,394-sequence benchmark** (394 true plasmids
 
 > **Note on v1 numbers:** PlasFlow v1's published accuracy (~93%) was measured on its own training-adjacent benchmark. The kmer7 component model tested here achieves plasmid F1=0.025 on our independent benchmark; the published result uses multi-kmer ensemble voting not evaluated here. v2 is evaluated with no such advantage.
 
+### Benchmark quality analysis — PLSDB validation of false positives
+
+To assess whether reported false positives reflect genuine classifier errors or benchmark annotation artefacts, all FP sequences were aligned against **PLSDB** (72,556 plasmids) and **COMPASS** (12,084 plasmids) using `minimap2 -x asm5` (see `scripts/run_fp_minimap2.sh`).
+
+**17 of 49 FPs (34.7%) match known plasmids at ≥90 % identity over ≥50 % query coverage.**
+
+The most striking cases:
+
+| FP source chromosome | Windows | PLSDB/COMPASS match | Identity | Coverage |
+|---|---|---|---|---|
+| *A. baumannii* ACICU (NC_009085) | 5/6 | NZ_CP012005.1, NZ_CP027531.1, MG954377.1 | **100%** | **100%** |
+| *K. pneumoniae* NTUH-K2044 (NC_017626) | 1 | NZ_CP104448.1, CP082700.1, NZ_CP141089.1 | 99–100% | 72–100% |
+| *S. aureus* MW2 (NC_002952) | 1 | NZ_CP020021.1 (COMPASS) | **100%** | 68% |
+
+These sequences exist verbatim in known plasmid databases. The benchmark labels them as "chromosome" because the NCBI assembly deposited them under a chromosome accession — but their sequence content is unambiguously plasmid-derived. PlasFlow v2 was correct; the benchmark label was wrong.
+
+**Corrected metrics (removing 17 mislabeled FPs):**
+
+| | Benchmark-reported | PLSDB-corrected |
+|--|---|---|
+| TP | 237 | **254** |
+| FP | 49 | **32** |
+| Precision | 0.829 | **0.888** |
+| Recall | 0.718 | 0.732 |
+| F1 | 0.769 | **0.803** |
+
+The remaining 32 true FPs split into two types: **annotation-driven** (20 windows containing chromosomally-integrated conjugation or mobilisation genes — genuine biological ambiguity) and **composition-driven** (12 windows with no biological markers, where the tetramer profile resembles a plasmid by chance).
+
+Full validation output: `results/fp_validation/` · Script: `scripts/run_fp_minimap2.sh`
+
+### False negative analysis — two distinct failure modes
+
+Of the 93 FNs counted in the F1 (true plasmids predicted as chromosome):
+
+| Failure mode | Count | Characteristic |
+|---|---|---|
+| **Dark plasmids** | 78/93 (84%) | plasmid_score < 0.40, zero bio markers — completely invisible to both the MLP and XGBoost |
+| **Marker-present misses** | 15/93 (16%) | has mobilisation/rep protein signal but MLP score still too low to overcome it |
+
+None of the 93 chromosome FNs scored ≥0.70 — they are not near-misses; the MLP confidently scored them as non-plasmid. These are plasmids whose tetramer composition is indistinguishable from chromosome on this benchmark, representing the **theoretical ceiling for any k-mer composition method** applied to 10 kb windows.
+
+An additional 64 true plasmids were unclassified (below the 0.95 plasmid threshold but above the chromosome threshold): 49 of these scored 0.70–0.95 and would be recovered by lowering the threshold, but at the cost of additional FPs.
+
+Run `bash scripts/run_fn_minimap2.sh` to check which FNs have PLSDB/COMPASS matches (recoverable via reference-based search) vs. truly novel sequences with no plasmid database homology.
+
 ### W1 — Wastewater metagenome assembly (larger dataset)
 205,645 contigs · Apple Silicon CPU · 16 threads
 
