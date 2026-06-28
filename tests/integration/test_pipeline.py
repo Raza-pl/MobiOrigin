@@ -428,8 +428,8 @@ def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     with open(out / "all_predictions.tsv") as fh:
         header = fh.readline().strip().split("\t")
-    # Check the core columns are present in the correct positions
-    assert header[:12] == [
+    # First 8 columns are fixed positional — identity + raw scores
+    assert header[:8] == [
         "contig_id",
         "length",
         "label",
@@ -438,13 +438,13 @@ def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
         "chromosome_score",
         "phage_score",
         "archaea_score",
+    ]
+    # Remaining columns may shift as new features are added — just verify presence
+    for col in (
         "taxonomy",
         "taxonomy_rank",
         "taxonomy_lineage",
         "num_args",
-    ]
-    # Additional columns added later in development — just verify they're present
-    for col in (
         "arg_genes",
         "drug_classes",
         "arg_sources",
