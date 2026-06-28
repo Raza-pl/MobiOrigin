@@ -84,9 +84,13 @@ warn_unused_configs = true
 module = [
     "plasflow2.pipeline",
     "plasflow2.cli",
+    "plasflow2.classify.predict",
+    "plasflow2.classify.features",
     "plasflow2.classify.cnn_model",
     "plasflow2.classify.marker_classifier",
     "plasflow2.annotate.topology",
+    "plasflow2.annotate.args",
+    "plasflow2.annotate.mobility",
     "plasflow2.report.generator",
 ]
 ignore_errors = true
