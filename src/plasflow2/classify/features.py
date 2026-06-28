@@ -81,7 +81,7 @@ FEATURE_DIM = _KMER_DIM + K7_CANON_SIZE + 1  # k=1–5 + k=7 + length = 9557
 
 # Gene content feature block (appended when gene_data is provided)
 GENE_DIM = 6  # gc_content, coding_density, n_orfs_per_kb, strand_switch_rate,
-              # canonical_sd_freq, no_rbs_freq
+# canonical_sd_freq, no_rbs_freq
 FEATURE_DIM_FULL = FEATURE_DIM + GENE_DIM  # 9563
 
 # Canonical Shine-Dalgarno motifs as recognised by pyrodigal
@@ -355,8 +355,14 @@ def gene_content_vector(seq: str, genes: list) -> NDArray[np.float32]:
     no_rbs_freq = no_rbs / n_orfs
 
     return np.array(
-        [gc, coding_density, n_orfs_per_kb_norm, strand_switch_rate,
-         canonical_sd_freq, no_rbs_freq],
+        [
+            gc,
+            coding_density,
+            n_orfs_per_kb_norm,
+            strand_switch_rate,
+            canonical_sd_freq,
+            no_rbs_freq,
+        ],
         dtype=np.float32,
     )
 

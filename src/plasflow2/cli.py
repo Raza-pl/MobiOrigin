@@ -156,18 +156,18 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "phage_score",
         "archaea_score",
         # ── prediction evidence (populated when marker XGBoost was used) ─
-        "mlp_plasmid",      # raw MLP score before XGBoost blending
+        "mlp_plasmid",  # raw MLP score before XGBoost blending
         "mlp_chromosome",
         "mlp_phage",
-        "xgb_plasmid",      # XGBoost second-stage plasmid score
+        "xgb_plasmid",  # XGBoost second-stage plasmid score
         "xgb_chromosome",
-        "is_conjugative",   # biological markers from annotation TSV
+        "is_conjugative",  # biological markers from annotation TSV
         "is_mobilizable",
         "has_replicon",
-        "has_ice",          # shown for users even though excluded from classification
+        "has_ice",  # shown for users even though excluded from classification
         "has_rep_protein",
         "n_rep_per_kb",
-        "evidence_type",    # mlp_only | xgb_blend | conjugative_override | hallmark_boost
+        "evidence_type",  # mlp_only | xgb_blend | conjugative_override | hallmark_boost
         "taxonomy",
         "taxonomy_rank",
         "taxonomy_lineage",
@@ -1159,14 +1159,33 @@ def run(
     type=click.Path(),
     help="Destination TSV file for predictions.",
 )
-@click.option("--model", "model_path", default=None, type=click.Path(),
-              help="MLP model path [auto-detected from data/models/mlp_v2.pt].")
-@click.option("--threshold", default=0.7, show_default=True,
-              help="Minimum confidence to emit a label (argmax fallback).")
-@click.option("--plasmid-threshold", "plasmid_threshold", default=0.95, show_default=True,
-              help="Minimum plasmid score to call a contig as plasmid.")
-@click.option("--min-length", "min_length", default=1000, show_default=True,
-              help="Minimum contig length in bp.")
+@click.option(
+    "--model",
+    "model_path",
+    default=None,
+    type=click.Path(),
+    help="MLP model path [auto-detected from data/models/mlp_v2.pt].",
+)
+@click.option(
+    "--threshold",
+    default=0.7,
+    show_default=True,
+    help="Minimum confidence to emit a label (argmax fallback).",
+)
+@click.option(
+    "--plasmid-threshold",
+    "plasmid_threshold",
+    default=0.95,
+    show_default=True,
+    help="Minimum plasmid score to call a contig as plasmid.",
+)
+@click.option(
+    "--min-length",
+    "min_length",
+    default=1000,
+    show_default=True,
+    help="Minimum contig length in bp.",
+)
 @click.option(
     "--annotation-tsv",
     "annotation_tsv",
@@ -1188,8 +1207,12 @@ def run(
         "[auto-detected from data/models/marker_xgb.pkl]."
     ),
 )
-@click.option("--threads", default=4, show_default=True,
-              help="CPU threads for pyrodigal ORF prediction (used by stage-2 marker scoring).")
+@click.option(
+    "--threads",
+    default=4,
+    show_default=True,
+    help="CPU threads for pyrodigal ORF prediction (used by stage-2 marker scoring).",
+)
 @click.option(
     "--no-marker-model",
     "no_marker_model",
@@ -1271,19 +1294,37 @@ def classify(
 
 
 @main.command()
-@click.option("--input", "-i", "input_fasta", required=True, type=click.Path(exists=True),
-              help="Input FASTA (any contigs — plasmid + chromosome).")
-@click.option("--output", "-o", "output_tsv", required=True, type=click.Path(),
-              help="Output annotation TSV (pass to 'classify --annotation-tsv').")
-@click.option("--threads", default=4, show_default=True,
-              help="CPU threads for MOB-suite DIAMOND searches.")
-@click.option("--genomad-genes", "genomad_genes", default=None, type=click.Path(exists=True),
-              help=(
-                  "Path to genomad annotate output *_genes.tsv. "
-                  "When provided, adds 9 geNomad SPM features to the annotation TSV "
-                  "(26 total features vs 17 without). "
-                  "Generate with: genomad annotate assembly.fasta genomad_out/ genomad_db/"
-              ))
+@click.option(
+    "--input",
+    "-i",
+    "input_fasta",
+    required=True,
+    type=click.Path(exists=True),
+    help="Input FASTA (any contigs — plasmid + chromosome).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_tsv",
+    required=True,
+    type=click.Path(),
+    help="Output annotation TSV (pass to 'classify --annotation-tsv').",
+)
+@click.option(
+    "--threads", default=4, show_default=True, help="CPU threads for MOB-suite DIAMOND searches."
+)
+@click.option(
+    "--genomad-genes",
+    "genomad_genes",
+    default=None,
+    type=click.Path(exists=True),
+    help=(
+        "Path to genomad annotate output *_genes.tsv. "
+        "When provided, adds 9 geNomad SPM features to the annotation TSV "
+        "(26 total features vs 17 without). "
+        "Generate with: genomad annotate assembly.fasta genomad_out/ genomad_db/"
+    ),
+)
 @click.pass_context
 def prepare(
     ctx: click.Context,
@@ -1331,10 +1372,14 @@ def prepare(
         )
 
     cmd = [
-        sys.executable, str(script),
-        "--fasta", input_fasta,
-        "--out", output_tsv,
-        "--threads", str(threads),
+        sys.executable,
+        str(script),
+        "--fasta",
+        input_fasta,
+        "--out",
+        output_tsv,
+        "--threads",
+        str(threads),
     ]
     if genomad_genes:
         cmd += ["--genomad-genes", genomad_genes]

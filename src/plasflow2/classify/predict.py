@@ -79,9 +79,9 @@ LENGTH_THRESHOLD_TIERS = [
     #   5-10kb:  phage raised 0.75→0.90.
     #   10-20kb: main plasmid tier; phage raised 0.72→0.90.
     #   >20kb:   long sequences; phage raised 0.70→0.90; chr lowered 0.68→0.62.
-    (2_000, 0.99, 0.95, 0.75),   # <2kb
-    (4_999, 0.95, 0.92, 0.68),   # 2-5kb
-    (9_999, 0.98, 0.90, 0.65),   # 5-10kb
+    (2_000, 0.99, 0.95, 0.75),  # <2kb
+    (4_999, 0.95, 0.92, 0.68),  # 2-5kb
+    (9_999, 0.98, 0.90, 0.65),  # 5-10kb
     # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
     (19_999, 0.93, 0.90, 0.63),  # 10-20kb
     (float("inf"), 0.94, 0.90, 0.62),  # >20kb
@@ -395,13 +395,18 @@ def predict(
     # Detect expected input dimension from the loaded model's first layer.
     # This determines whether gene content features should be appended to the
     # k=7 feature vector (9563-dim model) or not (9557-dim model).
-    from plasflow2.classify.features import FEATURE_DIM, FEATURE_DIM_FULL
+    from plasflow2.classify.features import FEATURE_DIM_FULL
+
     _model_input_dim: int = model.net[0].in_features  # inspect before any DataParallel wrap
-    _model_wants_gene_features: bool = (_model_input_dim == FEATURE_DIM_FULL)
+    _model_wants_gene_features: bool = _model_input_dim == FEATURE_DIM_FULL
     if _model_wants_gene_features:
-        logger.info("Model expects %d-dim input — gene content features will be included", _model_input_dim)
+        logger.info(
+            "Model expects %d-dim input — gene content features will be included", _model_input_dim
+        )
     else:
-        logger.info("Model expects %d-dim input — k=7 only (no gene content features)", _model_input_dim)
+        logger.info(
+            "Model expects %d-dim input — k=7 only (no gene content features)", _model_input_dim
+        )
 
     # Multi-GPU: wrap in DataParallel when multiple CUDA devices are available.
     n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -504,8 +509,7 @@ def predict(
             genes = orf.get("genes", [])
             n_orfs = len(genes) if genes else orf.get("n_orfs", 0)
             covered_bp = (
-                sum(abs(g.end - g.begin) for g in genes)
-                if genes else orf.get("covered_bp", 0)
+                sum(abs(g.end - g.begin) for g in genes) if genes else orf.get("covered_bp", 0)
             )
             cod_density = min(covered_bp / length_bp, 1.0) if length_bp > 0 else 0.85
             n_orfs_kb = n_orfs / max(length_kb, 0.001) if length_kb > 0 else 1.0
@@ -541,14 +545,14 @@ def predict(
                 is_conjugative=ann.get("is_conjugative", 0.0),
                 is_mobilizable=ann.get("is_mobilizable", 0.0),
                 has_replicon=ann.get("has_replicon", 0.0),
-                has_ice=0.0,             # ICE excluded from classification evidence:
+                has_ice=0.0,  # ICE excluded from classification evidence:
                 # ICEs integrate into chromosomes and create FPs when used as plasmid
                 # signal. ICE annotations are preserved in output for users but do not
                 # drive XGBoost blending. Only MOB-type relaxase and MGE evidence is used.
                 has_rep_protein=ann.get("has_rep_protein", 0.0),
                 n_arg_per_kb=ann.get("n_arg_per_kb", 0.0),
                 n_mge_per_kb=ann.get("n_mge_per_kb", 0.0),
-                n_ice_per_kb=0.0,        # ICE density excluded for same reason
+                n_ice_per_kb=0.0,  # ICE density excluded for same reason
                 n_rep_per_kb=ann.get("n_rep_per_kb", 0.0),
                 log10_length=float(_np.log10(length_bp)),
                 gc_content=gc,
@@ -597,8 +601,12 @@ def predict(
             _bio_ev_by_idx[i] = {
                 k: float(ann.get(k, 0.0))
                 for k in (
-                    "is_conjugative", "is_mobilizable", "has_replicon",
-                    "has_ice", "has_rep_protein", "n_rep_per_kb",
+                    "is_conjugative",
+                    "is_mobilizable",
+                    "has_replicon",
+                    "has_ice",
+                    "has_rep_protein",
+                    "n_rep_per_kb",
                 )
             }
 
@@ -717,20 +725,18 @@ def predict(
                 sid = sequence_ids[i]
                 ann = annotations.get(sid, {})
                 prot_hits_per_kb = float(ann.get("plsdb_prot_hits_per_kb", 0.0))
-                max_pct_id       = float(ann.get("max_plsdb_prot_pct_id", 0.0))
+                max_pct_id = float(ann.get("max_plsdb_prot_pct_id", 0.0))
                 mlp_plas = s.get("plasmid", 0.0)
-                if (prot_hits_per_kb >= 2.0
-                        and max_pct_id >= 40.0
-                        and mlp_plas >= 0.30):
+                if prot_hits_per_kb >= 2.0 and max_pct_id >= 40.0 and mlp_plas >= 0.30:
                     best = max(s, key=s.__getitem__)
                     if best != "plasmid":
                         # Transfer 55% of non-plasmid mass to plasmid
                         s2 = dict(s)
                         non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
                         transfer = non_plas * 0.55
-                        s2["plasmid"]    = s2.get("plasmid", 0.0) + transfer
+                        s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
                         s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
-                        s2["phage"]      = s2.get("phage", 0.0) * 0.45
+                        s2["phage"] = s2.get("phage", 0.0) * 0.45
                         total = sum(s2.values()) or 1.0
                         all_scores[i] = {c: v / total for c, v in s2.items()}
                         _ev_type_by_idx[i] = "plsdb_prot_boost"
@@ -769,9 +775,9 @@ def predict(
                         s2 = dict(s)
                         non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
                         transfer = non_plas * 0.55
-                        s2["plasmid"]    = s2.get("plasmid", 0.0) + transfer
+                        s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
                         s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
-                        s2["phage"]      = s2.get("phage", 0.0) * 0.45
+                        s2["phage"] = s2.get("phage", 0.0) * 0.45
                         total = sum(s2.values()) or 1.0
                         all_scores[i] = {c: v / total for c, v in s2.items()}
                         _ev_type_by_idx[i] = "marker_threshold_boost"
@@ -818,9 +824,9 @@ def predict(
                         s2 = dict(s)
                         non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
                         transfer = non_plas * 0.65
-                        s2["plasmid"]    = s2.get("plasmid", 0.0) + transfer
+                        s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
                         s2["chromosome"] = s2.get("chromosome", 0.0) * 0.35
-                        s2["phage"]      = s2.get("phage", 0.0) * 0.35
+                        s2["phage"] = s2.get("phage", 0.0) * 0.35
                         total = sum(s2.values()) or 1.0
                         all_scores[i] = {c: v / total for c, v in s2.items()}
                         _ev_type_by_idx[i] = "replicon_boost"
@@ -921,7 +927,9 @@ def predict(
                 mlp_scores=dict(all_raw_scores[i]) if _marker_stage_ran else None,
                 xgb_scores=_xgb_scores_by_idx.get(i) if _marker_stage_ran else None,
                 bio_evidence=_bio_ev_by_idx.get(i, {}) if _marker_stage_ran else None,
-                evidence_type=_ev_type_by_idx.get(i, "xgb_blend") if _marker_stage_ran else "mlp_only",
+                evidence_type=(
+                    _ev_type_by_idx.get(i, "xgb_blend") if _marker_stage_ran else "mlp_only"
+                ),
             )
         )
 
@@ -963,10 +971,10 @@ CASCADE_PLASMID_THRESHOLD_TIERS = [
     # Stage 1 binary model is bimodal (median=0.055, p90=0.945) but 65% of W1
     # reads are <2kb → must use very high threshold for short contigs.
     # Fine-tune further with run_benchmark_evaluation.py --stage1-model --stage2-model.
-    (2_000,        0.995, 0.980, 0.75),  # <2kb  — very conservative (noisy short frags)
-    (4_999,        0.970, 0.940, 0.72),  # 2-5kb
-    (9_999,        0.950, 0.910, 0.70),  # 5-10kb
-    (19_999,       0.930, 0.880, 0.68),  # 10-20kb
+    (2_000, 0.995, 0.980, 0.75),  # <2kb  — very conservative (noisy short frags)
+    (4_999, 0.970, 0.940, 0.72),  # 2-5kb
+    (9_999, 0.950, 0.910, 0.70),  # 5-10kb
+    (19_999, 0.930, 0.880, 0.68),  # 10-20kb
     (float("inf"), 0.920, 0.860, 0.65),  # >20kb — long contigs have most evidence
 ]
 
@@ -1036,60 +1044,62 @@ def cascade_predict(
     # ── Stage 1: plasmid vs. rest → prob[:, 1] = P(plasmid) ─────────────────
     s1_plasmid_probs: list[float] = []
     for start in range(0, len(X), batch_size):
-        batch = torch.tensor(X[start: start + batch_size]).to(device)
+        batch = torch.tensor(X[start : start + batch_size]).to(device)
         with torch.no_grad():
             logits = s1_model(batch)
-            probs  = torch.softmax(logits, dim=-1).cpu().numpy()
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
         s1_plasmid_probs.extend(float(p[1]) for p in probs)  # index 1 = plasmid
 
     # ── Stage 2: chr vs. phage → prob[:, 0]=P(chr)  prob[:, 1]=P(phage) ─────
-    s2_chr_probs:   list[float] = []
+    s2_chr_probs: list[float] = []
     s2_phage_probs: list[float] = []
     for start in range(0, len(X), batch_size):
-        batch = torch.tensor(X[start: start + batch_size]).to(device)
+        batch = torch.tensor(X[start : start + batch_size]).to(device)
         with torch.no_grad():
             logits = s2_model(batch)
-            probs  = torch.softmax(logits, dim=-1).cpu().numpy()
-        s2_chr_probs.extend(float(p[0]) for p in probs)    # index 0 = chr
+            probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        s2_chr_probs.extend(float(p[0]) for p in probs)  # index 0 = chr
         s2_phage_probs.extend(float(p[1]) for p in probs)  # index 1 = phage
 
     # ── Combine via per-length thresholds ────────────────────────────────────
     results: list[Prediction] = []
     for i, (sid, seq) in enumerate(zip(sequence_ids, sequences)):
         plasmid_prob = s1_plasmid_probs[i]
-        chr_prob     = s2_chr_probs[i]
-        phage_prob   = s2_phage_probs[i]
+        chr_prob = s2_chr_probs[i]
+        phage_prob = s2_phage_probs[i]
 
         scores = {
-            "plasmid":    plasmid_prob,
+            "plasmid": plasmid_prob,
             "chromosome": chr_prob,
-            "phage":      phage_prob,
+            "phage": phage_prob,
         }
 
         plas_t, phage_t, chr_t = _get_cascade_thresholds(len(seq))
 
         if plasmid_prob >= plas_t:
-            label      = "plasmid"
+            label = "plasmid"
             confidence = plasmid_prob
         elif phage_prob >= phage_t:
-            label      = "phage"
+            label = "phage"
             confidence = phage_prob
         elif chr_prob >= chr_t:
-            label      = "chromosome"
+            label = "chromosome"
             confidence = chr_prob
         elif argmax_fallback:
-            label      = max(scores, key=scores.__getitem__)
+            label = max(scores, key=scores.__getitem__)
             confidence = scores[label]
         else:
-            label      = "unclassified"
+            label = "unclassified"
             confidence = max(plasmid_prob, chr_prob, phage_prob)
 
-        results.append(Prediction(
-            sequence_id=sid,
-            label=label,
-            confidence=confidence,
-            scores=scores,
-        ))
+        results.append(
+            Prediction(
+                sequence_id=sid,
+                label=label,
+                confidence=confidence,
+                scores=scores,
+            )
+        )
 
     n_by_label: dict[str, int] = {}
     for r in results:
@@ -1097,7 +1107,8 @@ def cascade_predict(
     n_unc = n_by_label.get("unclassified", 0)
     logger.info(
         "Cascade classified %d sequences (unclassified=%d): %s",
-        len(results), n_unc,
+        len(results),
+        n_unc,
         "  ".join(f"{k}={v:,}" for k, v in sorted(n_by_label.items())),
     )
     return results
