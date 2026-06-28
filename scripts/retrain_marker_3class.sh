@@ -34,11 +34,13 @@ cd "$ROOT"
 
 THREADS=8
 MAX_PER_CLASS=30000
+GENOMAD_DB=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --max-per-class) MAX_PER_CLASS="$2"; shift 2 ;;
         --threads)       THREADS="$2";       shift 2 ;;
+        --genomad-db)    GENOMAD_DB="$2";    shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -105,6 +107,78 @@ python3 -u "$SCRIPT_DIR/build_marker_dataset.py" \
 
 echo ""
 echo "[1/3] Feature build complete: $(date)"
+
+# ── Optional: geNomad annotation ─────────────────────────────────────────────
+if [[ -n "$GENOMAD_DB" && -d "$GENOMAD_DB" ]]; then
+    echo ""
+    echo "[1.5/3] Running geNomad annotate for SPM features …"
+    echo "  geNomad DB : $GENOMAD_DB"
+    echo "  Start      : $(date)"
+    echo ""
+
+    for CLS in plasmid chromosome phage; do
+        FASTA="$DATA_DIR/marker_work/${CLS}_training.fna"
+        ANN_DIR="$DATA_DIR/marker_work/${CLS}_genomad_ann"
+        GENES_TSV="$ANN_DIR/${CLS}_training_annotate/${CLS}_training_genes.tsv"
+
+        if [[ ! -f "$FASTA" ]]; then
+            echo "  [$CLS] WARNING: $FASTA not found — skipping geNomad"
+            continue
+        fi
+
+        # Re-run if FASTA is newer than existing genes TSV (different sequences)
+        if [[ -f "$GENES_TSV" && "$GENES_TSV" -nt "$FASTA" ]]; then
+            echo "  [$CLS] geNomad output is up-to-date — skipping"
+        else
+            if [[ -f "$GENES_TSV" ]]; then
+                echo "  [$CLS] FASTA newer than geNomad output — re-running geNomad"
+                rm -rf "$ANN_DIR"
+            fi
+            echo "  [$CLS] Running genomad annotate (threads=$THREADS, splits=4) …"
+            genomad annotate \
+                "$FASTA" \
+                "$ANN_DIR" \
+                "$GENOMAD_DB" \
+                --threads "$THREADS" \
+                --splits 4 \
+                --cleanup
+            echo "  [$CLS] Done: $(date)"
+        fi
+    done
+
+    echo ""
+    echo "[1.6/3] Patching NPZ with geNomad features …"
+    python3 -u "$SCRIPT_DIR/rebuild_marker_npz_with_genomad.py" \
+        --base-npz     "$OUT_NPZ" \
+        --ann-dir      "$DATA_DIR/marker_work" \
+        --proteins-dir "$DATA_DIR/marker_work" \
+        --out          "$OUT_NPZ" \
+        2>&1 | tee -a "$DATA_DIR/marker_build_3class.log"
+
+    # Verify geNomad features have non-zero variance
+    python3 - <<PYCHECK_GN
+import numpy as np
+f = np.load("$OUT_NPZ", allow_pickle=True)
+X = f['X']
+gn_cols = X[:, 16:28]
+n_rows = len(X)
+gn_names = ["p_marker_freq","c_marker_freq","v_marker_freq","pp_marker_freq",
+            "median_p_spm","median_c_spm","median_v_spm","p_vs_c_logistic",
+            "strand_switch_rate","no_rbs_freq","canonical_sd_freq","n_plasmid_markers"]
+n_matched = int((gn_cols.any(axis=1)).sum())
+print(f"Rows with non-zero geNomad features: {n_matched:,} / {n_rows:,} ({100*n_matched/n_rows:.1f}%)")
+for i, col in enumerate(gn_names):
+    vals = X[:, 16+i]
+    print(f"  {col:30s}  mean={vals.mean():.4f}  std={vals.std():.4f}  nonzero={int((vals!=0).sum())}")
+if n_matched < n_rows * 0.3:
+    print("WARNING: Low geNomad coverage — check genomad annotate ran on the right FASTAs")
+PYCHECK_GN
+
+else
+    echo ""
+    echo "  (--genomad-db not provided — geNomad features will be 0 in training)"
+    echo "  To train with geNomad: bash $0 --genomad-db data/databases/genomad_db"
+fi
 
 # Verify 3 classes
 python3 - <<PYCHECK2

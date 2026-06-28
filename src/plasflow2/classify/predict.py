@@ -160,6 +160,10 @@ class Prediction:
                         "xgb_blend"             — MLP + XGBoost soft blend.
                         "conjugative_override"  — hard override (relaxase + MPF).
                         "hallmark_boost"        — geNomad hallmark gene boost.
+                        "plsdb_prot_boost"      — PLSDB protein homology boost.
+                        "plsdb_nt_override"     — PLSDB nucleotide hard override (minimap2 asm5).
+                        "marker_threshold_boost" — ≥1 geNomad marker + mlp≥0.90 soft boost.
+                        "replicon_boost"         — rep.dna.fas replicon detected (minimap2/BLASTN).
     """
 
     sequence_id: str
@@ -223,6 +227,12 @@ def _load_annotation_tsv(tsv_path: Path | str) -> dict[str, dict[str, float]]:
         "no_rbs_freq",
         "canonical_sd_freq",
         "n_plasmid_markers",
+        # PLSDB protein homology (present when annotated with --plsdb-proteins)
+        "plsdb_prot_hits_per_kb",
+        "max_plsdb_prot_pct_id",
+        # PLSDB nucleotide match (present when annotated with --plsdb-fasta)
+        "plsdb_nt_match",
+        "plsdb_nt_qcov",
     }
     try:
         with open(tsv_path, newline="") as fh:
@@ -637,6 +647,15 @@ def predict(
                 n_hard_overrides,
             )
 
+        # ── PLSDB nucleotide hard override ───────────────────────────────────
+        # DISABLED: minimap2 asm5 at ≥50% qcov / ≥90% identity is non-specific.
+        # Bacterial chromosomes share long stretches with same-species PLSDB
+        # plasmids (HGT, shared core genes), causing ~3,300 chromosome FPs.
+        # The plsdb_nt_match column is still computed in annotate_sequences.py
+        # for research use, but is not applied as a classification override.
+        # To re-enable, raise thresholds to qcov≥0.90 AND identity≥0.99 and
+        # verify precision on the benchmark before deploying.
+
         # ── Plasmid hallmark hard boost ───────────────────────────────────────
         # When geNomad identifies ≥ 2 plasmid-specific hallmark genes on a
         # contig AND the MLP already leans plasmid (score ≥ 0.30), the
@@ -673,6 +692,143 @@ def predict(
                 logger.info(
                     "Plasmid hallmark boost: %d sequences boosted (n_plasmid_markers >= 2, mlp >= 0.30)",
                     n_hallmark_boosts,
+                )
+
+        # ── PLSDB protein homology boost ──────────────────────────────────────
+        # When a sequence has strong protein-level similarity to PLSDB plasmids
+        # (many ORFs matching PLSDB proteins at moderate identity) AND the MLP
+        # already leans plasmid (score ≥ 0.30), this is strong evidence that
+        # the sequence is a true plasmid regardless of k-mer composition.
+        #
+        # This targets "composition-invisible" false negatives: sequences from
+        # unusual plasmid lineages where k-mer profiles don't distinguish them
+        # from chromosomes, but whose ORFs match known PLSDB proteins.
+        #
+        # Thresholds calibrated on benchmark to maximise TP gain vs FP cost:
+        #   plsdb_prot_hits_per_kb >= 2.0  (≥2 PLSDB protein hits per kb)
+        #   max_plsdb_prot_pct_id  >= 40.0 (at least one hit ≥40% identity)
+        #   mlp_plasmid_score      >= 0.30 (MLP weakly leans plasmid)
+        #
+        # Only applies when annotation TSV was built with --plsdb-proteins.
+        n_prot_boosts = 0
+        if annotations:
+            for i in range(n):
+                s = all_scores[i]
+                sid = sequence_ids[i]
+                ann = annotations.get(sid, {})
+                prot_hits_per_kb = float(ann.get("plsdb_prot_hits_per_kb", 0.0))
+                max_pct_id       = float(ann.get("max_plsdb_prot_pct_id", 0.0))
+                mlp_plas = s.get("plasmid", 0.0)
+                if (prot_hits_per_kb >= 2.0
+                        and max_pct_id >= 40.0
+                        and mlp_plas >= 0.30):
+                    best = max(s, key=s.__getitem__)
+                    if best != "plasmid":
+                        # Transfer 55% of non-plasmid mass to plasmid
+                        s2 = dict(s)
+                        non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
+                        transfer = non_plas * 0.55
+                        s2["plasmid"]    = s2.get("plasmid", 0.0) + transfer
+                        s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
+                        s2["phage"]      = s2.get("phage", 0.0) * 0.45
+                        total = sum(s2.values()) or 1.0
+                        all_scores[i] = {c: v / total for c, v in s2.items()}
+                        _ev_type_by_idx[i] = "plsdb_prot_boost"
+                        n_prot_boosts += 1
+            if n_prot_boosts:
+                logger.info(
+                    "PLSDB protein boost: %d sequences boosted "
+                    "(plsdb_prot_hits_per_kb >= 2.0, max_pct_id >= 40, mlp >= 0.30)",
+                    n_prot_boosts,
+                )
+
+        # ── Marker-aware soft threshold boost (Option B) ─────────────────────
+        # Sequences with ≥1 geNomad plasmid hallmark gene AND an MLP plasmid
+        # score ≥ 0.90 are very likely true plasmids that narrowly miss the
+        # strict 0.93–0.98 length-tier thresholds.  The single hallmark gene
+        # acts as a corroborating signal that justifies a 0.90 effective floor.
+        #
+        # This is complementary to hallmark_boost (which requires n≥2, mlp≥0.30
+        # and is designed for low-MLP sequences with strong marker evidence).
+        # Option B targets high-MLP sequences with weaker marker evidence.
+        #
+        # Calibration: n_plasmid_markers ≥ 1 AND mlp ≥ 0.90 catches near-miss
+        # FNs with gn:1 scores like 0.92–0.94 that fall below the 0.95+ tier
+        # thresholds.  FP risk is low because mlp ≥ 0.90 is a strong filter.
+        n_marker_threshold_boosts = 0
+        if annotations:
+            for i in range(n):
+                s = all_scores[i]
+                sid = sequence_ids[i]
+                ann = annotations.get(sid, {})
+                n_plas_hall = float(ann.get("n_plasmid_markers", 0.0))
+                mlp_plas = s.get("plasmid", 0.0)
+                if n_plas_hall >= 1 and mlp_plas >= 0.90:
+                    best = max(s, key=s.__getitem__)
+                    if best != "plasmid":
+                        s2 = dict(s)
+                        non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
+                        transfer = non_plas * 0.55
+                        s2["plasmid"]    = s2.get("plasmid", 0.0) + transfer
+                        s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
+                        s2["phage"]      = s2.get("phage", 0.0) * 0.45
+                        total = sum(s2.values()) or 1.0
+                        all_scores[i] = {c: v / total for c, v in s2.items()}
+                        _ev_type_by_idx[i] = "marker_threshold_boost"
+                        n_marker_threshold_boosts += 1
+            if n_marker_threshold_boosts:
+                logger.info(
+                    "Marker-threshold boost: %d sequences boosted "
+                    "(n_plasmid_markers >= 1, mlp >= 0.90)",
+                    n_marker_threshold_boosts,
+                )
+
+        # ── Replicon sequence boost ───────────────────────────────────────────
+        # When a contig contains a recognisable plasmid replicon sequence
+        # (detected by minimap2 / BLASTN vs rep.dna.fas, replicon-coverage ≥60%,
+        # identity ≥80%), that is near-definitive plasmid evidence.  rep.dna.fas
+        # contains only 2,686 curated replicon sequences from known plasmids —
+        # much more specific than PLSDB protein hits (which fire on housekeeping
+        # genes too).
+        #
+        # This targets plasmids that are:
+        #   - Composition-invisible (k-mer MLP score <0.70)
+        #   - Marker-invisible (no conjugation, mob, or hallmark genes)
+        #   - But carry a recognisable origin of replication
+        #
+        # Note: has_replicon has been 0 for all training sequences because
+        # makeblastdb was unavailable.  XGBoost has never learned its weight,
+        # so we apply it as a post-prediction modifier here.
+        #
+        # Boost is stronger than hallmark_boost (65% transfer vs 55%) because
+        # replicon typing is more plasmid-specific.  Threshold mlp_plas ≥ 0.15
+        # is intentionally low — a known replicon is strong enough signal even
+        # when MLP is uncertain.
+        n_replicon_boosts = 0
+        if annotations:
+            for i in range(n):
+                s = all_scores[i]
+                sid = sequence_ids[i]
+                ann = annotations.get(sid, {})
+                has_replicon = float(ann.get("has_replicon", 0.0))
+                mlp_plas = s.get("plasmid", 0.0)
+                if has_replicon >= 1.0 and mlp_plas >= 0.15:
+                    best = max(s, key=s.__getitem__)
+                    if best != "plasmid":
+                        s2 = dict(s)
+                        non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
+                        transfer = non_plas * 0.65
+                        s2["plasmid"]    = s2.get("plasmid", 0.0) + transfer
+                        s2["chromosome"] = s2.get("chromosome", 0.0) * 0.35
+                        s2["phage"]      = s2.get("phage", 0.0) * 0.35
+                        total = sum(s2.values()) or 1.0
+                        all_scores[i] = {c: v / total for c, v in s2.items()}
+                        _ev_type_by_idx[i] = "replicon_boost"
+                        n_replicon_boosts += 1
+            if n_replicon_boosts:
+                logger.info(
+                    "Replicon boost: %d sequences boosted (has_replicon=1, mlp >= 0.15)",
+                    n_replicon_boosts,
                 )
 
         # ── Phage suppression ─────────────────────────────────────────────────

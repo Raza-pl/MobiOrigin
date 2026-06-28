@@ -956,6 +956,39 @@ def main() -> None:
             "Use only 10kb (the bin where FPs are concentrated) to avoid this."
         ),
     )
+    parser.add_argument(
+        "--chromid-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Directory of chromid (chromosome-like megaplasmid) FASTA files to inject "
+            "as GUARANTEED plasmid training examples. Windows are appended AFTER the "
+            "per-class plasmid cap so they are never downsampled away. "
+            "Use output of scripts/extract_chromid_sequences.py. "
+            "Chromids are large plasmids (>100kb) whose k-mer composition resembles "
+            "chromosomes — they are the primary FN class in the binary model. "
+            "Example: data/databases/chromids/"
+        ),
+    )
+    parser.add_argument(
+        "--chromid-max",
+        type=int,
+        default=10_000,
+        help=(
+            "Maximum number of windows to draw from --chromid-dir (default: 10000). "
+            "Spread across window sizes in --chromid-window-sizes."
+        ),
+    )
+    parser.add_argument(
+        "--chromid-window-sizes",
+        default="5000,10000",
+        help=(
+            "Comma-separated window sizes (bp) for tiling chromid sequences "
+            "(default: '5000,10000'). "
+            "These are the sizes where chromid FNs are concentrated in the benchmark."
+        ),
+    )
     args = parser.parse_args()
 
     # Parse window sizes
@@ -976,6 +1009,17 @@ def main() -> None:
         )
         raise SystemExit(1)
     logger.info("Hard-negative window sizes: %s bp", list(hn_window_sizes))
+
+    # Parse chromid window sizes
+    try:
+        chromid_window_sizes = tuple(int(w.strip()) for w in args.chromid_window_sizes.split(","))
+    except ValueError:
+        logger.error(
+            "--chromid-window-sizes must be comma-separated integers, got: %s",
+            args.chromid_window_sizes,
+        )
+        raise SystemExit(1)
+    logger.info("Chromid window sizes: %s bp", list(chromid_window_sizes))
 
     data_dir = Path(args.data_dir)
     out_dir = Path(args.out)
@@ -1057,6 +1101,42 @@ def main() -> None:
     all_ids.extend(ids)
     all_labels.extend(labels)
     source_stats["plasmid"] = len(seqs)
+
+    # ── Chromid injection (guaranteed to survive plasmid cap) ─────────────────
+    # Chromids are large megaplasmids (>100kb) whose k-mer composition resembles
+    # chromosomes (e.g. Sinorhizobium pSym, Mesorhizobium pML, Ralstonia megaplasmid).
+    # The reservoir sampler above underrepresents them because they're rare and
+    # their windows look chromosomal.  Injecting them AFTER the cap ensures the
+    # model sees chromid examples without displacing other plasmid diversity.
+    if args.chromid_dir and args.chromid_dir.is_dir():
+        chromid_files = _fasta_files_in_dir(args.chromid_dir)
+        if chromid_files:
+            logger.info("=" * 60)
+            logger.info("PLASMID CLASS — Chromid sequences (%d files, force-injected)", len(chromid_files))
+            logger.info("  Source: %s", args.chromid_dir)
+            logger.info("  Max windows: %d  window sizes: %s", args.chromid_max, list(chromid_window_sizes))
+            logger.info("=" * 60)
+            chromid_seqs, chromid_ids, chromid_labels = load_windowed_streaming(
+                chromid_files,
+                label="plasmid",
+                max_total=args.chromid_max,
+                min_length=args.min_length,
+                window_sizes=chromid_window_sizes,
+                step_fraction=0.5,
+                seed=args.seed,
+            )
+            all_seqs.extend(chromid_seqs)
+            all_ids.extend(chromid_ids)
+            all_labels.extend(chromid_labels)
+            source_stats["plasmid_chromid"] = len(chromid_seqs)
+            logger.info(
+                "  Chromid windows injected: %d (from %d files)",
+                len(chromid_seqs), len(chromid_files),
+            )
+        else:
+            logger.warning("--chromid-dir provided but no FASTA files found: %s", args.chromid_dir)
+    elif args.chromid_dir:
+        logger.warning("--chromid-dir not found: %s", args.chromid_dir)
 
     # ── Phages ───────────────────────────────────────────────────────────────
     logger.info("=" * 60)
@@ -1295,6 +1375,7 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("FEATURE EXTRACTION")
     logger.info("=" * 60)
+
     logger.info("Extracting k-mer features for %d sequences …", len(all_seqs))
     X = extract_features(all_seqs, k6_pca_path=args.k6_pca_path)
     y = np.array(all_labels, dtype=np.int64)

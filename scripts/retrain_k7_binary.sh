@@ -50,6 +50,8 @@ MLP_OUT="$EXPERIMENT_MODELS/mlp_v2.pt"
 
 HARD_NEG_DIR="$DATA_DIR/hard_negatives"
 CHR2_FILE="$HARD_NEG_DIR/GCF_000017645.1_chr2_chromid.fna"
+CHROMID_DIR="$DATA_DIR/databases/chromids"
+CHROMID_FASTA="$CHROMID_DIR/chromids.fna"
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -79,10 +81,32 @@ echo "  Start  : $(date)"
 echo "  Output : $EXPERIMENT_DIR"
 echo "  Hard-neg files: $N_FNA"
 echo "  Mode: --binary-plasmid (phage windows → chromosome label)"
+echo "  Chromid augmentation: $CHROMID_FASTA"
 echo "============================================================"
 echo ""
 
-mkdir -p "$EXPERIMENT_DIR" "$EXPERIMENT_MODELS"
+mkdir -p "$EXPERIMENT_DIR" "$EXPERIMENT_MODELS" "$CHROMID_DIR"
+
+# ── Step 0: Extract chromid sequences from PLSDB/COMPASS ──────────────────────
+echo "[0/3] Extracting chromid sequences (>100kb or known-chromid genera) …"
+echo "  Start: $(date)"
+echo ""
+
+if [ -f "$CHROMID_FASTA" ]; then
+    N_CHROMIDS=$(grep -c "^>" "$CHROMID_FASTA" 2>/dev/null || echo "0")
+    echo "  Chromid FASTA already exists: $CHROMID_FASTA ($N_CHROMIDS sequences)"
+    echo "  Skipping extraction. Delete the file to re-extract."
+else
+    python3 -u "$SCRIPTS_DIR/extract_chromid_sequences.py" \
+        --out "$CHROMID_FASTA" \
+        --min-length 100000
+    N_CHROMIDS=$(grep -c "^>" "$CHROMID_FASTA" 2>/dev/null || echo "0")
+    echo "  Extracted $N_CHROMIDS chromid sequences → $CHROMID_FASTA"
+fi
+
+echo ""
+echo "[0/3] Chromid extraction complete: $(date)"
+echo ""
 
 # ── Step 1: Build dataset (binary labels) ─────────────────────────────────────
 echo "[1/3] Building binary dataset (plasmid=0, chromosome=1, phage remapped→1) …"
@@ -98,8 +122,8 @@ python3 -u "$SCRIPTS_DIR/build_dataset.py" \
     --min-length     4500 \
     --max-per-class  50000 \
     --skip-download \
-    --hard-negative-dir         "$HARD_NEG_DIR" \
-    --hard-negative-max         30000 \
+    --hard-negative-dir          "$HARD_NEG_DIR" \
+    --hard-negative-max          30000 \
     --hard-negative-window-sizes 10000 \
     --binary-plasmid \
     --out  "$EXPERIMENT_DIR" \

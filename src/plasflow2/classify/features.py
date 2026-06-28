@@ -79,6 +79,14 @@ K7_CANON_SIZE = K7_VOCAB_SIZE // 2  # 8192 canonical k=7 words
 FEATURE_DIM_BASE = _KMER_DIM + 1  # k=1–5 + length (no k=7)  = 1365
 FEATURE_DIM = _KMER_DIM + K7_CANON_SIZE + 1  # k=1–5 + k=7 + length = 9557
 
+# Gene content feature block (appended when gene_data is provided)
+GENE_DIM = 6  # gc_content, coding_density, n_orfs_per_kb, strand_switch_rate,
+              # canonical_sd_freq, no_rbs_freq
+FEATURE_DIM_FULL = FEATURE_DIM + GENE_DIM  # 9563
+
+# Canonical Shine-Dalgarno motifs as recognised by pyrodigal
+_CANONICAL_SD: frozenset[str] = frozenset({"AGGAG", "GGAG", "AGGA", "AGG", "GGA", "GAGG"})
+
 # Backward-compat aliases for legacy code that references these names
 K6_PCA_COMPONENTS = 128  # still referenced by older scripts
 K6_RAW_DIM = 4**6  # = 4096; referenced by fit_k6_pca.py
@@ -292,16 +300,84 @@ def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
 
 
 # ---------------------------------------------------------------------------
+# Gene content feature vector
+# ---------------------------------------------------------------------------
+
+
+def gene_content_vector(seq: str, genes: list) -> NDArray[np.float32]:
+    """Compute 6-dim gene content feature vector from a sequence + pyrodigal genes.
+
+    Feature layout:
+      0: gc_content         — fraction of G/C bases in sequence
+      1: coding_density     — fraction of bp covered by ORFs, clipped to [0, 1]
+      2: n_orfs_per_kb_norm — ORF density normalised: (n_orfs/kb) / 3, clipped to [0, 1]
+      3: strand_switch_rate — fraction of consecutive ORF pairs that change strand
+      4: canonical_sd_freq  — fraction of ORFs with a canonical Shine-Dalgarno motif
+      5: no_rbs_freq        — fraction of ORFs with no detected RBS motif
+
+    Args:
+        seq:   DNA string (any case).
+        genes: List of pyrodigal.Gene objects for this sequence (may be empty).
+
+    Returns:
+        Float32 array of shape (6,).
+    """
+    seq_upper = seq.upper()
+    length_bp = max(len(seq_upper), 1)
+
+    # GC content — computed from raw sequence, no ORF prediction required.
+    gc = (seq_upper.count("G") + seq_upper.count("C")) / length_bp
+
+    n_orfs = len(genes)
+    if n_orfs == 0:
+        # Safe defaults for sequences with no detectable ORFs.
+        return np.array([gc, 0.0, 0.0, 0.5, 0.0, 1.0], dtype=np.float32)
+
+    # Coding density
+    covered_bp = sum(abs(g.end - g.begin) for g in genes)
+    coding_density = float(min(covered_bp / length_bp, 1.0))
+
+    # ORF density, normalised: typical assemblies have 0-3 ORFs/kb; divide by 3.
+    n_orfs_per_kb_norm = float(min((n_orfs / (length_bp / 1000.0)) / 3.0, 1.0))
+
+    # Strand switch rate
+    if n_orfs > 1:
+        strands = [g.strand for g in genes]
+        switches = sum(1 for a, b in zip(strands, strands[1:]) if a != b)
+        strand_switch_rate = switches / (n_orfs - 1)
+    else:
+        strand_switch_rate = 0.0
+
+    # RBS features
+    canonical_sd = sum(1 for g in genes if g.rbs_motif in _CANONICAL_SD)
+    no_rbs = sum(1 for g in genes if not g.rbs_motif or g.rbs_motif == "None")
+    canonical_sd_freq = canonical_sd / n_orfs
+    no_rbs_freq = no_rbs / n_orfs
+
+    return np.array(
+        [gc, coding_density, n_orfs_per_kb_norm, strand_switch_rate,
+         canonical_sd_freq, no_rbs_freq],
+        dtype=np.float32,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main feature extraction
 # ---------------------------------------------------------------------------
 
 
 def extract_features(
-    sequences: list[str], k6_pca_path: Path | str | None = None
+    sequences: list[str],
+    k6_pca_path: Path | str | None = None,
+    gene_data: dict[str, list] | None = None,
+    seq_ids: list[str] | None = None,
 ) -> NDArray[np.float32]:
     """Extract k=1–5 + k=7-canonical k-mer features + length feature.
 
-    Feature layout (9557 dims total):
+    When *gene_data* and *seq_ids* are provided, 6 gene content features are
+    appended, extending the output from 9557 to 9563 dims.
+
+    Feature layout (9557 dims without gene_data, 9563 with):
       cols    0–3      : k=1 (4 dims)
       cols    4–19     : k=2 (16 dims)
       cols   20–83     : k=3 (64 dims)
@@ -309,21 +385,27 @@ def extract_features(
       cols  340–1363   : k=5 (1024 dims)
       cols 1364–9555   : k=7 canonical (8192 dims)
       col  9556        : log10(length) scaled to [0, 1]
+      cols 9557–9562   : gene content (6 dims, only when gene_data provided)
 
     The `k6_pca_path` argument is accepted for API compatibility but ignored.
 
     Args:
         sequences:   List of DNA strings.
         k6_pca_path: Ignored (kept for backward compat).
+        gene_data:   Optional dict mapping sequence ID → list of pyrodigal.Gene
+                     objects.  Must be paired with *seq_ids*.
+        seq_ids:     Sequence identifiers aligned to *sequences*.  Required when
+                     *gene_data* is provided.
 
     Returns:
-        Float32 array of shape (N, 9557).
+        Float32 array of shape (N, 9557) or (N, 9563).
     """
     if k6_pca_path is not None:
         logger.debug("k6_pca_path ignored — k=7 canonical architecture does not use PCA")
 
+    use_gene = gene_data is not None and seq_ids is not None
     n = len(sequences)
-    dim = FEATURE_DIM  # 9557
+    dim = FEATURE_DIM_FULL if use_gene else FEATURE_DIM  # 9563 or 9557
     X = np.zeros((n, dim), dtype=np.float32)
 
     # k=1–5 block (1364 dims)
@@ -349,6 +431,14 @@ def extract_features(
     for i, seq in enumerate(sequences):
         log_len = np.log10(max(1, len(seq)))
         X[i, offset] = float(np.clip((log_len - log_min) / (log_max - log_min), 0.0, 1.0))
+    offset += 1
+
+    # Gene content block (6 dims, optional)
+    if use_gene:
+        logger.info("  Appending gene content features (%d dims) …", GENE_DIM)
+        for i, (sid, seq) in enumerate(zip(seq_ids, sequences)):
+            genes = gene_data.get(sid, [])
+            X[i, offset : offset + GENE_DIM] = gene_content_vector(seq, genes)
 
     logger.info("Extracted features: shape %s", X.shape)
     return X

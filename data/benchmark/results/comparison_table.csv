@@ -1,15 +1,6 @@
-model,class,metric,value
-plasflow_v1,plasmid,precision,0.014
-plasflow_v2,plasmid,precision,0.543
-plasflow_v1,plasmid,recall,0.198
-plasflow_v2,plasmid,recall,0.673
-plasflow_v1,plasmid,f1,0.025
-plasflow_v2,plasmid,f1,0.601
-plasflow_v1,chromosome,precision,0.994
-plasflow_v2,chromosome,precision,0.998
-plasflow_v1,chromosome,recall,0.904
-plasflow_v2,chromosome,recall,0.839
-plasflow_v1,chromosome,f1,0.947
-plasflow_v2,chromosome,f1,0.912
-plasflow_v1,overall,macro_f1,0.486
-plasflow_v2,overall,macro_f1,0.756
+tool,class,precision,recall,f1,note
+PlasFlow v1,plasmid,0.0135,0.198,0.0253,"same benchmark, threshold=0.7, n=60394"
+PlasFlow v1,chromosome,0.9942,0.9036,0.9468,"same benchmark, threshold=0.7, n=60394"
+PlasFlow v2 (this work),plasmid,0.8274,0.6447,0.7247,"threshold=0.95, no prior correction, n=60394"
+PlasFlow v2 (this work),chromosome,0.9986,0.8002,0.8885,"threshold=0.95, no prior correction, n=60394"
+PlasFlow v2 (this work),phage,0.0,0.0,0.0,"threshold=0.95, no prior correction, n=60394"

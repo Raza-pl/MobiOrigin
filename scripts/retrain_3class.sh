@@ -93,10 +93,9 @@ else
     echo "  Chromid FASTA already exists: $CHROMID_FASTA"
 fi
 
-# ── Step 1: Build 3-class dataset (9557-dim features) ─────────────────────
+# ── Step 1: Build 3-class dataset (9563-dim features) ─────────────────────
 echo ""
 echo "[1/3] Building 3-class dataset (plasmid=0, chromosome=1, phage=2) …"
-echo "  Note: NO --binary-plasmid flag — phage kept as class 2"
 echo "  Start: $(date)"
 echo ""
 
@@ -112,6 +111,7 @@ python3 -u "$SCRIPTS_DIR/build_dataset.py" \
     --hard-negative-dir          "$HARD_NEG_DIR" \
     --hard-negative-max          30000 \
     --hard-negative-window-sizes 10000 \
+    --chromid-window-sizes       5000,10000 \
     --out  "$EXPERIMENT_DIR" \
     --seed 42 \
     2>&1 | tee "$EXPERIMENT_DIR/build_dataset.log"
@@ -130,9 +130,9 @@ print("Features shape:", feat.shape)
 print("Label distribution:")
 for k, v in sorted(counts.items()):
     print(f"  class {k}: {v:,}")
-assert feat.shape[1] == 9557, f"Expected 9557 features, got {feat.shape[1]}"
+assert feat.shape[1] in (9557, 9563), f"Expected 9557 or 9563 features, got {feat.shape[1]}"
 assert len(counts) == 3, f"Expected 3 classes, got {len(counts)}"
-print("OK — 9557-dim 3-class dataset confirmed")
+print(f"OK — {feat.shape[1]}-dim 3-class dataset confirmed")
 PYCHECK
 
 # ── Step 2: Train 3-class MLP ──────────────────────────────────────────────
@@ -176,9 +176,9 @@ if hasattr(state, "state_dict"): state = state.state_dict()
 layers = [(k, v.shape) for k, v in state.items() if "weight" in k]
 first, last = layers[0][1], layers[-1][1]
 print(f"First layer: {first}  Last layer: {last}")
-assert first[1] == 9557, f"Expected input_dim=9557, got {first[1]}"
-assert last[0]  == 3,    f"Expected 3 output classes, got {last[0]}"
-print("PASS — model shape (9557→…→3) verified")
+assert first[1] in (9557, 9563), f"Expected input_dim=9557 or 9563, got {first[1]}"
+assert last[0]  == 3,            f"Expected 3 output classes, got {last[0]}"
+print(f"PASS — model shape ({first[1]}→…→3) verified")
 PYVERIFY
 
 # Backup existing model and deploy

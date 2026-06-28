@@ -208,6 +208,13 @@ def build_class_features(
     n = len(sequences)
     logger.info("  Building marker features for %d %s sequences …", n, label)
 
+    # Save DNA FASTA so retrain script can run geNomad annotate on it
+    dna_fasta = work_dir / f"{label}_training.fna"
+    logger.info("  Saving training FASTA → %s", dna_fasta)
+    with open(dna_fasta, "w") as _dna_fh:
+        for _sid, _seq in zip(seq_ids, sequences):
+            _dna_fh.write(f">{_sid}\n{_seq}\n")
+
     # 1. MLP scores
     logger.info("  Running MLP …")
     mlp_by_id = predict_mlp(sequences, seq_ids, model_path)

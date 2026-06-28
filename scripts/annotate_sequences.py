@@ -32,6 +32,15 @@ Usage
       --out            data/benchmark/annotations.tsv \\
       --threads 8
 
+  # geNomad SPM + PLSDB protein features (28 features — best recall)
+  # Requires: bash scripts/setup_plsdb_proteins.sh  (one-time, ~10 min)
+  python scripts/annotate_sequences.py \\
+      --fasta            data/benchmark/benchmark.fna \\
+      --genomad-genes    data/benchmark/genomad_ann/benchmark_annotate/benchmark_genes.tsv \\
+      --plsdb-proteins   data/databases/plasmids/plsdb_proteins.dmnd \\
+      --out              data/benchmark/annotations_with_plsdb_prot.tsv \\
+      --threads 8
+
 Output TSV columns
 ------------------
   MOB-suite (14):
@@ -43,6 +52,14 @@ Output TSV columns
     p_marker_freq, c_marker_freq, v_marker_freq, pp_marker_freq,
     median_p_spm, median_c_spm, median_v_spm, p_vs_c_logistic,
     strand_switch_rate, no_rbs_freq, canonical_sd_freq, n_plasmid_markers
+
+  PLSDB protein homology (2, added when --plsdb-proteins is provided):
+    plsdb_prot_hits_per_kb  — DIAMOND blastp hits vs PLSDB proteins per kb
+    max_plsdb_prot_pct_id   — max % identity of any PLSDB protein hit
+
+  PLSDB nucleotide match (2, added when --plsdb-fasta is provided):
+    plsdb_nt_match   — 1 if contig maps to PLSDB at ≥50% qcov, ≥90% identity
+    plsdb_nt_qcov    — query coverage of best PLSDB nucleotide hit
 
 After running, pass --annotation-tsv to plasflow2 predict:
   plasflow2 predict --annotation-tsv data/benchmark/annotations.tsv ...
@@ -155,58 +172,176 @@ def run_blastn_replicon(
     min_pident: float = 80.0,
     min_qcov: float = 80.0,
 ) -> dict[str, int]:
-    """Run BLASTN of contigs against rep.dna.fas for nucleotide replicon typing.
+    """Detect plasmid replicons in contigs using rep.dna.fas.
+
+    Tries BLASTN first (makeblastdb + blastn); falls back to minimap2 asm20
+    when BLAST is unavailable or makeblastdb fails.
+
+    Filter logic:
+      BLASTN:   query-contig coverage ≥ min_qcov% AND pident ≥ min_pident%
+      minimap2: replicon-sequence coverage ≥ 60% AND identity ≥ 80%
+                (replicon-side coverage is the right filter: we want to know
+                 whether the REPLICON is present in the contig, not vice versa)
 
     Returns contig_id → hit_count dict.
-    Requires 'makeblastdb' and 'blastn' in PATH (conda install -c bioconda blast).
     """
-    blastn = shutil.which("blastn")
+    # ── Try BLASTN first ──────────────────────────────────────────────────────
+    blastn    = shutil.which("blastn")
     makeblastdb = shutil.which("makeblastdb")
-    if not blastn or not makeblastdb:
-        logger.info("  blastn/makeblastdb not found — skipping nucleotide replicon typing")
+    if blastn and makeblastdb:
+        db_prefix = work_dir / "rep_dna_blastdb"
+        if not (work_dir / "rep_dna_blastdb.nsi").exists():
+            logger.info("  Building BLAST nucleotide DB from %s …", rep_dna_fasta.name)
+            r = subprocess.run(
+                ["makeblastdb", "-in", str(rep_dna_fasta), "-dbtype", "nucl",
+                 "-out", str(db_prefix), "-quiet"],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                logger.warning("  makeblastdb failed: %s", r.stderr[:300])
+                blastn = None  # fall through to minimap2
+
+        if blastn:
+            logger.info("  Running BLASTN vs rep.dna.fas (pident≥%.0f%% qcov≥%.0f%%) …",
+                        min_pident, min_qcov)
+            out_tsv.parent.mkdir(parents=True, exist_ok=True)
+            r = subprocess.run(
+                [blastn, "-query", str(fasta), "-db", str(db_prefix),
+                 "-out", str(out_tsv),
+                 "-outfmt", "6 qseqid sseqid pident qcovhsp evalue",
+                 "-perc_identity", str(min_pident),
+                 "-qcov_hsp_perc", str(min_qcov),
+                 "-num_threads", str(threads),
+                 "-max_target_seqs", "1",
+                 "-evalue", "1e-5",
+                 "-task", "blastn"],
+                capture_output=True, text=True,
+            )
+            if r.returncode == 0:
+                contig_hits: dict[str, int] = {}
+                with open(out_tsv) as fh:
+                    for line in fh:
+                        cols = line.strip().split("\t")
+                        if cols:
+                            cid = cols[0]
+                            contig_hits[cid] = contig_hits.get(cid, 0) + 1
+                logger.info("  BLASTN replicon: %d contigs with hits", len(contig_hits))
+                return contig_hits
+            else:
+                logger.warning("  blastn failed: %s", r.stderr[:200])
+
+    # ── Fall back to minimap2 ─────────────────────────────────────────────────
+    minimap2 = shutil.which("minimap2")
+    if not minimap2:
+        logger.info("  blastn and minimap2 both unavailable — skipping replicon typing")
         return {}
 
-    db_prefix = work_dir / "rep_dna_blastdb"
-    if not (work_dir / "rep_dna_blastdb.nsi").exists():
-        logger.info("  Building BLAST nucleotide DB from %s …", rep_dna_fasta.name)
-        r = subprocess.run(
-            ["makeblastdb", "-in", str(rep_dna_fasta), "-dbtype", "nucl",
-             "-out", str(db_prefix), "-quiet"],
-            capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            logger.warning("  makeblastdb failed: %s", r.stderr[:300])
-            return {}
-
-    logger.info("  Running BLASTN vs rep.dna.fas (pident≥%.0f%% qcov≥%.0f%%) …",
-                min_pident, min_qcov)
-    out_tsv.parent.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(
-        [blastn, "-query", str(fasta), "-db", str(db_prefix),
-         "-out", str(out_tsv),
-         "-outfmt", "6 qseqid sseqid pident qcovhsp evalue",
-         "-perc_identity", str(min_pident),
-         "-qcov_hsp_perc", str(min_qcov),
-         "-num_threads", str(threads),
-         "-max_target_seqs", "1",
-         "-evalue", "1e-5",
-         "-task", "blastn"],
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        logger.warning("  blastn failed: %s", r.stderr[:300])
+    logger.info("  Running minimap2 asm20 vs rep.dna.fas (replicon-cov≥60%% id≥80%%) …")
+    # Map contigs AGAINST replicons: query=contigs, ref=rep.dna.fas
+    # PAF: qname=contig, tname=replicon  →  tcov = (tend-tstart)/tlen = replicon coverage
+    cmd = [
+        minimap2, "-c", "-x", "asm20",
+        "--secondary=no",
+        "-t", str(threads),
+        str(rep_dna_fasta),   # reference = replicon sequences
+        str(fasta),            # query     = input contigs
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.warning("  minimap2 replicon failed: %s", result.stderr[:200])
         return {}
 
-    contig_hits: dict[str, int] = {}
-    with open(out_tsv) as fh:
-        for line in fh:
-            cols = line.strip().split("\t")
-            if cols:
-                cid = cols[0]
-                contig_hits[cid] = contig_hits.get(cid, 0) + 1
+    contig_hits = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 12:
+            continue
+        qname  = parts[0]                              # contig
+        tlen   = int(parts[6])                         # replicon length
+        tstart = int(parts[7])
+        tend   = int(parts[8])
+        nmatch = int(parts[9])
+        blen   = int(parts[10])
+        if blen == 0 or tlen == 0:
+            continue
+        tcov     = (tend - tstart) / tlen              # how much of the replicon is covered
+        identity = nmatch / blen
+        if tcov >= 0.60 and identity >= 0.80:
+            contig_hits[qname] = contig_hits.get(qname, 0) + 1
 
-    logger.info("  BLASTN replicon: %d contigs with hits", len(contig_hits))
+    logger.info("  minimap2 replicon: %d contigs with replicon hit (cov≥60%% id≥80%%)",
+                len(contig_hits))
     return contig_hits
+
+
+# ---------------------------------------------------------------------------
+# minimap2 vs PLSDB (nucleotide-level plasmid match)
+# ---------------------------------------------------------------------------
+
+def run_minimap2_plsdb(
+    query_fasta: Path,
+    plsdb_fasta: Path,
+    out_paf: Path,
+    threads: int = 8,
+    min_qcov: float = 0.50,
+    min_identity: float = 0.90,
+) -> dict[str, dict]:
+    """Run minimap2 asm5 of contigs against PLSDB for nucleotide-level plasmid match.
+
+    A contig that maps to PLSDB at ≥50% query coverage and ≥90% identity is
+    almost certainly a true plasmid regardless of k-mer composition.
+
+    Returns contig_id → {match: 1, qcov: float, identity: float}.
+    Requires 'minimap2' in PATH (conda install -c bioconda minimap2).
+    """
+    minimap2 = shutil.which("minimap2")
+    if not minimap2:
+        logger.info("  minimap2 not found — skipping PLSDB nucleotide match")
+        return {}
+
+    out_paf.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("  Running minimap2 asm5 vs PLSDB (qcov≥%.0f%% id≥%.0f%%) …",
+                min_qcov * 100, min_identity * 100)
+    cmd = [
+        minimap2, "-c", "-x", "asm5",
+        "--secondary=no",
+        "-t", str(threads),
+        str(plsdb_fasta),
+        str(query_fasta),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.warning("  minimap2 failed: %s", result.stderr[:300])
+        return {}
+
+    with open(out_paf, "w") as fh:
+        fh.write(result.stdout)
+
+    # Parse PAF and filter by qcov + identity
+    # PAF columns: qname qlen qstart qend strand tname tlen tstart tend nmatch blen mapq
+    matches: dict[str, dict] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 12:
+            continue
+        qname   = parts[0]
+        qlen    = int(parts[1])
+        qstart  = int(parts[2])
+        qend    = int(parts[3])
+        nmatch  = int(parts[9])
+        blen    = int(parts[10])
+        if blen == 0:
+            continue
+        qcov     = (qend - qstart) / max(qlen, 1)
+        identity = nmatch / blen
+        if qcov >= min_qcov and identity >= min_identity:
+            prev = matches.get(qname)
+            if prev is None or qcov > prev["qcov"]:
+                matches[qname] = {"match": 1, "qcov": qcov, "identity": identity}
+
+    logger.info("  minimap2 PLSDB: %d contigs with nt match (qcov≥%.0f%% id≥%.0f%%)",
+                len(matches), min_qcov * 100, min_identity * 100)
+    return matches
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +389,60 @@ def run_diamond(
     return contig_hits
 
 
+def run_diamond_detailed(
+    proteins_faa: Path,
+    db: Path,
+    out_tsv: Path,
+    threads: int = 8,
+    min_id: float = 30.0,
+    min_cov: float = 50.0,
+    label: str = "",
+) -> dict[str, dict]:
+    """Run DIAMOND blastp. Returns contig_id → {hits: int, max_pct_id: float}.
+
+    Uses lower thresholds than run_diamond() to catch distant PLSDB protein
+    homologs.  The max_pct_id summarises the best protein-level match found.
+    """
+    out_tsv.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "diamond", "blastp",
+        "--query", str(proteins_faa),
+        "--db", str(db).removesuffix(".dmnd"),
+        "--out", str(out_tsv),
+        "--outfmt", "6", "qseqid", "sseqid", "pident", "qcovhsp", "evalue",
+        "--id", str(min_id),
+        "--query-cover", str(min_cov),
+        "--threads", str(threads),
+        "--max-target-seqs", "1",
+        "--more-sensitive",   # deeper search for PLSDB protein homologs
+        "--quiet",
+    ]
+    logger.info("  Running DIAMOND vs %s (more-sensitive) …", db.name)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.warning("  DIAMOND failed (%s):\n%s", db.name, result.stderr[:400])
+        return {}
+
+    # contig_id → {hits: int, max_pct_id: float}
+    contig_stats: dict[str, dict] = {}
+    with open(out_tsv) as fh:
+        for line in fh:
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            orf_id  = parts[0].strip()
+            pct_id  = float(parts[2])
+            contig_id = re.sub(r"_\d+$", "", orf_id)
+            if contig_id not in contig_stats:
+                contig_stats[contig_id] = {"hits": 0, "max_pct_id": 0.0}
+            contig_stats[contig_id]["hits"] += 1
+            if pct_id > contig_stats[contig_id]["max_pct_id"]:
+                contig_stats[contig_id]["max_pct_id"] = pct_id
+
+    logger.info("  DIAMOND %s: %d contigs with hits", label, len(contig_stats))
+    return contig_stats
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -285,6 +474,19 @@ def main() -> None:
                         help="Path to *_genes.tsv from 'genomad annotate'. "
                              "When provided, adds 12 geNomad SPM features to the output TSV "
                              "(p_marker_freq, median_p_spm, p_vs_c_logistic, etc.).")
+    parser.add_argument("--plsdb-proteins", type=Path, default=None,
+                        help="DIAMOND DB of translated PLSDB plasmid proteins "
+                             "(data/databases/plasmids/plsdb_proteins.dmnd). "
+                             "When provided, adds plsdb_prot_hits_per_kb and "
+                             "max_plsdb_prot_pct_id columns for protein-level recall boost. "
+                             "Build with: bash scripts/setup_plsdb_proteins.sh")
+    parser.add_argument("--plsdb-fasta", type=Path, default=None,
+                        help="PLSDB nucleotide FASTA for minimap2 asm5 nucleotide match "
+                             "(data/databases/plasmids/plsdb.fasta). "
+                             "When provided, adds plsdb_nt_match (0/1) and plsdb_nt_qcov columns. "
+                             "A contig matching PLSDB at ≥50%% coverage and ≥90%% identity "
+                             "is treated as a hard plasmid override in predict.py. "
+                             "Requires minimap2 in PATH.")
     args = parser.parse_args()
 
     # Auto-detect DBs from standard locations if not specified
@@ -378,6 +580,32 @@ def main() -> None:
                 work_dir / "rep_dna_hits.tsv", work_dir, args.threads,
             )
 
+        # ── DIAMOND vs PLSDB proteins (optional, for recall boost) ───────────
+        plsdb_prot_stats: dict[str, dict] = {}
+        if getattr(args, "plsdb_proteins", None) and proteins_faa.stat().st_size > 0:
+            plsdb_db = args.plsdb_proteins
+            if not plsdb_db.exists():
+                logger.warning("--plsdb-proteins DB not found: %s — skipping", plsdb_db)
+            else:
+                plsdb_prot_stats = run_diamond_detailed(
+                    proteins_faa, plsdb_db,
+                    work_dir / "plsdb_prot_hits.tsv", args.threads,
+                    min_id=30.0, min_cov=50.0, label="plsdb_proteins",
+                )
+
+        # ── minimap2 vs PLSDB nucleotide (optional, hard plasmid override) ───
+        plsdb_nt_matches: dict[str, dict] = {}
+        if getattr(args, "plsdb_fasta", None):
+            plsdb_fa = args.plsdb_fasta
+            if not plsdb_fa.exists():
+                logger.warning("--plsdb-fasta not found: %s — skipping", plsdb_fa)
+            else:
+                plsdb_nt_matches = run_minimap2_plsdb(
+                    args.fasta, plsdb_fa,
+                    work_dir / "plsdb_nt_hits.paf", args.threads,
+                    min_qcov=0.50, min_identity=0.90,
+                )
+
         # ── Load geNomad SPM features (optional) ────────────────────────────
         genomad_features: dict = {}
         gn_cols: list[str] = []
@@ -414,12 +642,22 @@ def main() -> None:
 
         # ── Assemble output TSV ──────────────────────────────────────────────
         args.out.parent.mkdir(parents=True, exist_ok=True)
+        plsdb_prot_cols = (
+            ["plsdb_prot_hits_per_kb", "max_plsdb_prot_pct_id"]
+            if getattr(args, "plsdb_proteins", None)
+            else []
+        )
+        plsdb_nt_cols = (
+            ["plsdb_nt_match", "plsdb_nt_qcov"]
+            if getattr(args, "plsdb_fasta", None)
+            else []
+        )
         fieldnames = [
             "contig_id", "is_conjugative", "is_mobilizable",
             "has_replicon", "has_ice", "has_rep_protein",
             "n_arg_per_kb", "n_mge_per_kb", "n_ice_per_kb", "n_rep_per_kb",
             "coding_density", "n_orfs_per_kb", "gc_content", "length_bp",
-        ] + gn_cols
+        ] + gn_cols + plsdb_prot_cols + plsdb_nt_cols
 
         n_conjugative = n_mobilizable = n_rep_prot = n_rep_dna = 0
 
@@ -481,6 +719,18 @@ def main() -> None:
                     for col in gn_cols:
                         v = gf.get(col, gn_zero.get(col, 0.0))
                         row[col] = f"{v:.6f}" if isinstance(v, float) else str(v)
+                # PLSDB protein homology features
+                if plsdb_prot_cols:
+                    ps = plsdb_prot_stats.get(sid, {})
+                    hits_per_kb = ps.get("hits", 0) / max(length_kb, 0.001)
+                    max_pct_id  = ps.get("max_pct_id", 0.0)
+                    row["plsdb_prot_hits_per_kb"]  = f"{hits_per_kb:.4f}"
+                    row["max_plsdb_prot_pct_id"]   = f"{max_pct_id:.2f}"
+                # PLSDB nucleotide match (minimap2 asm5, hard override signal)
+                if plsdb_nt_cols:
+                    nm = plsdb_nt_matches.get(sid, {})
+                    row["plsdb_nt_match"] = nm.get("match", 0)
+                    row["plsdb_nt_qcov"]  = f"{nm.get('qcov', 0.0):.4f}"
                 writer.writerow(row)
 
         logger.info("Annotation complete:")
@@ -492,7 +742,11 @@ def main() -> None:
         if gn_cols:
             n_gn = sum(1 for sid in sequences if sid in genomad_features)
             logger.info("  geNomad SPM features:  %d / %d contigs annotated", n_gn, len(sequences))
-            logger.info("  Feature columns:       %d (14 MOB-suite + 12 geNomad SPM)", len(fieldnames) - 1)
+        if plsdb_prot_cols:
+            logger.info("  PLSDB prot hits:       %d contigs with protein matches", len(plsdb_prot_stats))
+        if plsdb_nt_cols:
+            logger.info("  PLSDB nt matches:      %d contigs with nt match (qcov≥50%% id≥90%%)", len(plsdb_nt_matches))
+        logger.info("  Feature columns:       %d", len(fieldnames) - 1)
         logger.info("Output TSV: %s", args.out)
         logger.info("")
         logger.info("Next: re-run prediction with marker XGBoost:")
