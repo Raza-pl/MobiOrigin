@@ -1,46 +1,79 @@
 # PlasFlow v2
 
 [![CI](https://github.com/Raza-pl/plasflow2.0/actions/workflows/ci.yml/badge.svg)](https://github.com/Raza-pl/plasflow2.0/actions)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**PlasFlow v2** classifies metagenomic contigs as **plasmid, chromosome, phage, or archaea** and annotates each plasmid with antibiotic resistance genes (ARGs), virulence factors, mobile genetic elements (MGEs), mobility class, and an AMR risk score (0–10). Results are delivered as an interactive HTML report and structured TSV files.
-
-This is a complete rewrite of [PlasFlow v1](https://github.com/smaegol/PlasFlow) (Krawczyk et al., *Nucleic Acids Research* 2018) on a modern Python/PyTorch stack.
+Classifies metagenomic contigs as **plasmid, chromosome, phage, or archaea** and annotates each plasmid with antibiotic resistance genes (ARGs), mobility class, and an AMR risk score (0–10). Results are an interactive HTML report plus TSV files.
 
 ---
 
-## Quick start
+## Install
 
+> Supports: Mac Intel · Mac M1–M5 · Linux · WSL Ubuntu
+
+**Step 1 — get the code:**
 ```bash
-# Install
 git clone https://github.com/Raza-pl/plasflow2.0
 cd plasflow2.0
-pip install poetry && poetry install
+```
 
-# Set up databases (one-time, ~15–30 min)
-bash scripts/setup_databases.sh
+**Step 2 — install everything (conda environment + tools + databases):**
+```bash
+bash install.sh
+```
 
-# Run
+This single command creates a `plasflow2` conda environment with Python 3.10, installs all dependencies (DIAMOND, minimap2, mob-suite, geNomad), and downloads the model weights and annotation databases (~7 GB total). Takes 15–30 min depending on your connection.
+
+**Step 3 — activate:**
+```bash
+conda activate plasflow2
+```
+
+> **Don't have conda?** Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) first.
+> WSL Ubuntu: `wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh`
+
+---
+
+## Run
+
+```bash
 plasflow2 run --input assembly.fasta --output ./results/ --threads 16
 ```
 
-Outputs land in `./results/`: classification TSV, FASTA per class, ARG/VF/mobility annotations, and an HTML report.
+Outputs land in `./results/`:
+
+| File | What it is |
+|---|---|
+| `all_predictions.tsv` | Per-contig labels, scores, and all annotations |
+| `plasmids.fasta` | Extracted plasmid sequences |
+| `report_plasmid.html` | Interactive HTML report — open in browser |
+
+Run `plasflow2 --help` or `plasflow2 run --help` for all options.
+
+### Common variations
+
+```bash
+# Adjust AMR risk scoring for clinical samples
+plasflow2 run --input assembly.fasta --output results/ --context clinical --threads 16
+
+# Skip taxonomy to save 20–40 min on large datasets
+plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy --threads 16
+
+# Quick classify only — no databases required, runs in seconds
+plasflow2 classify --input assembly.fasta --output predictions.tsv
+
+# Rebuild the HTML report without re-running the pipeline
+plasflow2 report --predictions results/all_predictions.tsv --output results/
+```
+
+Context options: `clinical`, `wastewater`, `environmental`, `unspecified` (default).
 
 ---
 
-## What it does
+## Performance (June 2026 benchmark)
 
-PlasFlow v2 uses a **two-stage classifier**:
-
-1. **Binary MLP** (k=7 k-mer features, 9,557 dims) — fast sequence composition classifier, ~15 sec for 60k contigs on CPU.
-2. **Marker XGBoost** — refines MLP scores with biological evidence: conjugation proteins, replicon type, geNomad gene signatures, ICE elements, coding density, GC content. Auto-activates when `data/models/marker_xgb.pkl` is present.
-
-Plasmid calls additionally require biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein). Contigs with no evidence and length < 50 kb are returned as `unclassified` rather than forced into a class.
-
-### Performance (June 2026 benchmark)
-
-Benchmark: 60,394 contigs (394 true plasmids + 60,000 chromosome windows, min 1 kb), built from GTDB r220 genomes + PLSDB/RefSeq plasmids.
+Benchmark: 60,394 contigs from GTDB r220 genomes + PLSDB/RefSeq plasmids.
 
 | Tool | Plasmid P | Plasmid R | Plasmid F1 |
 |---|---|---|---|
@@ -48,279 +81,113 @@ Benchmark: 60,394 contigs (394 true plasmids + 60,000 chromosome windows, min 1 
 | geNomad v1.12 | 0.060 | 0.876 | 0.112 |
 | **PlasFlow v2** | **0.871** | **0.783** | **0.825** |
 
-PLSDB-corrected F1 = **0.847** (12/38 reported FPs are benchmark mislabels — sequences present verbatim in PLSDB deposited under chromosome accessions).
+PLSDB-corrected F1 = **0.847**.
 
 ---
 
-## Installation
+## Troubleshooting
 
-### Requirements
-
-- Python 3.10–3.11
-- [conda](https://docs.conda.io/) (recommended for external tools)
-
+**"No model weights found"** — The model files are not downloaded yet. Re-run:
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0
-cd plasflow2.0
-
-# Option A — Poetry (recommended)
-pip install poetry && poetry install
-
-# Option B — pip
-pip install -e .
+bash scripts/setup_databases.sh --skip-plsdb --skip-card --skip-sarg \
+  --skip-amrfinder --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-mobsuite
 ```
 
-### External tools
+**mob-suite / pandas / pytz conflict** — Use the conda environment, not pip directly. Run `bash install.sh` which handles this automatically.
 
-Install via conda (or see `plasflow2 setup` for detailed instructions):
+**Python version error** — PlasFlow v2 requires Python 3.10. Run `bash install.sh` to create a dedicated conda env with the correct Python version.
 
-```bash
-conda install -c bioconda diamond mob_suite minimap2
-```
+**Apple Silicon (M1–M5)** — All conda packages in `environment.yml` have arm64 builds. If mob-suite fails: `pip install mob-suite && mob_init`
 
-| Tool | Purpose |
-|---|---|
-| [DIAMOND](https://github.com/bbuchfink/diamond) | ARG, VF, MGE, and taxonomy annotation |
-| [MOB-suite](https://github.com/phac-nml/mob-suite) | Plasmid mobility typing (conjugative / mobilizable) |
-| [minimap2](https://github.com/lh3/minimap2) | Closest known plasmid match (PLSDB/RefSeq) |
-| [geNomad](https://github.com/apcamargo/genomad) | Optional — adds 12 SPM gene features to stage-2 XGBoost |
+**WSL Ubuntu** — If `conda activate` has no effect, run `conda init bash` then restart your terminal.
 
-> **Apple Silicon note:** If `conda install mob_suite` fails on ARM: `pip install mob-suite && mob_init`
+**Database not found at runtime** — Re-run `bash scripts/setup_databases.sh` to download missing databases. Use `--skip-X` flags to skip ones you already have, or `--plsdb-path` / `--card-path` to point to an existing copy.
 
 ---
 
-## Database setup (one-time)
+## Advanced: higher accuracy with geNomad
 
-```bash
-bash scripts/setup_databases.sh
-```
-
-This downloads and builds all databases at their auto-detected paths under `data/databases/`. PlasFlow v2 finds them automatically — no flags needed after setup.
-
-| Database | Path | Purpose |
-|---|---|---|
-| CARD | `data/databases/card/` | ARG annotation (primary) |
-| SARG | `data/databases/sarg/sarg.dmnd` | ARG annotation (secondary) |
-| AMRFinderPlus | `data/databases/amrfinder/amrprot.dmnd` | ARG annotation (tertiary) |
-| VFDB set A | `data/databases/vfdb/vfdb.dmnd` | Virulence factors |
-| Pärnänen MGE | `data/databases/mge/isfinder.dmnd` | IS elements / transposons |
-| BacMet2 | `data/databases/bacmet/bacmet.dmnd` | Biocide & metal resistance |
-| ICEberg3 | `data/databases/ice/ice.dmnd` | Integrative conjugative elements |
-| PLSDB + RefSeq + COMPASS | `data/databases/plasmids/` | Closest known plasmid match |
-| Taxonomy (GTDB/RefSeq) | `data/databases/taxonomy/` | Contig host taxonomy |
-| MOB-suite | auto-detected | Replicon/relaxase typing |
-
-### Optional: geNomad database (~3 GB, improves accuracy)
-
-```bash
-genomad download-database data/databases/genomad_db/
-```
-
-When available, run gene annotation before the pipeline:
+Running geNomad separately adds 12 gene-signature features to the XGBoost model:
 
 ```bash
 genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
-```
 
-Then pass the output to `plasflow2 prepare --genomad-genes` (see [Two-step workflow](#two-step-workflow-higher-accuracy)).
-
----
-
-## Usage
-
-### Simplest run
-
-```bash
-plasflow2 run --input assembly.fasta --output ./results/ --threads 16
-```
-
-### With sample context (adjusts AMR risk scoring)
-
-```bash
-plasflow2 run \
-  --input   assembly.fasta \
-  --output  ./results/ \
-  --context wastewater \
-  --threads 16
-```
-
-Context options: `clinical`, `wastewater`, `environmental`, `unspecified` (default).
-
-### Fast run — skip taxonomy (saves 20–40 min on large datasets)
-
-```bash
-plasflow2 run \
-  --input         assembly.fasta \
-  --output        ./results/ \
-  --skip-taxonomy \
-  --threads       16
-```
-
-### Classify only (no databases required, seconds)
-
-Useful for a quick look before running the full pipeline:
-
-```bash
-plasflow2 classify --input assembly.fasta --output predictions.tsv
-```
-
-### Two-step workflow (higher accuracy)
-
-Running MOB-suite annotation separately lets you add geNomad gene features, giving the XGBoost stage-2 model its full 26-feature input:
-
-```bash
-# Step 1 — generate annotation TSV (~5–30 min depending on dataset size)
 plasflow2 prepare \
-  --input        assembly.fasta \
-  --output       annotations.tsv \
+  --input assembly.fasta \
+  --output annotations.tsv \
   --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv \
-  --threads      16
+  --threads 16
 
-# Step 2 — classify with stage-2 XGBoost
 plasflow2 classify \
-  --input          assembly.fasta \
-  --output         predictions.tsv \
+  --input assembly.fasta \
+  --output predictions.tsv \
   --annotation-tsv annotations.tsv
 ```
 
-### Rebuild report from saved predictions
+---
 
-No need to re-run the full pipeline to regenerate the HTML:
+## Advanced: skip or reuse existing databases
 
 ```bash
-plasflow2 report \
-  --predictions results/all_predictions.tsv \
-  --output      results/report.html
+# Point to databases you already have
+bash scripts/setup_databases.sh \
+  --plsdb-path /data/PLSDB.fna \
+  --card-path  /data/card/card.dmnd
+
+# Skip individual databases
+bash scripts/setup_databases.sh --skip-plsdb --skip-iceberg --threads 16
+```
+
+Available skip flags: `--skip-models --skip-card --skip-sarg --skip-amrfinder --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-plsdb --skip-mobsuite`
+
+---
+
+## Docker
+
+```bash
+docker build -t plasflow2 .
+docker run --rm \
+  -v /path/to/data:/data \
+  -v /path/to/results:/results \
+  plasflow2 run --input /data/assembly.fasta --output /results/ --threads 8
 ```
 
 ---
 
-## Output files
+## How it works
 
-All outputs are written to the directory you specify with `--output`.
+PlasFlow v2 uses a two-stage classifier:
 
-| File | Description |
-|---|---|
-| `all_predictions.tsv` | Per-contig classification and all annotations (every contig) |
-| `annotated_predictions.tsv` | Filtered — only contigs with ARGs, MGEs, VFs, mobility, or pathogen hits |
-| `plasmids.fasta` | Classified plasmid sequences |
-| `chromosome.fasta` | Classified chromosome sequences |
-| `phage.fasta` | Classified phage sequences |
-| `archaea.fasta` | Classified archaea sequences |
-| `annotations.json` | Full evidence per plasmid contig (ARG + mobility + risk + taxonomy) |
-| `report_plasmid.html` | Interactive plasmid report with charts, gene maps, and AMR risk summary |
-| `report_chromosome.html` | Chromosome contig report |
-| `report_phage.html` | Phage contig report |
-| `report_archaea.html` | Archaea contig report |
-| `report_unclassified.html` | Unclassified contig report |
+1. **Binary MLP** (k=7 k-mer features) — fast sequence composition classifier. ~15 sec for 60k contigs on CPU.
+2. **Marker XGBoost** — refines MLP scores using biological evidence: conjugation proteins, replicon type, geNomad gene signatures, ICE elements, GC content.
 
-### Key columns in `all_predictions.tsv`
-
-| Column | Description |
-|---|---|
-| `contig_id` | Sequence identifier from input FASTA |
-| `predicted` | Classification: `plasmid` / `chromosome` / `phage` / `archaea` / `unclassified` |
-| `plasmid_score` | MLP probability score (0–1) |
-| `confidence` | Final classification confidence |
-| `low_confidence` | `True` if best score < 70% |
-| `evidence_type` | What drove the plasmid call (e.g. `xgb_blend`, `conjugative_override`, `replicon_boost`) |
-| `is_conjugative` | `1` if conjugation proteins detected |
-| `is_mobilizable` | `1` if mobilization proteins detected |
-| `replicon_type` | Inc group / replicon type (e.g. IncF, IncP) |
-| `mobility_class` | `conjugative` / `mobilizable` / `non-mobilizable` |
-| `num_args` | Number of ARGs detected |
-| `arg_genes` | ARG names (`;`-separated) |
-| `drug_classes` | Drug classes (`;`-separated) |
-| `risk_score` | AMR risk score (0–10) |
-| `topology` | `circular` / `linear` / `too_short` |
-| `taxonomy` | Predicted host organism |
-| `plasmid_db_match` | Closest known plasmid (PLSDB/RefSeq/COMPASS) |
-| `plasmid_db_ani` | % nucleotide identity to closest known plasmid |
-
----
-
-## AMR risk score
-
-Each plasmid is scored 0–10 based on mobility, ARG burden, host pathogenicity, and sample context:
-
-| Factor | Points |
-|---|---|
-| ESKAPE pathogen host (*K. pneumoniae*, *A. baumannii*, *P. aeruginosa*, *S. aureus*, *E. faecium*, *Enterobacter*, *E. coli*) | +3 |
-| WHO 2024 critical/high priority pathogen host | +2 |
-| Conjugative mobility | +3 |
-| Mobilizable | +2 |
-| Broad-host-range replicon (IncP / IncQ / IncW) | +2 |
-| ≥5 ARGs or ≥3 drug classes | +3 |
-| 3–4 ARGs or 2 drug classes | +2 |
-| 1–2 ARGs | +1 |
-| Context: clinical | +3 |
-| Context: wastewater | +2 |
-| Context: environmental | +1 |
-| **Max (capped at 10)** | |
-
-Risk ≥ 7 = **high** · 4–6 = **medium** · 0–3 = **low**
-
----
-
-## CLI reference
-
-```
-plasflow2 [--verbose] [--version] COMMAND
-
-Commands:
-  run       Full pipeline: classify → annotate → risk score → HTML report
-  classify  Classify contigs (fast, no databases required)
-  prepare   Generate MOB-suite annotation TSV for stage-2 XGBoost
-  annotate  Annotate plasmid sequences with ARGs and mobility
-  report    Rebuild HTML report from a saved all_predictions.tsv
-  setup     Print installation guide for external tools and databases
-```
-
-**`plasflow2 run` key options:**
-
-| Option | Default | Description |
-|---|---|---|
-| `--input` / `-i` | required | Input FASTA (`.fasta`, `.fa`, `.fna`, `.gz`, `.bz2`) |
-| `--output` / `-o` | required | Output directory (created if absent) |
-| `--threads` | 8 | CPU threads |
-| `--context` | unspecified | `clinical` / `wastewater` / `environmental` / `unspecified` |
-| `--plasmid-threshold` | 0.95 | Minimum plasmid score to emit a plasmid call |
-| `--min-confidence` | — | When set, every contig gets a label (argmax fallback) instead of `unclassified` |
-| `--min-length` | 1000 | Minimum contig length in bp |
-| `--skip-mobility` | — | Skip MOB-suite (use when `mob_typer` is unavailable) |
-| `--skip-taxonomy` | — | Skip taxonomy annotation (saves 20–40 min on large datasets) |
-| `--min-identity` | 80.0 | Minimum % identity for DIAMOND ARG hits |
-
-Run `plasflow2 COMMAND --help` for the full option list for any command.
+Plasmid calls require biological evidence (PLSDB match, relaxase, replicon type, ICE hit, or rep protein). Contigs with no evidence and length < 50 kb are returned as `unclassified`.
 
 ---
 
 ## Testing
 
 ```bash
-python -m pytest tests/unit/ -q         # 192 unit tests
-python -m pytest tests/integration/ -q  # requires external tools installed
+python -m pytest tests/unit/ -q          # unit tests
+python -m pytest tests/integration/ -q   # requires external tools installed
 ```
 
 ---
 
 ## Retraining
 
-To retrain the MLP or XGBoost models on your own data, see the scripts in `scripts/`:
+To retrain on your own data, see `scripts/`:
 
-- `scripts/retrain_k7_binary.sh` — end-to-end binary MLP retrain (dataset build → train → benchmark)
-- `scripts/retrain_with_genomad.sh` — retrain XGBoost with geNomad SPM features
-- `scripts/retrain_hard_neg.sh` — retrain with composition FP hard negatives
-- `scripts/build_dataset.py` — build training windows from plasmid + GTDB chromosome FASTAs
-- `scripts/train_marker_model.py` — train XGBoost on annotation TSV
+- `scripts/retrain_k7_binary.sh` — end-to-end MLP retrain
+- `scripts/retrain_with_genomad.sh` — retrain XGBoost with geNomad features
+- `scripts/train_marker_model.py` — train XGBoost on an annotation TSV
+- `scripts/build_dataset.py` — build training windows from FASTA files
 
-> Apple Silicon: MPS is disabled by default due to PyTorch ≤ 2.3 instability on large float32 ops. Training runs on CPU (~45–60 min for 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable if your PyTorch version supports it.
+> Apple Silicon: MPS is disabled by default (PyTorch ≤ 2.3 instability on large float32 ops). Training runs on CPU (~45–60 min for 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable.
 
 ---
 
 ## Citation
-
-If you use PlasFlow v2, please cite the original PlasFlow paper:
 
 > Krawczyk PS, Lipinski L, Dziembowski A. PlasFlow: predicting plasmid sequences in metagenomic data using genome signatures. *Nucleic Acids Research*, 2018, 46(6):e35. https://doi.org/10.1093/nar/gky044
 
