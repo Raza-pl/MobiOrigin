@@ -285,12 +285,17 @@ def run_pipeline(
     # 2. Classify
     # ------------------------------------------------------------------
     logger.info("Classifying %d contigs …", len(sequences))
+    # In lenient mode lower plasmid threshold to match the general threshold so
+    # that moderate-confidence plasmid calls reach the hallmark gate (which is
+    # also skipped in lenient mode).  In normal mode keep the high plasmid
+    # threshold (default 0.95) to suppress false positives from class imbalance.
+    _effective_plasmid_threshold = confidence_threshold if lenient else plasmid_threshold
     predictions = predict(
         sequences,
         seq_ids,
         model_path,
         threshold=confidence_threshold,
-        plasmid_threshold=plasmid_threshold,
+        plasmid_threshold=_effective_plasmid_threshold,
         argmax_fallback=argmax_fallback,
         source_context=source_context,
         apply_prior=True,
