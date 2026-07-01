@@ -41,7 +41,9 @@ dependencies:
     - "scipy>=1.11.0"
 
     # Bioinformatics
-    - "mob-suite==3.1.9"  # pin to force pre-built wheel; older versions require source compilation
+    # mob-suite is installed separately in install.sh with --no-deps because its
+    # package metadata declares numpy<1.23.5 (a stale constraint from 2022) which
+    # conflicts with any modern numpy. It works fine at runtime with numpy 2.x.
     - "biopython>=1.82"
     - "pyrodigal>=3.0.0"
 

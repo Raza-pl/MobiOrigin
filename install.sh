@@ -87,6 +87,15 @@ CONDA_BASE=$(conda info --base)
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 conda activate plasflow2
 
+# ── Install mob-suite (bypassing its stale numpy<1.23.5 constraint) ──────────
+# mob-suite declares numpy<1.23.5 in its metadata (a 2022-era constraint) but
+# works fine with any modern numpy. --no-deps skips the broken constraint check;
+# all real dependencies (numpy, pandas, biopython) are already installed above.
+step "2b. Installing mob-suite"
+pip install "mob-suite" --no-deps --quiet \
+    && ok "mob-suite installed" \
+    || { err "mob-suite install failed — try: pip install mob-suite --no-deps"; }
+
 # ── Verify plasflow2 CLI is installed ────────────────────────────────────────
 step "3. Verifying PlasFlow v2 installation"
 
