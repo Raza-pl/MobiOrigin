@@ -116,9 +116,14 @@ def _resolve_model(model_path: str | None) -> Path:
     if _DEFAULT_MODEL.exists():
         return _DEFAULT_MODEL
     raise click.UsageError(
-        "No model weights found. Either train a model with:\n"
-        "  python scripts/train_model.py --mlp --data data/features.npy --labels data/labels.npy\n"
-        "or specify --model <path>."
+        "Model weights not found at data/models/mlp_v2.pt\n\n"
+        "Download the pre-trained models by running:\n"
+        "  bash scripts/setup_databases.sh\n\n"
+        "Or if you only want the model files (skipping all databases):\n"
+        "  bash scripts/setup_databases.sh \\\n"
+        "    --skip-plsdb --skip-card --skip-sarg --skip-amrfinder \\\n"
+        "    --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-mobsuite\n\n"
+        "To specify a custom model path: plasflow2 run --model /path/to/mlp_v2.pt ..."
     )
 
 
@@ -708,7 +713,33 @@ def _write_annotations_json(plasmid_results: list, output_path: Path) -> None:
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Enable debug logging.")
 @click.pass_context
 def main(ctx: click.Context, verbose: bool) -> None:
-    """PlasFlow v2 — plasmid/chromosome/phage/archaea classifier and AMR risk scorer."""
+    """PlasFlow v2 — metagenomic contig classifier and AMR risk scorer.
+
+    Classifies contigs from metagenomic assemblies as plasmid, chromosome,
+    phage, or archaea. Plasmid contigs are annotated with antibiotic resistance
+    genes (ARGs), virulence factors, mobile genetic elements, mobility class
+    (conjugative / mobilizable / non-mobilizable), and an AMR risk score (0-10).
+
+    \b
+    Typical workflow:
+      plasflow2 run --input assembly.fasta --output results/ --threads 16
+
+    \b
+    Output files in results/:
+      all_predictions.tsv    — every contig: label, scores, and all annotations
+      plasmids.fasta         — extracted plasmid sequences
+      report_plasmid.html    — interactive HTML report (open in browser)
+
+    \b
+    Quick classify (no databases needed, runs in seconds):
+      plasflow2 classify --input assembly.fasta --output predictions.tsv
+
+    \b
+    Rebuild the HTML report from a saved TSV (no re-run needed):
+      plasflow2 report --predictions results/all_predictions.tsv --output results/
+
+    Run 'plasflow2 COMMAND --help' for details on any command.
+    """
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     _configure_logging(verbose)
@@ -726,7 +757,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
     "input_fasta",
     required=True,
     type=click.Path(exists=True),
-    help="Input assembly FASTA file.",
+    help="Input assembly FASTA (.fasta / .fa / .fna / .gz / .bz2). Accepts compressed files.",
 )
 @click.option(
     "--output",
@@ -734,32 +765,47 @@ def main(ctx: click.Context, verbose: bool) -> None:
     "output_dir",
     required=True,
     type=click.Path(),
-    help="Output directory (created if absent).",
+    help="Output directory. Created automatically if it does not exist.",
 )
 @click.option(
     "--model",
     "model_path",
     default=None,
     type=click.Path(),
-    help="Path to trained .pt weights (default: data/models/mlp_v2.pt).",
+    help=(
+        "Path to MLP model weights (.pt). "
+        "Auto-detected from data/models/mlp_v2.pt when not specified. "
+        "Download via: bash scripts/setup_databases.sh"
+    ),
 )
 @click.option(
     "--card-db",
     default=None,
     type=click.Path(),
-    help="DIAMOND CARD database .dmnd (default: data/databases/card/card.dmnd).",
+    help=(
+        "DIAMOND CARD database (.dmnd) for antibiotic resistance gene annotation. "
+        "Auto-detected from data/databases/card/card.dmnd. "
+        "Download via: bash scripts/setup_databases.sh"
+    ),
 )
 @click.option(
     "--aro-index",
     default=None,
     type=click.Path(),
-    help="CARD aro_index.tsv (default: data/databases/card/aro_index.tsv).",
+    help=(
+        "CARD ARO index TSV (maps protein accessions to gene names and drug classes). "
+        "Auto-detected from data/databases/card/aro_index.tsv."
+    ),
 )
 @click.option(
     "--threshold",
     default=0.7,
     show_default=True,
-    help="Confidence threshold for chromosome/phage/archaea; sequences below this are 'unclassified'.",
+    help=(
+        "Minimum confidence score (0-1) to assign a contig to chromosome, phage, or archaea. "
+        "Contigs below this threshold are labelled 'unclassified' rather than forced into a class. "
+        "Lower values (e.g. 0.5) assign more contigs but increase misclassification."
+    ),
 )
 @click.option(
     "--plasmid-threshold",
@@ -767,8 +813,9 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=0.95,
     show_default=True,
     help=(
-        "Confidence threshold for plasmid calls (default 0.95). "
-        "Higher than --threshold to correct for class-prior imbalance."
+        "Minimum score (0-1) to call a contig as plasmid. Set higher than --threshold (default 0.95) "
+        "to compensate for class-prior imbalance — plasmids are rare in typical metagenomes. "
+        "Lower to 0.80-0.90 if you expect a high plasmid fraction (e.g. plasmid-enriched samples)."
     ),
 )
 @click.option(
@@ -777,9 +824,9 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=None,
     type=float,
     help=(
-        "Confidence threshold for archaea calls. When not set, uses --threshold (0.70). "
-        "Raise to 0.93+ to reduce false-positive archaea calls in non-archaeal environments "
-        "such as wastewater or clinical samples."
+        "Minimum score for archaea calls. Defaults to --threshold (0.70). "
+        "Raise to 0.93+ for non-archaeal environments (wastewater, clinical) "
+        "to reduce false-positive archaea calls."
     ),
 )
 @click.option(
@@ -789,50 +836,81 @@ def main(ctx: click.Context, verbose: bool) -> None:
     type=click.Choice(
         ["clinical", "wastewater", "environmental", "unspecified"], case_sensitive=False
     ),
-    help="Sample source context for AMR risk scoring.",
+    help=(
+        "Sample source context for AMR risk scoring. "
+        "Adds bonus points to the risk score: clinical (+3), wastewater (+2), environmental (+1). "
+        "Use 'clinical' for hospital or patient-derived samples; "
+        "'wastewater' for WWTP or sewage; 'environmental' for soil, water, etc."
+    ),
 )
-@click.option("--threads", default=8, show_default=True, help="CPU threads for DIAMOND/MOB-suite.")
-@click.option("--min-length", default=1000, show_default=True, help="Minimum contig length (bp).")
+@click.option(
+    "--threads",
+    default=8,
+    show_default=True,
+    help="CPU threads for DIAMOND searches and MOB-suite. More threads = faster annotation.",
+)
+@click.option(
+    "--min-length",
+    default=1000,
+    show_default=True,
+    help=(
+        "Minimum contig length in base pairs. Shorter contigs are discarded before classification. "
+        "1000 bp is the recommended minimum for reliable k-mer composition features."
+    ),
+)
 @click.option(
     "--min-confidence",
     "min_confidence",
     default=None,
     type=float,
     help=(
-        "When set, contigs whose best class scores below this value receive the argmax "
-        "label (best-guess) instead of 'unclassified'. "
-        "Useful for reducing the unclassified rate without retraining. "
-        "Example: --min-confidence 0.50 assigns every contig to its most-likely class "
-        "regardless of confidence. "
-        "Overrides --threshold / --plasmid-threshold for the fallback decision only; "
-        "high-confidence calls are unaffected."
+        "When set, contigs below --threshold receive their best-guess label instead of 'unclassified'. "
+        "Useful for maximising the number of classified contigs without retraining. "
+        "Example: --min-confidence 0.50 assigns every contig to its most-likely class. "
+        "Does not affect high-confidence calls."
     ),
 )
 @click.option(
     "--skip-mobility",
     is_flag=True,
     default=False,
-    help="Skip MOB-suite mobility typing (use when mob_typer is unavailable).",
+    help=(
+        "Skip MOB-suite mobility typing. "
+        "Use when mob_typer is not installed or you only need ARG annotation. "
+        "mobility_class, replicon_type, and relaxase_type columns will be empty."
+    ),
 )
 @click.option(
     "--taxonomy-db",
     "taxonomy_db",
     default=None,
     type=click.Path(),
-    help="DIAMOND database (.dmnd) built from GTDB-r220 / RefSeq proteins for taxonomy.",
+    help=(
+        "DIAMOND protein database for host taxonomy prediction. "
+        "Built from GTDB r220 or RefSeq representative genomes. "
+        "Auto-detected from data/databases/taxonomy/refseq_taxonomy.dmnd."
+    ),
 )
 @click.option(
     "--taxon-map",
     "taxon_map",
     default=None,
     type=click.Path(),
-    help="2-column TSV mapping accession → GTDB lineage (optional, improves LCA accuracy).",
+    help=(
+        "TSV mapping sequence accession → GTDB lineage string. "
+        "Improves LCA (lowest common ancestor) accuracy for taxonomy calls. "
+        "Auto-detected from data/databases/taxonomy/taxon_map.tsv."
+    ),
 )
 @click.option(
     "--skip-taxonomy",
     is_flag=True,
     default=False,
-    help="Skip taxonomy annotation (use when no taxonomy DB is available).",
+    help=(
+        "Skip host taxonomy annotation. "
+        "Saves 20-40 min on large datasets when no taxonomy database is available. "
+        "taxonomy, taxonomy_rank, and taxonomy_lineage columns will be empty."
+    ),
 )
 @click.option(
     "--taxonomy-engine",
@@ -840,9 +918,11 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default="auto",
     type=click.Choice(["auto", "kaiju", "diamond"], case_sensitive=False),
     help=(
-        "Taxonomy annotation engine. 'auto' uses Kaiju if installed and its DB is present, "
-        "otherwise falls back to DIAMOND. 'kaiju' forces Kaiju (20–50× faster). "
-        "'diamond' forces DIAMOND blastp.  [default: auto]"
+        "Engine for host taxonomy annotation. "
+        "'auto' uses Kaiju if installed (20-50x faster), otherwise falls back to DIAMOND. "
+        "'kaiju' forces Kaiju (requires kaiju DB in data/databases/kaiju/). "
+        "'diamond' forces DIAMOND blastp (works with any protein DB). "
+        "[default: auto]"
     ),
 )
 @click.option(
@@ -850,21 +930,21 @@ def main(ctx: click.Context, verbose: bool) -> None:
     "kaiju_db",
     default=None,
     type=click.Path(),
-    help="Kaiju FM-index database (.fmi).  [auto-detected from data/databases/kaiju/]",
+    help="Kaiju FM-index database (.fmi). Auto-detected from data/databases/kaiju/.",
 )
 @click.option(
     "--kaiju-nodes",
     "kaiju_nodes",
     default=None,
     type=click.Path(),
-    help="NCBI taxonomy nodes.dmp for Kaiju.  [auto-detected from data/databases/kaiju/]",
+    help="NCBI taxonomy nodes.dmp for Kaiju. Auto-detected from data/databases/kaiju/.",
 )
 @click.option(
     "--kaiju-names",
     "kaiju_names",
     default=None,
     type=click.Path(),
-    help="NCBI taxonomy names.dmp for Kaiju.  [auto-detected from data/databases/kaiju/]",
+    help="NCBI taxonomy names.dmp for Kaiju. Auto-detected from data/databases/kaiju/.",
 )
 @click.option(
     "--sarg-db",
@@ -872,9 +952,10 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=None,
     type=click.Path(),
     help=(
-        "DIAMOND database (.dmnd) built from the SARG (Structured ARG) database. "
-        "When provided, ARG annotation runs against both CARD and SARG; CARD hits "
-        "take precedence per ORF and SARG supplements with genes not found in CARD."
+        "DIAMOND database built from the SARG (Structured ARG Database). "
+        "Auto-detected from data/databases/sarg/sarg.dmnd. "
+        "When present, ARG annotation runs against CARD + SARG together; "
+        "CARD hits take precedence and SARG fills in genes not covered by CARD."
     ),
 )
 @click.option(
@@ -883,10 +964,10 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=None,
     type=click.Path(),
     help=(
-        "DIAMOND database (.dmnd) built from the AMRFinderPlus AMRProt FASTA. "
-        "Auto-detected from data/databases/amrfinder/amrprot.dmnd when present. "
-        "Priority: CARD > AMRProt > SARG per ORF. "
-        "Setup: diamond makedb --in AMRProt -d data/databases/amrfinder/amrprot"
+        "DIAMOND database built from the NCBI AMRFinderPlus protein FASTA. "
+        "Auto-detected from data/databases/amrfinder/amrprot.dmnd. "
+        "Hit priority per ORF: CARD > AMRFinderPlus > SARG. "
+        "Provides a third independent ARG source for higher recall."
     ),
 )
 @click.option(
@@ -895,9 +976,9 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=80.0,
     show_default=True,
     help=(
-        "Minimum amino-acid identity %% for DIAMOND ARG hits. "
-        "80%% (default) is the standard for environmental/metagenomic samples. "
-        "Use 90%% for clinical-isolate-grade precision."
+        "Minimum amino-acid identity (%%) for DIAMOND ARG hits to be reported. "
+        "80%% is standard for metagenomic / environmental samples. "
+        "Raise to 90%% for stricter clinical-isolate-grade precision."
     ),
 )
 @click.option(
@@ -906,9 +987,9 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=None,
     type=click.Path(),
     help=(
-        "DIAMOND database (.dmnd) built from VFDB set A protein sequences. "
-        "When provided, annotates plasmid contigs with virulence factors. "
-        "Build with: diamond makedb --in VFDB_setA_pro.fas -d data/databases/vfdb/vfdb_setA"
+        "DIAMOND database built from VFDB set A (experimentally validated virulence factors). "
+        "Auto-detected from data/databases/vfdb/vfdb.dmnd. "
+        "When present, annotates every contig with virulence factor hits."
     ),
 )
 @click.option(
@@ -917,9 +998,9 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=None,
     type=click.Path(),
     help=(
-        "DIAMOND database (.dmnd) built from ISfinder transposase protein sequences. "
-        "When provided, detects IS elements and transposons on plasmid contigs. "
-        "Build with: diamond makedb --in ISfinder-sequences.fasta -d data/databases/mge/isfinder"
+        "DIAMOND database built from ISfinder / Pärnänen MGE proteins. "
+        "Auto-detected from data/databases/mge/isfinder.dmnd. "
+        "When present, detects IS elements, transposons, and integrons on all contigs."
     ),
 )
 @click.pass_context
@@ -951,19 +1032,38 @@ def run(
     mge_db: str | None,
     min_confidence: float | None,
 ) -> None:
-    """Run the full PlasFlow v2 pipeline: classify → annotate → risk → report.
+    """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
+
+    All databases are auto-detected from data/databases/. Run setup first if you haven't:
+
+        bash scripts/setup_databases.sh
 
     \b
-    Outputs written to OUTPUT_DIR:
-        all_predictions.tsv       — per-sequence classification (all contigs, all annotations)
-        annotated_predictions.tsv — filtered: contigs with ARGs / MGEs / VFs / mobility / pathogens
-        plasmids.fasta            — classified plasmid sequences
-        annotations.json          — ARG + mobility + risk per plasmid contig
-        report_plasmid.html       — plasmid detail report (ARG/VF/MGE/risk)
+    Output files written to OUTPUT_DIR:
+        all_predictions.tsv       — every contig: label, scores, ARGs, mobility, risk, taxonomy
+        annotated_predictions.tsv — filtered view: contigs that have ARGs, MGEs, VFs, or pathogens
+        plasmids.fasta            — classified plasmid sequences (FASTA)
+        chromosome.fasta          — classified chromosome sequences
+        phage.fasta               — classified phage sequences
+        archaea.fasta             — classified archaea sequences
+        genes.tsv                 — gene-level table: all ORFs with ARG/VF/MGE flags and coordinates
+        annotations.json          — full ARG + mobility + risk evidence per plasmid (machine-readable)
+        report_plasmid.html       — interactive plasmid report with charts and AMR risk summary
         report_chromosome.html    — chromosome contig report
         report_phage.html         — phage contig report
         report_archaea.html       — archaea contig report
         report_unclassified.html  — unclassified contig report
+
+    \b
+    Examples:
+        # Standard run
+        plasflow2 run --input assembly.fasta --output results/ --threads 16
+
+        # Clinical sample (adjusts AMR risk scoring)
+        plasflow2 run --input assembly.fasta --output results/ --context clinical --threads 16
+
+        # Skip taxonomy annotation to save 20-40 min on large datasets
+        plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy --threads 16
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -1150,41 +1250,54 @@ def run(
 
 
 @main.command()
-@click.option("--input", "-i", "input_fasta", required=True, type=click.Path(exists=True))
+@click.option(
+    "--input",
+    "-i",
+    "input_fasta",
+    required=True,
+    type=click.Path(exists=True),
+    help="Input assembly FASTA (.fasta / .fa / .fna / .gz / .bz2).",
+)
 @click.option(
     "--output",
     "-o",
     "output_tsv",
     required=True,
     type=click.Path(),
-    help="Destination TSV file for predictions.",
+    help="Output TSV file for per-contig predictions.",
 )
 @click.option(
     "--model",
     "model_path",
     default=None,
     type=click.Path(),
-    help="MLP model path [auto-detected from data/models/mlp_v2.pt].",
+    help="MLP model weights (.pt). Auto-detected from data/models/mlp_v2.pt.",
 )
 @click.option(
     "--threshold",
     default=0.7,
     show_default=True,
-    help="Minimum confidence to emit a label (argmax fallback).",
+    help=(
+        "Minimum confidence score (0-1) to assign a label. "
+        "Contigs below this are returned as 'unclassified'."
+    ),
 )
 @click.option(
     "--plasmid-threshold",
     "plasmid_threshold",
     default=0.95,
     show_default=True,
-    help="Minimum plasmid score to call a contig as plasmid.",
+    help=(
+        "Minimum score to call a contig as plasmid (default 0.95). "
+        "Set higher than --threshold to reduce false-positive plasmid calls."
+    ),
 )
 @click.option(
     "--min-length",
     "min_length",
     default=1000,
     show_default=True,
-    help="Minimum contig length in bp.",
+    help="Minimum contig length in bp. Shorter contigs are skipped.",
 )
 @click.option(
     "--annotation-tsv",
@@ -1192,9 +1305,10 @@ def run(
     default=None,
     type=click.Path(exists=True),
     help=(
-        "Pre-computed MOB-suite annotation TSV from 'plasflow2 prepare' or "
-        "scripts/annotate_sequences.py. Enables XGBoost stage-2 biological marker blending "
-        "and adds evidence columns (mlp_plasmid, xgb_plasmid, is_conjugative, …) to output."
+        "Pre-computed MOB-suite annotation TSV from 'plasflow2 prepare'. "
+        "Enables XGBoost stage-2 blending, which adds biological evidence "
+        "(conjugation proteins, replicon type, coding density) on top of k-mer scores. "
+        "Improves accuracy but requires MOB-suite to be installed."
     ),
 )
 @click.option(
@@ -1202,23 +1316,20 @@ def run(
     "marker_model_path",
     default=None,
     type=click.Path(),
-    help=(
-        "XGBoost marker model (.pkl) for stage-2 blending "
-        "[auto-detected from data/models/marker_xgb.pkl]."
-    ),
+    help="XGBoost stage-2 model (.pkl). Auto-detected from data/models/marker_xgb.pkl.",
 )
 @click.option(
     "--threads",
     default=4,
     show_default=True,
-    help="CPU threads for pyrodigal ORF prediction (used by stage-2 marker scoring).",
+    help="CPU threads for pyrodigal ORF prediction (used when stage-2 XGBoost is active).",
 )
 @click.option(
     "--no-marker-model",
     "no_marker_model",
     is_flag=True,
     default=False,
-    help="Disable stage-2 XGBoost even if marker_xgb.pkl is present.",
+    help="Force MLP-only mode — disable XGBoost stage-2 even if marker_xgb.pkl is present.",
 )
 @click.pass_context
 def classify(
@@ -1234,15 +1345,25 @@ def classify(
     threads: int,
     no_marker_model: bool,
 ) -> None:
-    """Classify sequences and write per-sequence predictions to TSV.
+    """Classify contigs as plasmid / chromosome / phage / archaea / unclassified.
 
-    Without --annotation-tsv: fast MLP-only classification (no databases required).
+    Fast mode (no databases, runs in seconds):
 
-    With --annotation-tsv: enables XGBoost stage-2 blending for higher accuracy.
-    Generate the TSV first with:
+        plasflow2 classify --input assembly.fasta --output predictions.tsv
 
+    Higher accuracy mode (requires MOB-suite, takes 5-30 min):
+
+    \b
         plasflow2 prepare --input assembly.fasta --output annotations.tsv
+        plasflow2 classify --input assembly.fasta --output predictions.tsv \\
+            --annotation-tsv annotations.tsv
 
+    \b
+    Output TSV columns:
+        contig_id, label, confidence, plasmid_score, chromosome_score, phage_score, archaea_score
+
+    When --annotation-tsv is provided, additional evidence columns are added:
+        mlp_plasmid, xgb_plasmid, is_conjugative, is_mobilizable, has_replicon, evidence_type
     """
     resolved_model = _resolve_model(model_path)
 
@@ -1300,7 +1421,7 @@ def classify(
     "input_fasta",
     required=True,
     type=click.Path(exists=True),
-    help="Input FASTA (any contigs — plasmid + chromosome).",
+    help="Input assembly FASTA — include all contigs, not just plasmids.",
 )
 @click.option(
     "--output",
@@ -1308,10 +1429,13 @@ def classify(
     "output_tsv",
     required=True,
     type=click.Path(),
-    help="Output annotation TSV (pass to 'classify --annotation-tsv').",
+    help="Output annotation TSV. Pass this to 'plasflow2 classify --annotation-tsv'.",
 )
 @click.option(
-    "--threads", default=4, show_default=True, help="CPU threads for MOB-suite DIAMOND searches."
+    "--threads",
+    default=4,
+    show_default=True,
+    help="CPU threads for MOB-suite DIAMOND searches. More threads = faster.",
 )
 @click.option(
     "--genomad-genes",
@@ -1335,30 +1459,26 @@ def prepare(
 ) -> None:
     """Generate MOB-suite annotation TSV for XGBoost stage-2 classification.
 
-    Runs MOB-suite DIAMOND searches (mob_proteins, mpf_proteins, rep_proteins)
-    on all input contigs and writes a TSV with per-contig biological marker
-    features: is_conjugative, is_mobilizable, has_replicon, has_rep_protein,
-    n_rep_per_kb, coding_density, gc_content, n_orfs_per_kb, etc.
+    Runs MOB-suite DIAMOND searches on all contigs to extract biological marker
+    features: conjugation proteins, relaxases, replicon types, rep proteins,
+    coding density, GC content, ORF density. These features let the XGBoost
+    stage-2 model refine k-mer-based MLP scores with actual biological evidence.
 
-    The output TSV is passed to 'classify --annotation-tsv' to enable
-    XGBoost stage-2 marker blending and full evidence columns in predictions.
-
-    Example workflow:
+    Requires MOB-suite: conda install -c bioconda -c conda-forge mob-suite
 
     \b
-        # Step 1 — generate annotation TSV (~5–30 min depending on dataset size)
-        plasflow2 prepare --input assembly.fasta --output annotations.tsv
-
-        # Step 2 — classify with XGBoost stage-2 (evidence columns in output)
+    Standard usage (5-30 min depending on dataset size):
+        plasflow2 prepare --input assembly.fasta --output annotations.tsv --threads 16
         plasflow2 classify --input assembly.fasta --output predictions.tsv \\
             --annotation-tsv annotations.tsv
 
-    Optional: add geNomad SPM features for higher accuracy (requires geNomad):
-
     \b
+    With geNomad features for maximum accuracy (requires geNomad + its database):
         genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
         plasflow2 prepare --input assembly.fasta --output annotations.tsv \\
-            --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv
+            --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv --threads 16
+        plasflow2 classify --input assembly.fasta --output predictions.tsv \\
+            --annotation-tsv annotations.tsv
     """
     import subprocess
     import sys
@@ -1583,11 +1703,17 @@ def report_cmd(
     annotations: str | None,
     context: str,
 ) -> None:
-    """Regenerate an HTML report from all_predictions.tsv (no pipeline re-run needed).
+    """Regenerate the interactive HTML report from a saved all_predictions.tsv.
 
-    The all_predictions.tsv produced by 'plasflow2 run' contains all annotations
-    (ARGs, mobility, risk scores, taxonomy, ESKAPE host) for every contig.
-    This command reads that file and rebuilds the full interactive report.
+    Useful when you want to change the --context (e.g. re-score risk as 'clinical')
+    or simply re-render the report without re-running the full pipeline.
+
+    \b
+    Example:
+        plasflow2 report \\
+            --predictions results/all_predictions.tsv \\
+            --output      results/ \\
+            --context     clinical
     """
     from plasflow2.annotate.args import ARGHit
     from plasflow2.annotate.mobility import MobilityResult
@@ -1875,110 +2001,107 @@ def report_cmd(
 # ---------------------------------------------------------------------------
 
 _SETUP_TEXT = """
-PlasFlow v2 — External Dependency Setup
-========================================
+PlasFlow v2 — Setup Guide
+==========================
 
-PlasFlow v2 requires the following external tools and databases.
-Run the commands below once to get everything ready.
+The easiest way to install everything is with the one-command installer
+from the repo root:
 
-─────────────────────────────────────────
-1. PYTHON DEPENDENCIES  (pip / Poetry)
-─────────────────────────────────────────
-    pip install poetry
-    poetry install          # installs plasflow2 + all Python deps
+    bash install.sh
 
-─────────────────────────────────────────
-2. SYSTEM TOOLS  (conda recommended)
-─────────────────────────────────────────
-    # DIAMOND  — ARG annotation + taxonomy search
-    conda install -c bioconda diamond
-
-    # MOB-suite — plasmid mobility typing
-    conda install -c conda-forge -c bioconda mob_suite
-
-    # Prodigal  — ORF prediction (Python wrapper bundled)
-    # Already installed via:  pip install pyrodigal
+This creates a conda environment, installs all tools, and downloads
+all databases and model weights automatically.
 
 ─────────────────────────────────────────
-3. CARD DATABASE  (ARG annotation)
+MANUAL SETUP (if you prefer step-by-step)
 ─────────────────────────────────────────
-    mkdir -p data/databases/card
-    cd data/databases/card
 
-    # Download the latest CARD data bundle:
-    wget https://card.mcmaster.ca/latest/data -O card.tar.bz2
+Step 1 — Create the conda environment (Python 3.10, all tools):
 
-    # Extract and build DIAMOND database:
-    python -c "
-    from plasflow2.annotate.args import setup_card_db
-    setup_card_db('data/databases/card')
-    "
+    conda env create -f environment.yml
+    conda activate plasflow2
 
-    # Expected output:
-    #   data/databases/card/card.dmnd
-    #   data/databases/card/aro_index.tsv
+Step 2 — Install PlasFlow v2 Python package:
 
-─────────────────────────────────────────
-4. GTDB DATABASE  (taxonomy annotation)
-─────────────────────────────────────────
-    mkdir -p data/databases/gtdb
-    cd data/databases/gtdb
+    pip install -e .
 
-    # Download GTDB-r220 representative protein sequences (~2 GB):
-    wget https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/\\
-         genomic_files_reps/gtdb_proteins_aa_reps_r220.tar.gz
+Step 3 — Download all databases and model weights:
 
-    tar xf gtdb_proteins_aa_reps_r220.tar.gz
+    bash scripts/setup_databases.sh
 
-    # Build DIAMOND protein database:
-    diamond makedb \\
-        --in gtdb_proteins_aa_reps_r220/gtdb_proteins_aa_reps_r220.faa \\
-        -d data/databases/gtdb/gtdb_r220 \\
-        --threads 8
+    # Or skip databases you don't need:
+    bash scripts/setup_databases.sh --skip-plsdb --skip-iceberg
 
-    # Download GTDB taxonomy file and build accession→lineage map:
-    wget https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/\\
-         bac120_taxonomy_r220.tsv.gz
-    gunzip bac120_taxonomy_r220.tsv.gz
-
-    python -c "
-    from plasflow2.annotate.taxonomy import build_gtdb_taxon_map
-    build_gtdb_taxon_map(
-        'data/databases/gtdb/bac120_taxonomy_r220.tsv',
-        'data/databases/gtdb/taxon_map.tsv'
-    )
-    "
-
-    # Expected output:
-    #   data/databases/gtdb/gtdb_r220.dmnd
-    #   data/databases/gtdb/taxon_map.tsv
+    # Or point to databases you already have:
+    bash scripts/setup_databases.sh \\
+      --card-path  /existing/card/card.dmnd \\
+      --plsdb-path /existing/PLSDB.fna
 
 ─────────────────────────────────────────
-5. RUN THE FULL PIPELINE
+WHAT GETS INSTALLED
 ─────────────────────────────────────────
-    plasflow2 run \\
-      --input      assembly.fasta \\
-      --output     results/ \\
-      --card-db    data/databases/card/card.dmnd \\
-      --aro-index  data/databases/card/aro_index.tsv \\
-      --taxonomy-db data/databases/gtdb/gtdb_r220.dmnd \\
-      --taxon-map  data/databases/gtdb/taxon_map.tsv \\
-      --context    wastewater \\
-      --threads    8
 
-    # Skip optional steps when databases are unavailable:
-    plasflow2 run --input assembly.fasta --output results/ \\
-      --skip-mobility --skip-taxonomy
+Tools (via conda):
+    diamond       — DIAMOND protein aligner (ARG/VF/taxonomy annotation)
+    minimap2      — nucleotide aligner (closest known plasmid matching)
+    mob-suite     — plasmid mobility typing (conjugative/mobilizable)
+    genomad       — optional, adds 12 gene-signature features to XGBoost
+
+Databases (via setup_databases.sh):
+    CARD          — antibiotic resistance genes (primary ARG source)
+    SARG          — supplementary ARG database
+    AMRFinderPlus — NCBI ARG database (third ARG source)
+    VFDB set A    — experimentally validated virulence factors
+    BacMet2       — biocide and metal resistance genes
+    MGE/ISfinder  — IS elements, transposons, integrons
+    ICEberg3      — integrative conjugative elements (optional)
+    PLSDB         — curated plasmid sequences for closest-match lookup
+    MOB-suite DBs — replicon/relaxase typing databases
+
+Model weights:
+    data/models/mlp_v2.pt       — MLP classifier (~79 MB)
+    data/models/marker_xgb.pkl  — XGBoost stage-2 model (~1 MB)
+    data/models/k6_pca.pkl      — PCA transform for feature compression (~4 MB)
 
 ─────────────────────────────────────────
-6. CLASSIFY ONLY (no external databases needed)
+QUICK RUN (after setup)
 ─────────────────────────────────────────
-    plasflow2 classify \\
-      --input  assembly.fasta \\
-      --output predictions.tsv
+
+    # Full pipeline — all databases auto-detected
+    plasflow2 run --input assembly.fasta --output results/ --threads 16
+
+    # Clinical sample
+    plasflow2 run --input assembly.fasta --output results/ --context clinical
+
+    # Fast classification — no databases needed, runs in seconds
+    plasflow2 classify --input assembly.fasta --output predictions.tsv
 
 ─────────────────────────────────────────
-Tip: Run 'plasflow2 --help' for all commands and options.
+TROUBLESHOOTING
+─────────────────────────────────────────
+
+"No model weights found"
+    Run: bash scripts/setup_databases.sh --skip-plsdb --skip-card ...
+    (add --skip-X for each database you want to skip)
+
+"mob_typer not found"
+    Run: conda install -c bioconda -c conda-forge mob-suite
+    Or:  pip install mob-suite && mob_init
+    Or:  plasflow2 run ... --skip-mobility
+
+Python/pytz conflict
+    Use the conda environment from environment.yml — it pins pytz explicitly.
+    Run bash install.sh to set this up automatically.
+
+Apple Silicon (M1-M5)
+    All packages in environment.yml have arm64 conda builds.
+    If mob-suite fails: pip install mob-suite && mob_init
+
+WSL Ubuntu
+    If 'conda activate' has no effect: conda init bash, then restart terminal.
+
+─────────────────────────────────────────
+Run 'plasflow2 --help' or 'plasflow2 COMMAND --help' for usage details.
 """
 
 
