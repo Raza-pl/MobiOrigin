@@ -37,11 +37,11 @@ dependencies:
     # ML / numerics
     - "torch>=2.0.0,<2.6"
     - "scikit-learn>=1.5.0"
-    - "numpy>=1.24.0,<2.0"    # numpy 2 breaks several deps; cap for now
+    - "numpy>=1.24.0"          # numpy 2.x compatible (torch 2.5+, scipy 1.11+, xgboost 2+ all support it)
     - "scipy>=1.11.0"
 
     # Bioinformatics
-    - "mob-suite"         # pip avoids bioconda channel naming issues on Linux/WSL
+    - "mob-suite==3.1.9"  # pin to force pre-built wheel; older versions require source compilation
     - "biopython>=1.82"
     - "pyrodigal>=3.0.0"
 
