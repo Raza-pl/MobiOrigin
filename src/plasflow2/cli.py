@@ -1136,9 +1136,12 @@ def run(
 
     # geNomad auto-detection message
     import shutil as _shutil_cli
+
     _gn_db_resolved = Path(genomad_db) if genomad_db else (_DB_ROOT / "genomad_db")
     if _gn_db_resolved.is_dir() and _shutil_cli.which("genomad"):
-        click.echo(f"[info] geNomad database found — SPM features will be added automatically ({_gn_db_resolved})")
+        click.echo(
+            f"[info] geNomad database found — SPM features will be added automatically ({_gn_db_resolved})"
+        )
     elif not _shutil_cli.which("genomad"):
         click.echo(
             "[info] genomad not found on PATH — XGBoost will run without SPM features. "
