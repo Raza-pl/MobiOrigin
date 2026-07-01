@@ -112,15 +112,22 @@ fi
 # (~200 MB: replicon/relaxase/MPF reference sequences).
 step "3b. Initialising mob-suite databases"
 if command -v mob_typer &>/dev/null; then
-    if mob_init 2>/dev/null; then
-        ok "mob-suite databases initialised"
+    # Check if databases already exist (mob_init is slow and can fail on re-runs)
+    MOB_DB_DIR="$(python -c "import mob_suite; import os; print(os.path.dirname(mob_suite.__file__))" 2>/dev/null)/data" || MOB_DB_DIR=""
+    if [[ -d "$MOB_DB_DIR" ]] && ls "$MOB_DB_DIR"/*.fasta &>/dev/null 2>&1; then
+        ok "mob-suite databases already present"
     else
-        warn "mob_init failed — mobility typing may not work."
-        warn "Try manually: mob_init"
+        echo "  Downloading mob-suite databases (~200 MB) ..."
+        if mob_init; then
+            ok "mob-suite databases initialised"
+        else
+            warn "mob_init failed — mobility typing may not work."
+            warn "Try manually after activating the environment: mob_init"
+        fi
     fi
 else
     warn "mob_typer not found after pip install — this is unexpected."
-    warn "Try: pip install mob-suite && mob_init"
+    warn "Try: pip install mob-suite --no-deps && mob_init"
 fi
 
 # ── Download databases + model weights ───────────────────────────────────────

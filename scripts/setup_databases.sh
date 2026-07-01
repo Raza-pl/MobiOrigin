@@ -273,17 +273,29 @@ elif [[ -f "$SARG_DMND" ]]; then
     ok "SARG: $SARG_DMND  ($(du -sh "$SARG_DMND" | cut -f1))"
 else
     SARG_FASTA="$SARG_DIR/sarg.fasta"
-    # Primary: GitHub mirror. Fallback: HKU SMILE server (may require VPN in some regions)
+    # SARG v3 URLs — try multiple mirrors in order of reliability.
+    # Note: GitHub raw has a 100 MB limit; the HKU server can be slow from some regions.
+    # ARGs-OAP v3 (xinehc) is the actively maintained source.
     SARG_URLS=(
+        "https://github.com/xinehc/args_oap/raw/main/src/args_oap/db/SARG.fasta.gz"
         "https://raw.githubusercontent.com/biofuture/Ublastx_stageone/master/DB/SARG.fasta"
         "https://smile.hku.hk/SARGs/static/download/SARG.fasta"
     )
 
     downloaded=false
+    SARG_GZ="$SARG_DIR/sarg.fasta.gz"
     for url in "${SARG_URLS[@]}"; do
-        if download "$url" "$SARG_FASTA" "SARG.fasta"; then
-            downloaded=true
-            break
+        info "Trying: $url"
+        if [[ "$url" == *.gz ]]; then
+            # Compressed download — decompress after
+            if download "$url" "$SARG_GZ" "SARG.fasta.gz"; then
+                info "Decompressing SARG.fasta.gz ..."
+                gunzip -f "$SARG_GZ" && downloaded=true && break
+            fi
+        else
+            if download "$url" "$SARG_FASTA" "SARG.fasta"; then
+                downloaded=true && break
+            fi
         fi
         info "Trying next URL..."
     done
@@ -291,10 +303,12 @@ else
     if $downloaded; then
         build_diamond "$SARG_FASTA" "$SARG_DIR/sarg"
     else
-        warn "SARG download failed from all URLs."
-        info "Manual download: https://smile.hku.hk/SARGs"
-        info "  → Download SARG.fasta and save to: $SARG_FASTA"
-        info "  → Re-run this script to build the DIAMOND database"
+        warn "SARG download failed from all URLs. (SARG is optional — AMRFinder + CARD cover most use cases.)"
+        info "To add SARG manually:"
+        info "  1. Download SARG.fasta from https://smile.hku.hk/SARGs"
+        info "     or: conda install -c bioconda args-oap  (includes SARG)"
+        info "  2. Copy the FASTA to: $SARG_FASTA"
+        info "  3. Re-run: bash scripts/setup_databases.sh --skip-card --skip-amrfinder"
     fi
 fi
 
