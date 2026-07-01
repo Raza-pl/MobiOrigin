@@ -90,11 +90,12 @@ ENV VIRTUAL_ENV="/opt/plasflow2-venv"
 # ── Copy application source ──────────────────────────────────────────────────
 WORKDIR /app
 COPY src/ src/
-COPY data/models/ data/models/
 
 # ── Runtime defaults ─────────────────────────────────────────────────────────
-# Volumes the user should mount:
-#   /data/databases/  — CARD + GTDB databases (read-only)
+# Volumes the user must mount:
+#   /data/databases/  — model weights + annotation databases (read-only)
+#                       Run scripts/setup_databases.sh on the host first,
+#                       then mount the resulting data/ directory here.
 #   /data/input/      — input FASTA files (read-only)
 #   /results/         — output directory (read-write)
 VOLUME ["/data", "/results"]

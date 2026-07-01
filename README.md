@@ -4,7 +4,7 @@
 [![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-Classifies metagenomic contigs as **plasmid, chromosome, phage, or archaea** and annotates each plasmid with antibiotic resistance genes (ARGs), mobility class, and an AMR risk score (0–10). Results are an interactive HTML report plus TSV files.
+Classifies metagenomic contigs as **plasmid, chromosome, or phage** and annotates each plasmid with antibiotic resistance genes (ARGs), mobility class, and an AMR risk score (0–10). Results are an interactive HTML report plus TSV files.
 
 ---
 
@@ -176,12 +176,11 @@ python -m pytest tests/integration/ -q   # requires external tools installed
 
 ## Retraining
 
-To retrain on your own data, see `scripts/`:
+To retrain on your own data:
 
-- `scripts/retrain_k7_binary.sh` — end-to-end MLP retrain
-- `scripts/retrain_with_genomad.sh` — retrain XGBoost with geNomad features
+- `scripts/train_model.py` — end-to-end MLP retrain
 - `scripts/train_marker_model.py` — train XGBoost on an annotation TSV
-- `scripts/build_dataset.py` — build training windows from FASTA files
+- Advanced training scripts are in `scripts/dev/`
 
 > Apple Silicon: MPS is disabled by default (PyTorch ≤ 2.3 instability on large float32 ops). Training runs on CPU (~45–60 min for 50 epochs). Set `PLASFLOW_USE_MPS=1` to re-enable.
 

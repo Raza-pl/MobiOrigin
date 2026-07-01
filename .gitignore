@@ -20,9 +20,10 @@ venv/
 env/
 .conda/
 
-# Jupyter
+# Jupyter / notebooks
 .ipynb_checkpoints/
 *.ipynb_checkpoints
+notebooks/
 
 # Data — large files / generated artifacts not committed
 data/databases/
@@ -97,29 +98,8 @@ PlasFlow_v2_*.pptx
 PlasFlow_v2_*.md
 email_professor_beta_test.md
 
-# Dead-end / experimental retrain scripts (not user-facing)
-scripts/benchmark_10kb_recal_only.sh
-scripts/recalibrate_xgb_for_10kb_mlp.sh
-scripts/resume_pca512_from_step2.sh
-scripts/resume_pca512_from_step4.sh
-scripts/retrain_10kb_protocol.sh
-scripts/retrain_5k10k_protocol.sh
-scripts/retrain_hard_neg_10kb.sh
-scripts/retrain_k7.sh
-scripts/retrain_k7_v2.sh
-scripts/retrain_pca512_protocol.sh
-scripts/run_chr_hardneg_retrain.sh
-scripts/compare_w1_outputs.py
-scripts/mini_bench.py
-scripts/runtime_comparison.sh
-scripts/retrain_replicon_augmented.sh
-scripts/rebuild_npz_with_replicons.py
-scripts/retrain_with_gtdb.sh
-scripts/retrain_with_plsdb_prot.sh
-scripts/collect_chr_biomar_hardneg.py
-scripts/download_extra_chromosomes.py
-scripts/extract_chromid_sequences.py
-scripts/merge_hardneg_into_npz.py
+# Dev / training scripts (moved to scripts/dev/)
+scripts/dev/
 
 # macOS
 .DS_Store

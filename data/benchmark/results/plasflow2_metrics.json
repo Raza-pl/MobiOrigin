@@ -1,0 +1,28 @@
+{
+  "plasmid": {
+    "precision": 0.8274,
+    "recall": 0.6447,
+    "f1": 0.7247,
+    "tp": 254,
+    "fp": 53,
+    "fn": 140
+  },
+  "chromosome": {
+    "precision": 0.9986,
+    "recall": 0.8002,
+    "f1": 0.8885,
+    "tp": 48011,
+    "fp": 67,
+    "fn": 11989
+  },
+  "phage": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 0
+  },
+  "overall_accuracy": 0.7992,
+  "total_evaluated": 60394
+}

@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "plasflow2"
 version = "2.0.0-alpha"
-description = "PlasFlow v2: plasmid/chromosome/phage/archaea classifier with ARG annotation and AMR risk scoring"
+description = "PlasFlow v2: plasmid/chromosome/phage classifier with ARG annotation and AMR risk scoring"
 authors = ["Raza <shahbaz.invincible3182@gmail.com>"]
 license = "GPL-3.0"
 readme = "README.md"
@@ -86,7 +86,6 @@ module = [
     "plasflow2.cli",
     "plasflow2.classify.predict",
     "plasflow2.classify.features",
-    "plasflow2.classify.cnn_model",
     "plasflow2.classify.marker_classifier",
     "plasflow2.annotate.topology",
     "plasflow2.annotate.args",
