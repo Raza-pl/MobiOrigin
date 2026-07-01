@@ -1003,6 +1003,18 @@ def main(ctx: click.Context, verbose: bool) -> None:
         "When present, detects IS elements, transposons, and integrons on all contigs."
     ),
 )
+@click.option(
+    "--genomad-db",
+    "genomad_db",
+    default=None,
+    type=click.Path(),
+    help=(
+        "geNomad database directory for gene-marker SPM features. "
+        "Auto-detected from data/databases/genomad_db/ when genomad is installed. "
+        "geNomad runs automatically when available — no extra step needed. "
+        "Download with: genomad download-database data/databases/"
+    ),
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -1031,12 +1043,17 @@ def run(
     vfdb: str | None,
     mge_db: str | None,
     min_confidence: float | None,
+    genomad_db: str | None,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
 
     All databases are auto-detected from data/databases/. Run setup first if you haven't:
 
         bash scripts/setup_databases.sh
+
+    geNomad runs automatically when installed, adding 12 gene-marker SPM features
+    to the XGBoost stage-2 classifier. Install with:
+        conda install -c conda-forge -c bioconda genomad
 
     \b
     Output files written to OUTPUT_DIR:
@@ -1056,7 +1073,7 @@ def run(
 
     \b
     Examples:
-        # Standard run
+        # Standard run (geNomad features added automatically if installed)
         plasflow2 run --input assembly.fasta --output results/ --threads 16
 
         # Clinical sample (adjusts AMR risk scoring)
@@ -1117,6 +1134,17 @@ def run(
         elif taxonomy_engine == "kaiju":
             click.echo(f"[info] Kaiju database: {kaiju_db}")
 
+    # geNomad auto-detection message
+    import shutil as _shutil_cli
+    _gn_db_resolved = Path(genomad_db) if genomad_db else (_DB_ROOT / "genomad_db")
+    if _gn_db_resolved.is_dir() and _shutil_cli.which("genomad"):
+        click.echo(f"[info] geNomad database found — SPM features will be added automatically ({_gn_db_resolved})")
+    elif not _shutil_cli.which("genomad"):
+        click.echo(
+            "[info] genomad not found on PATH — XGBoost will run without SPM features. "
+            "Install with: conda install -c conda-forge -c bioconda genomad"
+        )
+
     click.echo(f"[PlasFlow v2 v{__version__}] Running pipeline on {input_fasta}")
 
     # --min-confidence: when set, use argmax fallback below this threshold.
@@ -1160,6 +1188,7 @@ def run(
         kaiju_db=kaiju_db,
         kaiju_nodes=kaiju_nodes,
         kaiju_names=kaiju_names,
+        genomad_db_path=genomad_db if genomad_db else None,
     )
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
@@ -1473,7 +1502,7 @@ def prepare(
             --annotation-tsv annotations.tsv
 
     \b
-    With geNomad features for maximum accuracy (requires geNomad + its database):
+    With geNomad features for maximum accuracy (only needed for 'classify'; 'run' adds these automatically):
         genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
         plasflow2 prepare --input assembly.fasta --output annotations.tsv \\
             --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv --threads 16

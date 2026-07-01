@@ -237,6 +237,7 @@ def extract_marker_features(
     orfs: list = None,  # list[ORF]
     has_rep_protein: bool = False,  # from rep_protein_hits set in pipeline
     n_rep_hits: int = 0,  # raw rep protein hit count for this contig
+    genomad_spm: dict[str, float] | None = None,  # geNomad SPM feature dict
 ) -> ContigMarkerFeatures:
     """Build a ContigMarkerFeatures from pipeline annotation objects.
 
@@ -252,6 +253,12 @@ def extract_marker_features(
         mge_hits: MGEHit list for this contig.
         ice_hits: ICEHit list for this contig.
         orfs: ORF list for this contig (for coding density).
+        has_rep_protein: Whether a replication protein was detected for this contig.
+        n_rep_hits: Raw count of rep protein hits.
+        genomad_spm: Dict of geNomad SPM feature name → value, produced by
+            ``scripts/extract_genomad_features.py::compute_features()``.
+            When provided, populates all 12 SPM fields in ContigMarkerFeatures;
+            when None (geNomad not available), those fields stay at 0.0.
 
     Returns:
         ContigMarkerFeatures ready for inference.
@@ -310,6 +317,8 @@ def extract_marker_features(
         cod_density = 0.85  # typical bacterial coding density as prior
         n_orfs_kb = 1.0
 
+    # geNomad SPM features — populated when geNomad ran automatically
+    _gn = genomad_spm or {}
     return ContigMarkerFeatures(
         contig_id=contig_id,
         mlp_plasmid_score=plas_score,
@@ -328,6 +337,19 @@ def extract_marker_features(
         gc_content=gc,
         coding_density=cod_density,
         n_orfs_per_kb=n_orfs_kb,
+        # geNomad SPM (12 features; 0.0 / 0.5 defaults when geNomad not available)
+        p_marker_freq=float(_gn.get("p_marker_freq", 0.0)),
+        c_marker_freq=float(_gn.get("c_marker_freq", 0.0)),
+        v_marker_freq=float(_gn.get("v_marker_freq", 0.0)),
+        pp_marker_freq=float(_gn.get("pp_marker_freq", 0.0)),
+        median_p_spm=float(_gn.get("median_p_spm", 0.0)),
+        median_c_spm=float(_gn.get("median_c_spm", 0.0)),
+        median_v_spm=float(_gn.get("median_v_spm", 0.0)),
+        p_vs_c_logistic=float(_gn.get("p_vs_c_logistic", 0.5)),
+        strand_switch_rate=float(_gn.get("strand_switch_rate", 0.0)),
+        no_rbs_freq=float(_gn.get("no_rbs_freq", 0.0)),
+        canonical_sd_freq=float(_gn.get("canonical_sd_freq", 0.0)),
+        n_plasmid_markers=float(_gn.get("n_plasmid_markers", 0.0)),
     )
 
 

@@ -180,6 +180,7 @@ def run_pipeline(
     kaiju_db: Path | str | None = None,
     kaiju_nodes: Path | str | None = None,
     kaiju_names: Path | str | None = None,
+    genomad_db_path: Path | str | None = None,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
 
@@ -906,6 +907,102 @@ def run_pipeline(
         plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
 
     # ------------------------------------------------------------------
+    # 6d-pre. geNomad SPM feature extraction (automatic when available)
+    # ------------------------------------------------------------------
+    # geNomad annotate is run automatically when:
+    #   (a) the `genomad` binary is on PATH, AND
+    #   (b) a geNomad database directory is found (auto-detected or explicit)
+    # The 12 per-contig SPM features it produces significantly improve XGBoost
+    # accuracy — especially for non-mobilizable plasmids that lack relaxase hits.
+    # Falls back gracefully (SPM features = 0) if geNomad is not installed.
+    _gn_spm_by_contig: dict[str, dict[str, float]] = {}
+    _gn_db: Path | None = None
+    if genomad_db_path:
+        _gn_db = Path(genomad_db_path)
+    else:
+        # Auto-detect standard install location
+        _gn_db_auto = Path(__file__).parent.parent.parent / "data" / "databases" / "genomad_db"
+        if _gn_db_auto.is_dir():
+            _gn_db = _gn_db_auto
+
+    if _gn_db is not None and _gn_db.is_dir():
+        import shutil as _shutil
+        import subprocess as _gn_sp
+        import sys as _sys
+
+        if _shutil.which("genomad") is not None:
+            _gn_out_dir = work_dir / "genomad_annotate"
+            _gn_genes_tsv_candidates = list(_gn_out_dir.glob("*_annotate/*_genes.tsv"))
+
+            if _gn_genes_tsv_candidates:
+                logger.info("geNomad: reusing cached genes TSV from %s", _gn_out_dir)
+                _gn_genes_tsv = _gn_genes_tsv_candidates[0]
+            else:
+                logger.info(
+                    "geNomad: running annotate on %d plasmid contigs (db=%s) …",
+                    len(plasmid_records),
+                    _gn_db,
+                )
+                _gn_out_dir.mkdir(parents=True, exist_ok=True)
+                _gn_cmd = [
+                    "genomad", "annotate",
+                    str(plasmid_fasta),
+                    str(_gn_out_dir),
+                    str(_gn_db),
+                    "--threads", str(threads),
+                    "--quiet",
+                ]
+                try:
+                    _gn_proc = _gn_sp.run(
+                        _gn_cmd, capture_output=True, text=True, timeout=600
+                    )
+                    if _gn_proc.returncode != 0:
+                        logger.warning(
+                            "geNomad annotate failed (exit %d): %s — SPM features disabled.",
+                            _gn_proc.returncode,
+                            _gn_proc.stderr[:300],
+                        )
+                        _gn_genes_tsv = None
+                    else:
+                        _gn_genes_tsv_candidates = list(
+                            _gn_out_dir.glob("*_annotate/*_genes.tsv")
+                        )
+                        _gn_genes_tsv = _gn_genes_tsv_candidates[0] if _gn_genes_tsv_candidates else None
+                        if _gn_genes_tsv is None:
+                            logger.warning(
+                                "geNomad ran but no *_genes.tsv found in %s — SPM features disabled.",
+                                _gn_out_dir,
+                            )
+                except _gn_sp.TimeoutExpired:
+                    logger.warning("geNomad annotate timed out (600 s) — SPM features disabled.")
+                    _gn_genes_tsv = None
+                except Exception as _gn_exc:
+                    logger.warning("geNomad annotate error: %s — SPM features disabled.", _gn_exc)
+                    _gn_genes_tsv = None
+
+            if _gn_genes_tsv and _gn_genes_tsv.exists():
+                try:
+                    # Import geNomad feature extractor from scripts/
+                    _scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+                    if str(_scripts_dir) not in _sys.path:
+                        _sys.path.insert(0, str(_scripts_dir))
+                    from extract_genomad_features import extract_all as _gn_extract_all  # type: ignore[import]
+                    _gn_spm_by_contig = _gn_extract_all(_gn_genes_tsv)
+                    logger.info(
+                        "geNomad SPM features loaded for %d / %d plasmid contigs",
+                        len(_gn_spm_by_contig),
+                        len(plasmid_records),
+                    )
+                except Exception as _gn_feat_exc:
+                    logger.warning("geNomad feature extraction failed: %s — SPM features disabled.", _gn_feat_exc)
+        else:
+            logger.debug("genomad binary not found on PATH — SPM features disabled. "
+                         "Install with: conda install -c conda-forge -c bioconda genomad")
+    else:
+        logger.debug("geNomad DB not found — SPM features disabled. "
+                     "Run: bash scripts/setup_databases.sh to download data/databases/genomad_db")
+
+    # ------------------------------------------------------------------
     # 6d. Marker XGBoost — post-annotation rescoring of plasmid candidates
     # ------------------------------------------------------------------
     # Runs AFTER all annotations so every feature has a real value:
@@ -946,6 +1043,7 @@ def run_pipeline(
                     n_rep_hits=len(
                         [h for h in _orfs_by_contig.get(cid, []) if cid in rep_protein_hits]
                     ),
+                    genomad_spm=_gn_spm_by_contig.get(cid),
                 )
                 marker_scores = _marker_clf.predict_scores(feats)
                 agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
