@@ -273,42 +273,42 @@ elif [[ -f "$SARG_DMND" ]]; then
     ok "SARG: $SARG_DMND  ($(du -sh "$SARG_DMND" | cut -f1))"
 else
     SARG_FASTA="$SARG_DIR/sarg.fasta"
-    # SARG v3 URLs — try multiple mirrors in order of reliability.
-    # Note: GitHub raw has a 100 MB limit; the HKU server can be slow from some regions.
-    # ARGs-OAP v3 (xinehc) is the actively maintained source.
-    SARG_URLS=(
-        "https://github.com/xinehc/args_oap/raw/main/src/args_oap/db/SARG.fasta.gz"
-        "https://raw.githubusercontent.com/biofuture/Ublastx_stageone/master/DB/SARG.fasta"
-        "https://smile.hku.hk/SARGs/static/download/SARG.fasta"
-    )
+    # Primary: pre-built DIAMOND database from PlasFlow v2 release (fastest, no build step).
+    # Fallback: download SARG FASTA and build locally.
+    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
 
-    downloaded=false
-    SARG_GZ="$SARG_DIR/sarg.fasta.gz"
-    for url in "${SARG_URLS[@]}"; do
-        info "Trying: $url"
-        if [[ "$url" == *.gz ]]; then
-            # Compressed download — decompress after
-            if download "$url" "$SARG_GZ" "SARG.fasta.gz"; then
-                info "Decompressing SARG.fasta.gz ..."
-                gunzip -f "$SARG_GZ" && downloaded=true && break
-            fi
-        else
-            if download "$url" "$SARG_FASTA" "SARG.fasta"; then
-                downloaded=true && break
-            fi
-        fi
-        info "Trying next URL..."
-    done
-
-    if $downloaded; then
-        build_diamond "$SARG_FASTA" "$SARG_DIR/sarg"
+    if download "$RELEASE_BASE/sarg.dmnd" "$SARG_DMND" "sarg.dmnd"; then
+        ok "SARG DIAMOND database ready"
     else
-        warn "SARG download failed from all URLs. (SARG is optional — AMRFinder + CARD cover most use cases.)"
-        info "To add SARG manually:"
-        info "  1. Download SARG.fasta from https://smile.hku.hk/SARGs"
-        info "     or: conda install -c bioconda args-oap  (includes SARG)"
-        info "  2. Copy the FASTA to: $SARG_FASTA"
-        info "  3. Re-run: bash scripts/setup_databases.sh --skip-card --skip-amrfinder"
+        # Fallback: download FASTA and build
+        SARG_URLS=(
+            "https://github.com/xinehc/args_oap/raw/main/src/args_oap/db/SARG.fasta.gz"
+            "https://raw.githubusercontent.com/biofuture/Ublastx_stageone/master/DB/SARG.fasta"
+            "https://smile.hku.hk/SARGs/static/download/SARG.fasta"
+        )
+        downloaded=false
+        SARG_GZ="$SARG_DIR/sarg.fasta.gz"
+        for url in "${SARG_URLS[@]}"; do
+            info "Trying: $url"
+            if [[ "$url" == *.gz ]]; then
+                if download "$url" "$SARG_GZ" "SARG.fasta.gz"; then
+                    info "Decompressing ..."
+                    gunzip -f "$SARG_GZ" && downloaded=true && break
+                fi
+            else
+                if download "$url" "$SARG_FASTA" "SARG.fasta"; then
+                    downloaded=true && break
+                fi
+            fi
+            info "Trying next URL..."
+        done
+
+        if $downloaded; then
+            build_diamond "$SARG_FASTA" "$SARG_DIR/sarg"
+        else
+            warn "SARG download failed. (Optional — AMRFinder + CARD cover most use cases.)"
+            info "Manual: copy sarg.fasta to $SARG_FASTA and re-run"
+        fi
     fi
 fi
 
@@ -323,16 +323,23 @@ if $SKIP_AMRFINDER; then
 elif [[ -f "$AMR_DMND" ]]; then
     ok "AMRFinderPlus: $AMR_DMND  ($(du -sh "$AMR_DMND" | cut -f1))"
 else
-    AMR_FASTA="$AMR_DIR/AMR_CDS.fa"
-    # NCBI AMRFinderPlus CDS protein file (updated quarterly)
-    AMR_URL="https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest/AMR_CDS.fa"
-
-    if download "$AMR_URL" "$AMR_FASTA" "AMR_CDS.fa"; then
-        build_diamond "$AMR_FASTA" "$AMR_DIR/amrprot"
+    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+    AMR_FASTA="$AMR_DIR/AMRProt"
+    # Primary: pre-built DIAMOND database from PlasFlow v2 release.
+    # Fallback: download AMRProt (protein FASTA) from NCBI and build locally.
+    # NOTE: AMR_CDS.fa is a nucleotide file — DIAMOND requires protein (AMRProt).
+    if download "$RELEASE_BASE/amrprot.dmnd" "$AMR_DMND" "amrprot.dmnd"; then
+        ok "AMRFinderPlus DIAMOND database ready"
     else
-        warn "AMRFinderPlus download failed."
-        info "Manual: https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest/"
-        info "  → Download AMR_CDS.fa to: $AMR_FASTA"
+        AMR_URL="https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest/AMRProt"
+        if download "$AMR_URL" "$AMR_FASTA" "AMRProt"; then
+            build_diamond "$AMR_FASTA" "$AMR_DIR/amrprot"
+        else
+            warn "AMRFinderPlus download failed."
+            info "Manual: download AMRProt (protein FASTA) from:"
+            info "  https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest/"
+            info "  → Save to: $AMR_FASTA and re-run"
+        fi
     fi
 fi
 

@@ -95,6 +95,10 @@ step "2b. Installing mob-suite"
 pip install "mob-suite" --no-deps --quiet \
     && ok "mob-suite installed" \
     || { err "mob-suite install failed — try: pip install mob-suite --no-deps"; }
+# pycurl is a mob-suite dependency omitted by --no-deps; install it separately
+pip install pycurl --quiet \
+    && ok "pycurl installed" \
+    || warn "pycurl install failed — mob_init may not work (try: pip install pycurl)"
 
 # ── Verify plasflow2 CLI is installed ────────────────────────────────────────
 step "3. Verifying PlasFlow v2 installation"
