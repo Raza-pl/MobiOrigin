@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import gzip
 
-# We import the helpers directly from the script; add scripts/ to sys.path
+# We import the helpers directly from the script; add scripts/dev/ to sys.path
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts" / "dev"))
 
 from build_dataset import fragment_sequences, load_and_subsample  # noqa: E402
 

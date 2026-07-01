@@ -317,12 +317,11 @@ def test_generate_report_creates_file(tmp_path: Path) -> None:
     path = generate_report(data, out_dir / "report.html")
     assert path.exists()
     assert path.stat().st_size > 0
-    # All 5 pages are created
+    # All 4 pages are created
     for page in (
         "report_plasmid.html",
         "report_chromosome.html",
         "report_phage.html",
-        "report_archaea.html",
         "report_unclassified.html",
     ):
         assert (out_dir / page).exists()
