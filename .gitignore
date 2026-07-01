@@ -89,6 +89,9 @@ benchmarks/
 *.fa
 AMRfinder.fasta
 
+# Allow the example test FASTA (small, committed intentionally)
+!example/test_assembly.fasta
+
 # Internal planning/progress docs and presentations
 PlasFlow_v2_*.pptx
 PlasFlow_v2_*.md

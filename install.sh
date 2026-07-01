@@ -95,10 +95,13 @@ step "2b. Installing mob-suite"
 pip install "mob-suite" --no-deps --quiet \
     && ok "mob-suite installed" \
     || { err "mob-suite install failed — try: pip install mob-suite --no-deps"; }
-# pycurl is a mob-suite dependency omitted by --no-deps; install it separately
+# Install mob-suite runtime deps omitted by --no-deps
 pip install pycurl --quiet \
     && ok "pycurl installed" \
     || warn "pycurl install failed — mob_init may not work (try: pip install pycurl)"
+pip install "ete3<4" "tables<4" --quiet \
+    && ok "ete3 + tables installed" \
+    || warn "ete3/tables install failed — mob_init may not work"
 
 # ── Verify plasflow2 CLI is installed ────────────────────────────────────────
 step "3. Verifying PlasFlow v2 installation"

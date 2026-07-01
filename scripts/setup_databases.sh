@@ -448,16 +448,21 @@ elif [[ -f "$ICE_DMND" ]]; then
     ok "ICEberg3: $ICE_DMND  ($(du -sh "$ICE_DMND" | cut -f1))"
 else
     ICE_FASTA="$ICE_DIR/ICEberg3_proteins.faa"
-    # ICEberg3 protein download (SJTU server — may require manual download)
-    ICE_URL="https://bioinfo-mml.sjtu.edu.cn/ICEberg3/download/ICEberg3_protein.faa"
+    ICE_TSV="$ICE_DIR/ice_experimental_list.tsv"
+    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
 
-    if download "$ICE_URL" "$ICE_FASTA" "ICEberg3_proteins.faa"; then
-        build_diamond "$ICE_FASTA" "$ICE_DIR/ice"
+    # Primary: pre-built DIAMOND database from PlasFlow v2 release.
+    # Fallback: download protein FASTA from SJTU (often VPN-blocked) and build.
+    if download "$RELEASE_BASE/ice.dmnd" "$ICE_DMND" "ice.dmnd"; then
+        download "$RELEASE_BASE/ice_experimental_list.tsv" "$ICE_TSV" "ice_experimental_list.tsv" || true
+        ok "ICEberg3 database ready"
     else
-        warn "ICEberg3 download failed (SJTU server may be slow or require VPN)."
-        info "Manual: https://bioinfo-mml.sjtu.edu.cn/ICEberg3/  → Download → Protein sequences"
-        info "  → Save to: $ICE_FASTA  then re-run"
-        info "  → This database is optional. ICE annotation will be skipped if absent."
+        ICE_URL="https://bioinfo-mml.sjtu.edu.cn/ICEberg3/download/ICEberg3_protein.faa"
+        if download "$ICE_URL" "$ICE_FASTA" "ICEberg3_proteins.faa"; then
+            build_diamond "$ICE_FASTA" "$ICE_DIR/ice"
+        else
+            warn "ICEberg3 download failed. (Optional — ICE annotation will be skipped if absent.)"
+        fi
     fi
 fi
 
@@ -546,12 +551,31 @@ else
     done
 
     if ! $MOB_DB_FOUND; then
-        info "Running mob_init (~500 MB download, a few minutes)..."
-        if mob_init; then
-            ok "mob-suite databases initialised"
-        else
-            warn "mob_init failed."
-            info "Try manually: conda activate plasflow2 && mob_init"
+        # Try to get pre-built databases from PlasFlow v2 release first,
+        # then fall back to mob_init (which requires ete3 and a 500 MB download).
+        RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+        MOB_DATA_DIR="$(python -c "import mob_suite, os; print(os.path.join(os.path.dirname(mob_suite.__file__), 'data'))" 2>/dev/null)"
+
+        if [[ -n "$MOB_DATA_DIR" ]] && mkdir -p "$MOB_DATA_DIR" 2>/dev/null; then
+            info "Installing mob-suite databases from PlasFlow release..."
+            mob_ok=true
+            for f in mob_proteins.dmnd mpf_proteins.dmnd rep_proteins.dmnd rep.dna.fas; do
+                download "$RELEASE_BASE/$f" "$MOB_DATA_DIR/$f" "$f" || { mob_ok=false; break; }
+            done
+            if $mob_ok; then
+                ok "mob-suite databases installed"
+                MOB_DB_FOUND=true
+            fi
+        fi
+
+        if ! $MOB_DB_FOUND; then
+            info "Running mob_init (~500 MB download, a few minutes)..."
+            if mob_init; then
+                ok "mob-suite databases initialised"
+            else
+                warn "mob_init failed."
+                info "Try manually: conda activate plasflow2 && mob_init"
+            fi
         fi
     fi
 fi
