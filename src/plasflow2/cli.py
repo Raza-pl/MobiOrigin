@@ -716,7 +716,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
     """PlasFlow v2 — metagenomic contig classifier and AMR risk scorer.
 
     Classifies contigs from metagenomic assemblies as plasmid, chromosome,
-    phage, or archaea. Plasmid contigs are annotated with antibiotic resistance
+    or phage. Plasmid contigs are annotated with antibiotic resistance
     genes (ARGs), virulence factors, mobile genetic elements, mobility class
     (conjugative / mobilizable / non-mobilizable), and an AMR risk score (0-10).
 
@@ -1378,7 +1378,7 @@ def classify(
     threads: int,
     no_marker_model: bool,
 ) -> None:
-    """Classify contigs as plasmid / chromosome / phage / archaea / unclassified.
+    """Classify contigs as plasmid / chromosome / phage / unclassified.
 
     Fast mode (no databases, runs in seconds):
 
