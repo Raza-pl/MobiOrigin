@@ -1062,13 +1062,11 @@ def run(
         plasmids.fasta            — classified plasmid sequences (FASTA)
         chromosome.fasta          — classified chromosome sequences
         phage.fasta               — classified phage sequences
-        archaea.fasta             — classified archaea sequences
         genes.tsv                 — gene-level table: all ORFs with ARG/VF/MGE flags and coordinates
         annotations.json          — full ARG + mobility + risk evidence per plasmid (machine-readable)
         report_plasmid.html       — interactive plasmid report with charts and AMR risk summary
         report_chromosome.html    — chromosome contig report
         report_phage.html         — phage contig report
-        report_archaea.html       — archaea contig report
         report_unclassified.html  — unclassified contig report
 
     \b
@@ -1264,7 +1262,7 @@ def run(
     report_data = build_report_data(pipeline_result, input_file=str(input_fasta))
     report_paths = generate_reports(report_data, out)
     click.echo("  HTML reports:")
-    labels_order = ["plasmid", "chromosome", "phage", "archaea", "unclassified"]
+    labels_order = ["plasmid", "chromosome", "phage", "unclassified"]
     for key in labels_order:
         p = report_paths.get(key)
         if p:

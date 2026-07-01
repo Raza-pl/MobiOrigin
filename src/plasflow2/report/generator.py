@@ -1705,7 +1705,6 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
         "plasmid": out / "report_plasmid.html",
         "chromosome": out / "report_chromosome.html",
         "phage": out / "report_phage.html",
-        "archaea": out / "report_archaea.html",
         "unclassified": out / "report_unclassified.html",
     }
 
@@ -1728,15 +1727,6 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
             report_data["phage_rows"],
             "phtable",
             report_data["phage_charts"],
-        ),
-        "archaea": _render_nonplasmid_page(
-            report_data,
-            "archaea",
-            "Archaea",
-            "#8e44ad",
-            report_data["archaea_rows"],
-            "artable",
-            report_data["arch_charts"],
         ),
         "unclassified": _render_nonplasmid_page(
             report_data,
