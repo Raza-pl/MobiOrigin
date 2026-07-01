@@ -182,6 +182,7 @@ def run_pipeline(
     kaiju_names: Path | str | None = None,
     genomad_db_path: Path | str | None = None,
     archaea_threshold: float | None = None,
+    lenient: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
 
@@ -873,7 +874,9 @@ def run_pipeline(
     HALLMARK_HARD_THRESHOLD = 50_000  # bp — above this: trust MLP, flag low_confidence
     _hallmark_demoted = 0
     _hallmark_flagged = 0
-    for record in list(plasmid_records):
+    if lenient:
+        logger.info("Hallmark gate disabled (--lenient): accepting all MLP plasmid predictions.")
+    for record in list(plasmid_records) if not lenient else []:
         cid = record.id
         mob = mobility_by_contig.get(cid)
         has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")

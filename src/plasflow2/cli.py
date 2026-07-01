@@ -913,6 +913,17 @@ def main(ctx: click.Context, verbose: bool) -> None:
     ),
 )
 @click.option(
+    "--lenient",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable the hallmark gate. Accept all MLP plasmid predictions directly, "
+        "without requiring biological evidence (PLSDB match, relaxase, replicon, ICE, or rep protein). "
+        "Useful when databases are not available or for exploratory runs. "
+        "Increases sensitivity but also false positives."
+    ),
+)
+@click.option(
     "--taxonomy-engine",
     "taxonomy_engine",
     default="auto",
@@ -1044,6 +1055,7 @@ def run(
     mge_db: str | None,
     min_confidence: float | None,
     genomad_db: str | None,
+    lenient: bool,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
 
@@ -1191,6 +1203,7 @@ def run(
         kaiju_names=kaiju_names,
         genomad_db_path=genomad_db if genomad_db else None,
         archaea_threshold=archaea_threshold,
+        lenient=lenient,
     )
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
