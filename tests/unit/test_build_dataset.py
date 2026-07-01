@@ -6,14 +6,20 @@ Tests use in-memory synthetic FASTAs so no real database files are needed.
 from __future__ import annotations
 
 import gzip
-
-# We import the helpers directly from the script; add scripts/dev/ to sys.path
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts" / "dev"))
+import pytest
 
-from build_dataset import fragment_sequences, load_and_subsample  # noqa: E402
+# build_dataset.py lives in scripts/dev/ which is not committed to git.
+# Skip the entire module if it cannot be imported (e.g. in CI).
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts" / "dev"))
+build_dataset = pytest.importorskip(
+    "build_dataset",
+    reason="build_dataset.py not available (scripts/dev/ is local-only)",
+)
+fragment_sequences = build_dataset.fragment_sequences
+load_and_subsample = build_dataset.load_and_subsample
 
 # ---------------------------------------------------------------------------
 # Fixtures
