@@ -98,6 +98,22 @@ else
     ok "PlasFlow v2 installed"
 fi
 
+# ── Initialise mob-suite databases ───────────────────────────────────────────
+# mob-suite is installed via pip; mob_init downloads its typing databases
+# (~200 MB: replicon/relaxase/MPF reference sequences).
+step "3b. Initialising mob-suite databases"
+if command -v mob_typer &>/dev/null; then
+    if mob_init 2>/dev/null; then
+        ok "mob-suite databases initialised"
+    else
+        warn "mob_init failed — mobility typing may not work."
+        warn "Try manually: mob_init"
+    fi
+else
+    warn "mob_typer not found after pip install — this is unexpected."
+    warn "Try: pip install mob-suite && mob_init"
+fi
+
 # ── Download databases + model weights ───────────────────────────────────────
 if $SKIP_DATABASES; then
     warn "Skipping database download (--env-only)"
