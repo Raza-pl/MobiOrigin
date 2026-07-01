@@ -26,8 +26,8 @@ dependencies:
   # ── Bioinformatics tools (conda-managed for correct shared-library linking) ─
   - diamond>=2.1
   - minimap2>=2.26
-  - mob-suite>=3.1.0     # 3.1+ supports pandas 2.x
-  - pytz>=2022.7         # explicit — mob-suite needs it, pandas 2 dropped it
+  - mob_suite            # bioconda package name uses underscore, not hyphen
+  - pytz>=2022.7         # explicit — mob_suite imports pytz but pandas 2.x dropped it
   - genomad>=1.7         # optional but recommended; adds geNomad features to XGBoost
 
   # ── Numerics (pip versions avoid conda solver slowdowns) ─────────────────

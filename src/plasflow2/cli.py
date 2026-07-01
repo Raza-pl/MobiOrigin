@@ -1493,7 +1493,7 @@ def prepare(
     coding density, GC content, ORF density. These features let the XGBoost
     stage-2 model refine k-mer-based MLP scores with actual biological evidence.
 
-    Requires MOB-suite: conda install -c bioconda -c conda-forge mob-suite
+    Requires MOB-suite: conda install -c bioconda -c conda-forge mob_suite
 
     \b
     Standard usage (5-30 min depending on dataset size):
@@ -2114,7 +2114,7 @@ TROUBLESHOOTING
     (add --skip-X for each database you want to skip)
 
 "mob_typer not found"
-    Run: conda install -c bioconda -c conda-forge mob-suite
+    Run: conda install -c bioconda -c conda-forge mob_suite
     Or:  pip install mob-suite && mob_init
     Or:  plasflow2 run ... --skip-mobility
 

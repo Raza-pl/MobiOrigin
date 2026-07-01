@@ -509,7 +509,7 @@ if $SKIP_MOBSUITE; then
     warn "Skipping MOB-suite init (--skip-mobsuite)"
 elif ! command -v mob_typer &>/dev/null; then
     warn "mob_typer not installed — skipping"
-    info "Install: conda install -c bioconda -c conda-forge mob-suite"
+    info "Install: conda install -c bioconda -c conda-forge mob_suite"
     info "Then re-run this script (or just run: mob_init)"
 else
     # Check if mob_init has already been run
