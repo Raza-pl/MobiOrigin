@@ -5,8 +5,8 @@ description = "PlasFlow v2: plasmid/chromosome/phage/archaea classifier with ARG
 authors = ["Raza <shahbaz.invincible3182@gmail.com>"]
 license = "GPL-3.0"
 readme = "README.md"
-homepage = "https://github.com/smaegol/PlasFlow"
-repository = "https://github.com/smaegol/PlasFlow"
+homepage = "https://github.com/Raza-pl/plasflow2.0"
+repository = "https://github.com/Raza-pl/plasflow2.0"
 keywords = ["bioinformatics", "plasmid", "metagenomics", "AMR", "machine-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",

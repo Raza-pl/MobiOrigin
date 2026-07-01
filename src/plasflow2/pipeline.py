@@ -181,6 +181,7 @@ def run_pipeline(
     kaiju_nodes: Path | str | None = None,
     kaiju_names: Path | str | None = None,
     genomad_db_path: Path | str | None = None,
+    archaea_threshold: float | None = None,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
 
@@ -302,15 +303,14 @@ def run_pipeline(
     logger.info("Plasmid contigs: %d / %d", len(plasmid_records), len(records))
 
     if not plasmid_records:
-        return PipelineResult(
-            input_fasta=fasta_path,
-            all_predictions=predictions,
-            plasmid_results=[],
+        logger.info(
+            "No plasmid contigs found — continuing to annotate all %d contigs.", len(records)
         )
 
-    # Write plasmid FASTA for mobility annotation (plasmid-specific step)
+    # Write plasmid FASTA for mobility/plasmid-DB/geNomad steps (plasmid-specific)
     plasmid_fasta = work_dir / "plasmids.fasta"
-    write_fasta(plasmid_records, plasmid_fasta)
+    if plasmid_records:
+        write_fasta(plasmid_records, plasmid_fasta)
 
     # ------------------------------------------------------------------
     # 3b. Topology detection (circular vs linear)
@@ -459,7 +459,7 @@ def run_pipeline(
     # ------------------------------------------------------------------
     plasmid_db_hits: dict[str, PlasmidDBHit] = {}
     _pdb_cache = work_dir / "plasmid_db" / "plasmid_db_hits.paf"
-    if plasmid_db_dir is not None:
+    if plasmid_db_dir is not None and plasmid_records:
         plasmid_db_path = Path(plasmid_db_dir)
         if plasmid_db_path.is_dir():
             if not _cached(_pdb_cache):
@@ -489,7 +489,7 @@ def run_pipeline(
     # 5. Mobility annotation — DIAMOND fast path or mob_typer fallback
     # ------------------------------------------------------------------
     mobility_by_contig: dict[str, MobilityResult] = {}
-    if not skip_mobility:
+    if not skip_mobility and plasmid_records:
         _mob_diamond_dir = Path(__file__).parent.parent.parent / "data" / "databases" / "mob_suite"
         _mob_dmnd, _mpf_dmnd, _rep_protein_dmnd, _rep_fasta = find_mob_diamond_dbs(_mob_diamond_dir)
         _use_diamond_mob = _mob_dmnd is not None or _mpf_dmnd is not None
@@ -822,6 +822,16 @@ def run_pipeline(
             }
             _raw_hits_candidates = {k: v for k, v in _raw_tax_hits.items() if k in _candidates}
             _archaeal_ids = detect_archaeal_contigs(_raw_hits_candidates)
+            # Apply archaea_threshold: only override when the MLP archaea score
+            # meets the minimum (defaults to confidence_threshold when not set).
+            _eff_arch_thresh = (
+                archaea_threshold if archaea_threshold is not None else confidence_threshold
+            )
+            _archaeal_ids = {
+                cid
+                for cid in _archaeal_ids
+                if pred_by_id[cid].scores.get("archaea", 0.0) >= _eff_arch_thresh
+            }
             if _archaeal_ids:
                 # Override predictions in pred_by_id
                 for cid in _archaeal_ids:
@@ -834,8 +844,10 @@ def run_pipeline(
                     )
                 logger.info(
                     "Archaeal override: %d contigs relabelled archaea "
-                    "(from chromosome/unclassified) using DIAMOND taxonomy",
+                    "(from chromosome/unclassified) using DIAMOND taxonomy "
+                    "[archaea_threshold=%.2f]",
                     len(_archaeal_ids),
+                    _eff_arch_thresh,
                 )
         except Exception as _exc:
             logger.warning("Archaeal post-classification failed: %s — skipping.", _exc)
@@ -925,7 +937,7 @@ def run_pipeline(
         if _gn_db_auto.is_dir():
             _gn_db = _gn_db_auto
 
-    if _gn_db is not None and _gn_db.is_dir():
+    if _gn_db is not None and _gn_db.is_dir() and plasmid_records:
         import shutil as _shutil
         import subprocess as _gn_sp
         import sys as _sys
@@ -1174,9 +1186,13 @@ def run_pipeline(
                 by_level.get("medium", 0),
             )
 
+    # Rebuild in original input order so all post-processing steps
+    # (archaeal override, hallmark gate, XGBoost, PLSDB hard override) are reflected.
+    final_predictions = [pred_by_id[r.id] for r in records]
+
     result = PipelineResult(
         input_fasta=fasta_path,
-        all_predictions=predictions,
+        all_predictions=final_predictions,
         plasmid_results=plasmid_results,
         non_plasmid_results=non_plasmid_results,
         taxonomy=taxonomy_by_contig,

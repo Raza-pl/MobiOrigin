@@ -1192,6 +1192,7 @@ def run(
         kaiju_nodes=kaiju_nodes,
         kaiju_names=kaiju_names,
         genomad_db_path=genomad_db if genomad_db else None,
+        archaea_threshold=archaea_threshold,
     )
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
