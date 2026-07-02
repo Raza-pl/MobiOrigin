@@ -10,7 +10,7 @@ PlasFlow v2 has two trainable models: the **MLP binary classifier** and the **XG
 
 - Input: 9,557-dimensional k-mer frequency vector (k=7, with k=6 PCA transform applied first)
 - Architecture: 3-layer MLP with batch normalization
-- Output: 4-class probabilities (plasmid / chromosome / phage / archaea)
+- Output: 3-class probabilities (plasmid / chromosome / phage)
 - Training time: ~45–60 min for 50 epochs on CPU (Apple Silicon M-series)
 - GPU supported: CUDA (DataParallel); MPS disabled by default (PyTorch ≤ 2.3 instability)
 
@@ -29,25 +29,20 @@ PlasFlow v2 has two trainable models: the **MLP binary classifier** and the **XG
 ```bash
 # Collect plasmid FASTAs (e.g. from PLSDB) and chromosome FASTAs (e.g. from GTDB r220)
 # Then fragment them into training windows:
-python scripts/build_dataset.py \
-  --plasmid-dir   data/plasmids/ \
+python scripts/dev/build_dataset.py \
+  --plasmid-dir    data/plasmids/ \
   --chromosome-dir data/chromosomes/ \
-  --phage-dir     data/phages/ \
-  --archaea-dir   data/archaea/ \
-  --output-dir    data/ \
-  --window        10000 \
-  --threads       16
+  --phage-dir      data/phages/ \
+  --output-dir     data/ \
+  --window         10000 \
+  --threads        16
 ```
+
+> `scripts/dev/` contains training and benchmark scripts that are local-only (not committed to git). Contact the developer if you need these files.
 
 This produces `data/features.npy`, `data/labels.npy`, and `data/seq_ids.txt`.
 
 ### Step 2 — Train
-
-```bash
-bash scripts/retrain_k7_binary.sh
-```
-
-Or call the training script directly for more control:
 
 ```bash
 python scripts/train_model.py \
@@ -108,16 +103,18 @@ plasflow2 run \
 
 ## Available retrain scripts
 
-| Script | Description |
-|---|---|
-| `scripts/retrain_k7_binary.sh` | End-to-end MLP retrain: dataset build → train → benchmark |
-| `scripts/retrain_with_genomad.sh` | Retrain XGBoost adding geNomad SPM features |
-| `scripts/retrain_hard_neg.sh` | Retrain MLP with composition FP hard negatives |
-| `scripts/build_dataset.py` | Build training windows from FASTA files |
-| `scripts/train_model.py` | Train the MLP from numpy feature arrays |
-| `scripts/train_marker_model.py` | Train XGBoost from an annotation TSV |
-| `scripts/build_marker_dataset.py` | Build the XGBoost training matrix from annotations |
-| `scripts/run_benchmark.sh` | Evaluate a trained model on the benchmark dataset |
+Scripts in `scripts/` are user-facing and tracked in git. Scripts in `scripts/dev/` are local-only training and benchmark tools (not committed to git).
+
+| Script | Location | Description |
+|--------|----------|-------------|
+| `train_model.py` | `scripts/` | Train the MLP from numpy feature arrays |
+| `train_marker_model.py` | `scripts/` | Train XGBoost from an annotation TSV |
+| `build_dataset.py` | `scripts/dev/` | Build training windows from FASTA files |
+| `build_marker_dataset.py` | `scripts/dev/` | Build the XGBoost training matrix from annotations |
+| `retrain_k7_binary.sh` | `scripts/dev/` | End-to-end MLP retrain: dataset build → train → benchmark |
+| `retrain_with_genomad.sh` | `scripts/dev/` | Retrain XGBoost adding geNomad SPM features |
+| `retrain_hard_neg.sh` | `scripts/dev/` | Retrain MLP with composition FP hard negatives |
+| `run_benchmark.sh` | `scripts/dev/` | Evaluate a trained model on the benchmark dataset |
 
 ---
 

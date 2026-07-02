@@ -1,19 +1,79 @@
 # Advanced Usage
 
+## Lenient mode
+
+By default PlasFlow v2 requires **biological evidence** to confirm a plasmid call on contigs shorter than 50 kb (PLSDB match, relaxase, replicon type, ICE hit, or rep protein). Contigs with high MLP scores but no hallmark evidence are returned as `unclassified`.
+
+Use `--lenient` to skip this gate — useful when databases aren't set up yet, or for exploratory runs where sensitivity matters more than precision:
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ --lenient
+```
+
+`--lenient` does two things:
+1. Lowers the MLP plasmid threshold from **0.95 → 0.70** (catches weaker signals)
+2. Skips the hallmark gate entirely (no biological evidence required)
+
+Expect more plasmid calls and more false positives compared to the default mode.
+
+---
+
+## Taxonomy annotation (GTDB)
+
+PlasFlow v2 annotates host taxonomy using **DIAMOND + a Kaiju-style LCA algorithm** against the GTDB r220 protein database. The taxonomy database is not downloaded by default — it is ~8 GB and opt-in.
+
+### Automated setup
+
+```bash
+bash scripts/setup_databases.sh --gtdb --threads 16
+```
+
+This downloads GTDB r220 representative proteins (~8 GB), builds the DIAMOND database, downloads the taxonomy TSV, and builds the taxon map. Plan for ~40 GB free disk space and **1–3 hours** total.
+
+If you already have the protein FASTA from a previous install:
+
+```bash
+bash scripts/setup_databases.sh --gtdb \
+  --gtdb-proteins-path /existing/gtdb_prot_reps_r220.faa
+```
+
+### Run with taxonomy
+
+Once built, taxonomy is auto-detected at `data/databases/taxonomy/refseq_taxonomy.dmnd` and runs automatically:
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ --threads 16
+```
+
+To specify non-default paths:
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ \
+  --taxonomy-db /path/to/refseq_taxonomy.dmnd \
+  --taxon-map   /path/to/taxon_map.tsv
+```
+
+To skip taxonomy (saves 20–40 min on large datasets):
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy
+```
+
+> **Note:** PLSDB and GTDB are independent. PLSDB confirms plasmid calls via minimap2 alignment. GTDB annotates host taxonomy via DIAMOND protein search. You can use either, both, or neither.
+
+---
+
 ## Higher accuracy with geNomad
 
 Running geNomad separately before PlasFlow v2 adds 12 SPM (sequence-specific plasmid marker) gene features to the XGBoost stage-2 model, improving precision on borderline contigs.
 
-**Requires:** geNomad installed (`conda install -c bioconda genomad`) and its database.
+When you use `plasflow2 run`, geNomad is invoked **automatically** if it is on your PATH. For manual control:
 
 ```bash
-# Download geNomad database (~3 GB, one-time)
-genomad download-database data/databases/genomad_db/
-
 # Step 1 — annotate with geNomad (~5–30 min)
 genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
 
-# Step 2 — generate MOB-suite annotation TSV with geNomad features added
+# Step 2 — generate annotation TSV with geNomad features
 plasflow2 prepare \
   --input assembly.fasta \
   --output annotations.tsv \
@@ -29,30 +89,9 @@ plasflow2 classify \
 
 ---
 
-## Two-step workflow (classify + annotate separately)
-
-Useful when you want to classify first to get a quick look, then run the full annotation only on predicted plasmids.
-
-```bash
-# Step 1 — fast classification (seconds)
-plasflow2 classify --input assembly.fasta --output predictions.tsv
-
-# Step 2 — annotate predicted plasmids
-grep "^.*\tplasmid\t" predictions.tsv | cut -f1 > plasmid_ids.txt
-# extract plasmid sequences with seqtk or a custom script...
-
-# Step 3 — annotate those plasmids
-plasflow2 annotate \
-  --input plasmids.fasta \
-  --output annotations/ \
-  --threads 16
-```
-
----
-
 ## Rebuilding the HTML report
 
-You don't need to re-run the full pipeline to regenerate the report. The `report` command reads `all_predictions.tsv` directly:
+Re-generate reports from an existing TSV without re-running the full pipeline:
 
 ```bash
 plasflow2 report \
@@ -61,7 +100,7 @@ plasflow2 report \
   --context     clinical   # re-score as clinical
 ```
 
-This is useful when you want to change the sample context without waiting for DIAMOND to run again.
+Useful when you want to change the sample context without waiting for DIAMOND to run again.
 
 ---
 
@@ -83,10 +122,10 @@ plasflow2 run --input assembly.fasta --output results/ \
 
 ## Adjusting classification thresholds
 
-The default thresholds (`--threshold 0.70`, `--plasmid-threshold 0.95`) are tuned for metagenomes where plasmids are rare. Adjust them for unusual datasets:
+The default thresholds are tuned for metagenomes where plasmids are rare. Adjust for unusual datasets:
 
 ```bash
-# Plasmid-enriched sample — lower plasmid threshold to increase recall
+# Lower plasmid threshold to increase recall
 plasflow2 run --input assembly.fasta --output results/ \
   --plasmid-threshold 0.80
 
@@ -95,11 +134,13 @@ plasflow2 run --input assembly.fasta --output results/ \
   --min-confidence 0.50
 ```
 
+For maximum sensitivity (no threshold or hallmark gate), use `--lenient` (see above).
+
 ---
 
 ## Using custom database paths
 
-All databases are auto-detected. Override any of them:
+All databases are auto-detected from `data/databases/`. Override any of them:
 
 ```bash
 plasflow2 run \
@@ -108,7 +149,8 @@ plasflow2 run \
   --card-db      /custom/card/card.dmnd \
   --aro-index    /custom/card/aro_index.tsv \
   --sarg-db      /custom/sarg/sarg.dmnd \
-  --taxonomy-db  /custom/taxonomy/refseq.dmnd \
+  --plsdb-path   /custom/plasmids/PLSDB.fna \
+  --taxonomy-db  /custom/taxonomy/refseq_taxonomy.dmnd \
   --taxon-map    /custom/taxonomy/taxon_map.tsv \
   --threads      16
 ```
@@ -121,20 +163,20 @@ plasflow2 run \
 # Build the image
 docker build -t plasflow2 .
 
-# Run with local data
+# Set up databases on the host first (run outside Docker)
+bash scripts/setup_databases.sh
+
+# Run with mounted volumes
 docker run --rm \
-  -v /path/to/data:/data \
+  -v $(pwd)/data:/data \
   -v /path/to/results:/results \
   plasflow2 run \
     --input   /data/assembly.fasta \
     --output  /results/ \
     --threads 8
-
-# Print setup guide
-docker run --rm plasflow2 setup
 ```
 
-The Docker image includes DIAMOND, minimap2, and mob-suite. Mount your database directory to avoid re-downloading inside the container.
+The container reads from `/data/databases/` and `/data/models/`. Run `bash scripts/setup_databases.sh` on the host to populate `data/` before starting the container.
 
 ---
 

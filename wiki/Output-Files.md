@@ -9,15 +9,13 @@
 | `all_predictions.tsv` | Every contig: label, scores, ARGs, mobility, risk, taxonomy |
 | `annotated_predictions.tsv` | Filtered: only contigs with ARGs, MGEs, VFs, mobility, or pathogen hits |
 | `plasmids.fasta` | Classified plasmid sequences |
-| `chromosome.fasta` | Classified chromosome sequences |
-| `phage.fasta` | Classified phage sequences |
-| `archaea.fasta` | Classified archaea sequences |
+| `chromosomes.fasta` | Classified chromosome sequences |
+| `phages.fasta` | Classified phage sequences |
 | `genes.tsv` | Gene-level table: all ORFs with ARG/VF/MGE flags and coordinates |
 | `annotations.json` | Full ARG + mobility + risk evidence per plasmid (machine-readable JSON) |
 | `report_plasmid.html` | Interactive plasmid report — open in browser |
 | `report_chromosome.html` | Chromosome contig report |
 | `report_phage.html` | Phage contig report |
-| `report_archaea.html` | Archaea contig report |
 | `report_unclassified.html` | Unclassified contig report |
 
 ---
@@ -30,12 +28,11 @@
 |---|---|---|
 | `contig_id` | string | Sequence ID from the input FASTA |
 | `length` | int | Contig length in base pairs |
-| `label` | string | `plasmid` / `chromosome` / `phage` / `archaea` / `unclassified` |
+| `label` | string | `plasmid` / `chromosome` / `phage` / `unclassified` |
 | `confidence` | float | Final classification confidence (0–1) |
 | `plasmid_score` | float | MLP plasmid probability (0–1) |
 | `chromosome_score` | float | MLP chromosome probability (0–1) |
 | `phage_score` | float | MLP phage probability (0–1) |
-| `archaea_score` | float | MLP archaea probability (0–1) |
 | `low_confidence` | bool | `True` if confidence < 0.70 — treat these calls with caution |
 
 ### XGBoost evidence columns (populated when stage-2 model was used)
