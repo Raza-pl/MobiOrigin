@@ -1562,7 +1562,7 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
                 mge_genes=mge_genes_str,
                 mge_families=mge_fams_str,
                 topology=topology_map.get(cid, "linear"),
-                low_confidence=cr.prediction.confidence < 0.70,
+                low_confidence=cr.prediction.low_confidence or cr.prediction.confidence < 0.70,
             )
         )
 
@@ -1616,7 +1616,7 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
             mge_genes=np_mge_genes,
             mge_families=np_mge_fams,
             topology=topology_map.get(np_cid, "linear"),
-            low_confidence=npr.prediction.confidence < 0.70,
+            low_confidence=npr.prediction.low_confidence or npr.prediction.confidence < 0.70,
         )
         lbl = npr.prediction.label
         if lbl == "phage":

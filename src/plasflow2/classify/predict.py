@@ -144,9 +144,15 @@ class Prediction:
 
     Core fields (always populated):
         sequence_id   Contig identifier.
-        label         Final class: plasmid | chromosome | phage | archaea | unclassified.
+        label         Final class: plasmid | chromosome | phage | unclassified.
         confidence    Final score for the winning class (after all blending/overrides).
         scores        Per-class final probabilities (3-class, sum ≈ 1).
+        low_confidence  True when the prediction is uncertain and should be treated
+                        with caution. Set in two cases:
+                        (a) confidence < 0.70 threshold — model score was weak;
+                        (b) hallmark gate flagged — contig ≥ 50 kb kept as plasmid
+                            but has no biological hallmark evidence (no PLSDB match,
+                            relaxase, replicon, ICE, or rep protein).
 
     Evidence fields (populated when marker XGBoost is used; None otherwise):
         mlp_scores      Raw MLP softmax BEFORE XGBoost blending.
@@ -167,11 +173,12 @@ class Prediction:
     """
 
     sequence_id: str
-    label: str  # plasmid | chromosome | phage | archaea | unclassified
-    # Note: 'archaea' is assigned post-classification by the pipeline,
-    # not by the MLP itself.
+    label: str  # plasmid | chromosome | phage | unclassified
     confidence: float  # max softmax probability
     scores: dict[str, float]  # per-class probabilities (final blended output)
+
+    # Uncertainty flag — True when the call should be treated with caution
+    low_confidence: bool = field(default=False)
 
     # Evidence transparency — None when marker model is not used
     mlp_scores: dict[str, float] | None = field(default=None)

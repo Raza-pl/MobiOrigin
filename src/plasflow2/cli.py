@@ -422,9 +422,10 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
 
             # ── Topology & confidence flag ────────────────────────────────
             topology = pipeline_result.topology.get(cid, "")
-            # Low-confidence: True when the model was uncertain (below 0.70
-            # threshold or argmax fallback was the only reason it got a label)
-            low_confidence = pred.confidence < 0.70
+            # low_confidence is set by the pipeline in two cases:
+            #   (a) hallmark gate flagged (≥50 kb, no biological evidence)
+            #   (b) confidence below threshold (weak model signal)
+            low_confidence = pred.low_confidence or pred.confidence < 0.70
             topo_conf_cols = [topology, str(low_confidence)]
 
             # ── Plasmid-DB nucleotide match (plasmid contigs only) ────────

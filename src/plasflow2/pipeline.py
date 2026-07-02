@@ -911,7 +911,12 @@ def run_pipeline(
                 sequence_id=old.sequence_id,
                 label="plasmid",
                 confidence=old.confidence,
-                scores={**old.scores, "_low_confidence": True},
+                scores=old.scores,
+                low_confidence=True,
+                mlp_scores=old.mlp_scores,
+                xgb_scores=old.xgb_scores,
+                bio_evidence=old.bio_evidence,
+                evidence_type=old.evidence_type,
             )
             _hallmark_flagged += 1
 
