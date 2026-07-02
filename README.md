@@ -27,6 +27,10 @@ Classifies metagenomic contigs as **plasmid, chromosome, or phage** and annotate
 - [Performance benchmark](#performance-benchmark)
 - [Troubleshooting](#troubleshooting)
 - [Advanced](#advanced)
+  - [Taxonomy annotation (GTDB)](#taxonomy-annotation-gtdb)
+  - [Higher accuracy with geNomad](#higher-accuracy-with-genomad)
+  - [Rebuild the HTML report](#rebuild-the-html-report)
+  - [Skip or reuse existing databases](#skip-or-reuse-existing-databases)
 - [Retraining](#retraining)
 - [Citation](#citation)
 
@@ -443,6 +447,88 @@ The container reads from `/data/databases/`. Make sure you mount your host `data
 ---
 
 ## Advanced
+
+### Taxonomy annotation (GTDB)
+
+By default, `plasflow2 run` annotates the host taxonomy of each plasmid contig using **DIAMOND + a Kaiju-style LCA (lowest common ancestor) algorithm**. It runs DIAMOND against a GTDB protein database, collects the top 10 hits per contig, and walks from species up to domain — assigning the deepest taxonomic rank where ≥ 50% of hits agree.
+
+The taxonomy database is **not bundled** and must be built once from GTDB data. It is large (~8 GB DIAMOND index). Skip taxonomy entirely with `--skip-taxonomy` if you don't need it (saves 20–40 min per run).
+
+#### Step 1 — Download GTDB r220 representative proteins
+
+```bash
+mkdir -p data/databases/taxonomy
+cd data/databases/taxonomy
+
+wget https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/genomic_files_reps/gtdb_proteins_aa_reps_r220.tar.gz
+tar xf gtdb_proteins_aa_reps_r220.tar.gz
+```
+
+> **Size:** ~8 GB download, ~30 GB uncompressed. This step takes 30–90 min depending on your connection.
+
+#### Step 2 — Build the DIAMOND database
+
+```bash
+# Still inside data/databases/taxonomy/
+diamond makedb \
+  --in gtdb_prot_reps_r220.faa \
+  --db refseq_taxonomy \
+  --threads 16
+```
+
+This creates `refseq_taxonomy.dmnd` (~8 GB). PlasFlow v2 **auto-detects** it at `data/databases/taxonomy/refseq_taxonomy.dmnd` — no extra flags needed at runtime.
+
+#### Step 3 — Build the taxon map (recommended)
+
+The taxon map improves LCA accuracy by providing explicit accession → lineage lookups rather than relying on DIAMOND header parsing.
+
+Download the GTDB taxonomy metadata:
+
+```bash
+wget https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/bac120_taxonomy_r220.tsv.gz
+gunzip bac120_taxonomy_r220.tsv.gz
+```
+
+Build the map with PlasFlow v2's built-in helper:
+
+```bash
+python -c "
+from plasflow2.annotate.taxonomy import build_gtdb_taxon_map
+build_gtdb_taxon_map(
+    'bac120_taxonomy_r220.tsv',
+    'taxon_map.tsv'
+)
+"
+```
+
+This creates `taxon_map.tsv` in `data/databases/taxonomy/`. PlasFlow v2 auto-detects it there.
+
+#### Step 4 — Run with taxonomy
+
+Once the database and map are in place, taxonomy runs automatically:
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ --threads 16
+```
+
+To use databases at a non-default location:
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ \
+  --taxonomy-db /path/to/refseq_taxonomy.dmnd \
+  --taxon-map   /path/to/taxon_map.tsv \
+  --threads 16
+```
+
+To skip taxonomy entirely:
+
+```bash
+plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy --threads 16
+```
+
+> **Note:** PLSDB and GTDB serve different purposes. PLSDB is used by the **hallmark gate** to confirm plasmid calls via minimap2 alignment. GTDB is used for **host taxonomy annotation** via DIAMOND protein search. They are independent — you can use either, both, or neither.
+
+---
 
 ### Higher accuracy with geNomad
 
