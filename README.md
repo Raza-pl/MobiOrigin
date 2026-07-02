@@ -248,6 +248,8 @@ PLSDB is a curated database of 45,000+ complete plasmid sequences. PlasFlow v2 u
 
 **Size:** ~1 GB compressed, ~5 GB decompressed.
 
+**Manual download:** If automatic download fails, get it directly from [https://ccb-microbe.cs.uni-saarland.de/plsdb2025/](https://ccb-microbe.cs.uni-saarland.de/plsdb2025/) — download `plsdb.fna.bz2`, decompress with `bzip2 -d plsdb.fna.bz2`, and place the `.fna` file at `data/databases/plasmids/PLSDB.fna`.
+
 #### Download PLSDB automatically
 
 The easiest way is to let `setup_databases.sh` handle it:
@@ -428,7 +430,11 @@ Re-run `bash scripts/setup_databases.sh` for the missing database. Use `--skip-X
 
 **PLSDB download fails (connection timeout)**
 
-PLSDB servers occasionally have downtime. Try again after a few minutes. The script tries two mirror URLs automatically. You can also download manually from [https://ccb.uni-saarland.de/plsdb2025/](https://ccb.uni-saarland.de/plsdb2025/) and decompress with `bzip2 -d plsdb.fna.bz2`, then place the resulting `.fna` file at `data/databases/plasmids/PLSDB.fna`.
+PLSDB servers occasionally have downtime. Try again after a few minutes. The script tries two mirror URLs automatically. If automatic download keeps failing, download manually:
+
+1. Go to **[https://ccb-microbe.cs.uni-saarland.de/plsdb2025/](https://ccb-microbe.cs.uni-saarland.de/plsdb2025/)** and download the FASTA file (`plsdb.fna.bz2`)
+2. Decompress: `bzip2 -d plsdb.fna.bz2`
+3. Place the file at `data/databases/plasmids/PLSDB.fna` inside the cloned repo, or pass the path directly: `plasflow2 run --plsdb-path /path/to/PLSDB.fna`
 
 **Docker: "database not found" inside container**
 
