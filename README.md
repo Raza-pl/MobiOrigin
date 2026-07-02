@@ -454,58 +454,57 @@ By default, `plasflow2 run` annotates the host taxonomy of each plasmid contig u
 
 The taxonomy database is **not bundled** and must be built once from GTDB data. It is large (~8 GB DIAMOND index). Skip taxonomy entirely with `--skip-taxonomy` if you don't need it (saves 20–40 min per run).
 
-#### Step 1 — Download GTDB r220 representative proteins
+#### Automated setup (recommended)
+
+`setup_databases.sh` handles the full GTDB setup — download, extract, `diamond makedb`, and taxon map build — with a single flag:
 
 ```bash
-mkdir -p data/databases/taxonomy
-cd data/databases/taxonomy
+bash scripts/setup_databases.sh --gtdb --threads 16
+```
 
+> **Size:** ~8 GB download, ~30 GB uncompressed, ~8 GB DIAMOND index. Expect **30–90 min** for download plus **15–30 min** for `diamond makedb`. Plan for ~40 GB free disk space during setup (the `.tar.gz` and `.faa` can be deleted afterward).
+
+If you already have the GTDB protein FASTA from a previous install, point to it to skip the download:
+
+```bash
+bash scripts/setup_databases.sh --gtdb --gtdb-proteins-path /existing/gtdb_prot_reps_r220.faa
+```
+
+#### Manual setup
+
+If you prefer to run steps individually:
+
+**Step 1 — Download proteins:**
+
+```bash
+mkdir -p data/databases/taxonomy && cd data/databases/taxonomy
 wget https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/genomic_files_reps/gtdb_proteins_aa_reps_r220.tar.gz
 tar xf gtdb_proteins_aa_reps_r220.tar.gz
 ```
 
-> **Size:** ~8 GB download, ~30 GB uncompressed. This step takes 30–90 min depending on your connection.
-
-#### Step 2 — Build the DIAMOND database
+**Step 2 — Build DIAMOND database:**
 
 ```bash
-# Still inside data/databases/taxonomy/
-diamond makedb \
-  --in gtdb_prot_reps_r220.faa \
-  --db refseq_taxonomy \
-  --threads 16
+diamond makedb --in gtdb_prot_reps_r220.faa --db refseq_taxonomy --threads 16
 ```
 
-This creates `refseq_taxonomy.dmnd` (~8 GB). PlasFlow v2 **auto-detects** it at `data/databases/taxonomy/refseq_taxonomy.dmnd` — no extra flags needed at runtime.
+This creates `refseq_taxonomy.dmnd`. PlasFlow v2 **auto-detects** it at `data/databases/taxonomy/refseq_taxonomy.dmnd`.
 
-#### Step 3 — Build the taxon map (recommended)
-
-The taxon map improves LCA accuracy by providing explicit accession → lineage lookups rather than relying on DIAMOND header parsing.
-
-Download the GTDB taxonomy metadata:
+**Step 3 — Build taxon map:**
 
 ```bash
 wget https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/bac120_taxonomy_r220.tsv.gz
 gunzip bac120_taxonomy_r220.tsv.gz
-```
 
-Build the map with PlasFlow v2's built-in helper:
-
-```bash
 python -c "
 from plasflow2.annotate.taxonomy import build_gtdb_taxon_map
-build_gtdb_taxon_map(
-    'bac120_taxonomy_r220.tsv',
-    'taxon_map.tsv'
-)
+build_gtdb_taxon_map('bac120_taxonomy_r220.tsv', 'taxon_map.tsv')
 "
 ```
 
-This creates `taxon_map.tsv` in `data/databases/taxonomy/`. PlasFlow v2 auto-detects it there.
+#### Run with taxonomy
 
-#### Step 4 — Run with taxonomy
-
-Once the database and map are in place, taxonomy runs automatically:
+Once the database is in place (auto or manual), taxonomy runs automatically:
 
 ```bash
 plasflow2 run --input assembly.fasta --output results/ --threads 16

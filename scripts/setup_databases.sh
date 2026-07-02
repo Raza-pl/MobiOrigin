@@ -11,14 +11,17 @@
 #   6. BacMet2        metal/biocide resistance ~5 MB
 #   7. MGE / ISfinder mobile elements ~20 MB
 #   8. ICEberg3       integrative conjugative elements ~5 MB
-#   9. PLSDB          plasmid matching ~5 GB
+#   9. PLSDB          plasmid matching ~1 GB compressed / ~5 GB unpacked
 #  10. MOB-suite      mobility typing  ~500 MB  (via mob_init)
+#  11. GTDB r220      host taxonomy    ~8 GB download / ~30 GB unpacked
+#                     (opt-in only — pass --gtdb to enable)
 #
 # Usage:
 #   bash scripts/setup_databases.sh
 #   bash scripts/setup_databases.sh --skip-plsdb          # skip 5 GB PLSDB
 #   bash scripts/setup_databases.sh --skip-vfdb --skip-mge
 #   bash scripts/setup_databases.sh --threads 16
+#   bash scripts/setup_databases.sh --gtdb                # also download GTDB (~30 GB)
 #
 # Skip flags:  --skip-models --skip-card --skip-sarg --skip-amrfinder
 #              --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg
@@ -27,6 +30,7 @@
 # Point to an existing database (bypasses download):
 #   bash scripts/setup_databases.sh --card-path /existing/card/card.dmnd
 #   bash scripts/setup_databases.sh --plsdb-path /existing/PLSDB.fna
+#   bash scripts/setup_databases.sh --gtdb --gtdb-proteins-path /existing/gtdb_prot_reps_r220.faa
 # =============================================================================
 
 set -euo pipefail
@@ -48,9 +52,11 @@ SKIP_MGE=false
 SKIP_ICEBERG=false
 SKIP_PLSDB=false
 SKIP_MOBSUITE=false
+GTDB=false             # opt-in: too large to download by default (~30 GB)
 
 CARD_PATH=""
 PLSDB_PATH=""
+GTDB_PROTEINS_PATH=""  # point to existing gtdb_prot_reps_r220.faa to skip download
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -64,10 +70,12 @@ while [[ $# -gt 0 ]]; do
         --skip-mge)       SKIP_MGE=true;       shift ;;
         --skip-iceberg)   SKIP_ICEBERG=true;   shift ;;
         --skip-plsdb)     SKIP_PLSDB=true;     shift ;;
-        --skip-mobsuite)  SKIP_MOBSUITE=true;  shift ;;
-        --card-path)      CARD_PATH="$2";      shift 2 ;;
-        --plsdb-path)     PLSDB_PATH="$2";     shift 2 ;;
-        --threads)        THREADS="$2";        shift 2 ;;
+        --skip-mobsuite)      SKIP_MOBSUITE=true;        shift ;;
+        --gtdb)               GTDB=true;                 shift ;;
+        --card-path)          CARD_PATH="$2";            shift 2 ;;
+        --plsdb-path)         PLSDB_PATH="$2";           shift 2 ;;
+        --gtdb-proteins-path) GTDB_PROTEINS_PATH="$2";  shift 2 ;;
+        --threads)            THREADS="$2";              shift 2 ;;
         -h|--help)
             sed -n '/^# Usage/,/^# ====/p' "$0" | grep -v "^# ====" | sed 's/^# //'
             exit 0 ;;
@@ -580,6 +588,121 @@ else
     fi
 fi
 
+# ── 11. GTDB r220 — host taxonomy database (opt-in) ──────────────────────────
+section "11. GTDB r220 (host taxonomy — opt-in)"
+TAX_DIR="$DB_DIR/taxonomy"
+GTDB_DMND="$TAX_DIR/refseq_taxonomy.dmnd"
+GTDB_MAP="$TAX_DIR/taxon_map.tsv"
+mkdir -p "$TAX_DIR"
+
+if ! $GTDB; then
+    info "Skipped (pass --gtdb to download ~30 GB GTDB r220 proteins)"
+    [[ -f "$GTDB_DMND" ]] && ok "Existing GTDB database found: $GTDB_DMND  ($(du -sh "$GTDB_DMND" | cut -f1))"
+    [[ -f "$GTDB_MAP"  ]] && ok "Existing taxon map found:     $GTDB_MAP"
+else
+    GTDB_TAR="$TAX_DIR/gtdb_proteins_aa_reps_r220.tar.gz"
+    GTDB_FAA="$TAX_DIR/gtdb_prot_reps_r220.faa"
+    GTDB_TAX_GZ="$TAX_DIR/bac120_taxonomy_r220.tsv.gz"
+    GTDB_TAX_TSV="$TAX_DIR/bac120_taxonomy_r220.tsv"
+
+    GTDB_PROT_URL="https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/genomic_files_reps/gtdb_proteins_aa_reps_r220.tar.gz"
+    GTDB_TAX_URL="https://data.ace.uq.edu.au/public/gtdb/data/releases/release220/220.0/bac120_taxonomy_r220.tsv.gz"
+
+    # ── Step A: get the protein FASTA ─────────────────────────────────────────
+    if [[ -n "$GTDB_PROTEINS_PATH" ]]; then
+        if [[ -f "$GTDB_PROTEINS_PATH" ]]; then
+            ok "Using existing GTDB proteins: $GTDB_PROTEINS_PATH"
+            GTDB_FAA="$GTDB_PROTEINS_PATH"
+        else
+            err "--gtdb-proteins-path file not found: $GTDB_PROTEINS_PATH"
+            GTDB_FAA=""
+        fi
+    elif [[ -f "$GTDB_FAA" ]]; then
+        ok "GTDB proteins already extracted: $GTDB_FAA  ($(du -sh "$GTDB_FAA" | cut -f1))"
+    else
+        info "Downloading GTDB r220 representative proteins (~8 GB, may take 30–90 min)..."
+        if download "$GTDB_PROT_URL" "$GTDB_TAR" "gtdb_proteins_aa_reps_r220.tar.gz"; then
+            info "Extracting proteins archive (~30 GB uncompressed)..."
+            tar -xzf "$GTDB_TAR" -C "$TAX_DIR"
+            # GTDB tar may extract to a subdirectory; find the .faa
+            if [[ ! -f "$GTDB_FAA" ]]; then
+                FOUND=$(find "$TAX_DIR" -name "*.faa" -o -name "*.fasta" | grep -i "gtdb\|prot_reps" | head -1)
+                [[ -n "$FOUND" ]] && mv "$FOUND" "$GTDB_FAA"
+            fi
+            if [[ -f "$GTDB_FAA" ]]; then
+                ok "GTDB proteins: $GTDB_FAA  ($(du -sh "$GTDB_FAA" | cut -f1))"
+                rm -f "$GTDB_TAR"   # free space after extraction
+            else
+                err "Could not locate .faa file after extraction. Check $TAX_DIR"
+                GTDB_FAA=""
+            fi
+        else
+            warn "GTDB download failed."
+            info "Manual download: https://gtdb.ecogenomic.org/downloads"
+            info "  → gtdb_proteins_aa_reps_r220.tar.gz  → extract → save .faa to: $GTDB_FAA"
+            GTDB_FAA=""
+        fi
+    fi
+
+    # ── Step B: build DIAMOND database ────────────────────────────────────────
+    if [[ -f "$GTDB_DMND" ]]; then
+        ok "GTDB DIAMOND database: $GTDB_DMND  ($(du -sh "$GTDB_DMND" | cut -f1))"
+    elif [[ -n "$GTDB_FAA" && -f "$GTDB_FAA" ]]; then
+        info "Building GTDB DIAMOND database (this takes 15–30 min and ~8 GB disk)..."
+        diamond makedb --in "$GTDB_FAA" --db "$TAX_DIR/refseq_taxonomy" \
+            --threads "$THREADS" --quiet
+        ok "GTDB DIAMOND database: $GTDB_DMND  ($(du -sh "$GTDB_DMND" | cut -f1))"
+    else
+        warn "Skipping DIAMOND build — no protein FASTA available."
+    fi
+
+    # ── Step C: download taxonomy TSV + build taxon map ───────────────────────
+    if [[ -f "$GTDB_MAP" ]]; then
+        ok "Taxon map: $GTDB_MAP  ($(wc -l < "$GTDB_MAP") entries)"
+    else
+        if [[ ! -f "$GTDB_TAX_TSV" ]]; then
+            info "Downloading GTDB taxonomy metadata (~5 MB)..."
+            if download "$GTDB_TAX_URL" "$GTDB_TAX_GZ" "bac120_taxonomy_r220.tsv.gz"; then
+                gunzip -f "$GTDB_TAX_GZ"
+            else
+                warn "Taxonomy TSV download failed. LCA will fall back to DIAMOND header parsing."
+            fi
+        fi
+
+        if [[ -f "$GTDB_TAX_TSV" ]]; then
+            info "Building taxon map from GTDB taxonomy TSV..."
+            python3 - "$GTDB_TAX_TSV" "$GTDB_MAP" <<'PYEOF'
+import sys
+sys.path.insert(0, __import__('os').path.join(
+    __import__('os').path.dirname(__file__) if '__file__' in dir() else '.',
+    'src'
+))
+try:
+    from plasflow2.annotate.taxonomy import build_gtdb_taxon_map
+    build_gtdb_taxon_map(sys.argv[1], sys.argv[2])
+    print(f"    Taxon map written to {sys.argv[2]}")
+except Exception as e:
+    print(f"    Warning: {e}", file=sys.stderr)
+    # Fallback: simple copy (accession\tlineage format already matches)
+    import shutil
+    shutil.copy(sys.argv[1], sys.argv[2])
+    print(f"    Taxon map copied (raw format) to {sys.argv[2]}")
+PYEOF
+            [[ -f "$GTDB_MAP" ]] && ok "Taxon map: $GTDB_MAP  ($(wc -l < "$GTDB_MAP") entries)"
+        fi
+    fi
+
+    # ── Summary note ─────────────────────────────────────────────────────────
+    if [[ -f "$GTDB_DMND" ]]; then
+        info ""
+        info "Taxonomy is now enabled. PlasFlow v2 auto-detects the database at:"
+        info "  $GTDB_DMND"
+        [[ -f "$GTDB_MAP" ]] && info "  $GTDB_MAP"
+        info "Or pass explicitly: plasflow2 run --taxonomy-db $GTDB_DMND --taxon-map $GTDB_MAP"
+        info "To skip taxonomy at runtime: plasflow2 run --skip-taxonomy"
+    fi
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "============================================================"
@@ -611,8 +734,10 @@ check_file "AMRFinderPlus.dmnd" "$DB_DIR/amrfinder/amrprot.dmnd"
 check_file "VFDB.dmnd"          "$DB_DIR/vfdb/vfdb.dmnd"
 check_file "BacMet2.dmnd"       "$DB_DIR/bacmet/bacmet.dmnd"
 check_file "MGE/ISfinder.dmnd"  "$DB_DIR/mge/isfinder.dmnd"
-check_file "ICEberg3.dmnd"      "$DB_DIR/ice/ice.dmnd"          true
+check_file "ICEberg3.dmnd"      "$DB_DIR/ice/ice.dmnd"               true
 check_file "PLSDB.fna"          "$DB_DIR/plasmids/PLSDB.fna"
+check_file "GTDB taxonomy.dmnd" "$DB_DIR/taxonomy/refseq_taxonomy.dmnd" true
+check_file "GTDB taxon_map.tsv" "$DB_DIR/taxonomy/taxon_map.tsv"        true
 
 echo ""
 echo "  ► Ready to run:"
