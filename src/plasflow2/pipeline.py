@@ -157,8 +157,8 @@ class PipelineResult:
 def run_pipeline(
     fasta_path: Path | str,
     model_path: Path | str,
-    card_db: Path | str,
-    aro_index: Path | str,
+    card_db: Path | str | None,
+    aro_index: Path | str | None,
     work_dir: Path | str,
     source_context: str = "unspecified",
     confidence_threshold: float = 0.70,
@@ -181,7 +181,7 @@ def run_pipeline(
     kaiju_nodes: Path | str | None = None,
     kaiju_names: Path | str | None = None,
     genomad_db_path: Path | str | None = None,
-    archaea_threshold: float | None = None,
+
     lenient: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
@@ -248,8 +248,8 @@ def run_pipeline(
     """
     fasta_path = Path(fasta_path)
     model_path = Path(model_path)
-    card_db = Path(card_db)
-    aro_index = Path(aro_index)
+    card_db = Path(card_db) if card_db else None
+    aro_index = Path(aro_index) if aro_index else None
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -259,11 +259,15 @@ def run_pipeline(
     for p, name in [
         (fasta_path, "fasta_path"),
         (model_path, "model_path"),
-        (card_db, "card_db"),
-        (aro_index, "aro_index"),
     ]:
         if not p.exists():
             raise FileNotFoundError(f"{name} not found: {p}")
+
+    # CARD is optional — validated (and warned) in cli.py before we get here
+    if card_db is not None and not card_db.exists():
+        raise FileNotFoundError(f"card_db not found: {card_db}")
+    if aro_index is not None and not aro_index.exists():
+        raise FileNotFoundError(f"aro_index not found: {aro_index}")
 
     # ------------------------------------------------------------------
     # 1. Load contigs
@@ -338,20 +342,30 @@ def run_pipeline(
     )
     _amrprot_db = amrprot_db or (_amrprot_auto if _amrprot_auto.exists() else None)
 
-    dbs_label = "CARD" + (" + SARG" if sarg_db else "") + (" + AMRProt" if _amrprot_db else "")
+    dbs_label = (
+        ("CARD" if card_db else "")
+        + (" + SARG" if sarg_db else "")
+        + (" + AMRProt" if _amrprot_db else "")
+    ).lstrip(" + ") or "none"
     logger.info("Annotating ARGs on ALL %d contigs (%s) …", len(records), dbs_label)
 
-    arg_hits, all_orfs = annotate_contigs_with_orfs(
-        fasta_path=all_contigs_fasta,
-        card_db=card_db,
-        aro_index_path=aro_index,
-        work_dir=work_dir / "arg_annotation",
-        threads=threads,
-        sarg_db=sarg_db,
-        amrprot_db=_amrprot_db,
-        min_identity=min_identity,
-    )
-    # Pre-predicted proteins path — reused by VFDB, MGE, mobility, taxonomy
+    if card_db is not None or sarg_db or _amrprot_db:
+        arg_hits, all_orfs = annotate_contigs_with_orfs(
+            fasta_path=all_contigs_fasta,
+            card_db=card_db,
+            aro_index_path=aro_index,
+            work_dir=work_dir / "arg_annotation",
+            threads=threads,
+            sarg_db=sarg_db,
+            amrprot_db=_amrprot_db,
+            min_identity=min_identity,
+        )
+    else:
+        logger.info("No ARG databases available — skipping ARG annotation.")
+        arg_hits, all_orfs = [], []
+    # Pre-predicted proteins path — reused by VFDB, MGE, mobility, taxonomy.
+    # May not exist if all ARG databases were skipped; downstream callers already
+    # guard with arg_proteins.exists() so this is safe.
     arg_proteins = work_dir / "arg_annotation" / "proteins.faa"
 
     # Group hits by contig_id for fast lookup
@@ -828,16 +842,6 @@ def run_pipeline(
             }
             _raw_hits_candidates = {k: v for k, v in _raw_tax_hits.items() if k in _candidates}
             _archaeal_ids = detect_archaeal_contigs(_raw_hits_candidates)
-            # Apply archaea_threshold: only override when the MLP archaea score
-            # meets the minimum (defaults to confidence_threshold when not set).
-            _eff_arch_thresh = (
-                archaea_threshold if archaea_threshold is not None else confidence_threshold
-            )
-            _archaeal_ids = {
-                cid
-                for cid in _archaeal_ids
-                if pred_by_id[cid].scores.get("archaea", 0.0) >= _eff_arch_thresh
-            }
             if _archaeal_ids:
                 # Override predictions in pred_by_id
                 for cid in _archaeal_ids:
@@ -850,10 +854,8 @@ def run_pipeline(
                     )
                 logger.info(
                     "Archaeal override: %d contigs relabelled archaea "
-                    "(from chromosome/unclassified) using DIAMOND taxonomy "
-                    "[archaea_threshold=%.2f]",
+                    "(from chromosome/unclassified) using DIAMOND taxonomy",
                     len(_archaeal_ids),
-                    _eff_arch_thresh,
                 )
         except Exception as _exc:
             logger.warning("Archaeal post-classification failed: %s — skipping.", _exc)
@@ -1101,12 +1103,27 @@ def run_pipeline(
                         _n_xgb_promoted += 1
                     else:
                         _n_xgb_demoted += 1
-                    pred_by_id[cid] = Prediction(
-                        sequence_id=cid,
-                        label=new_label,
-                        confidence=best_conf,
-                        scores=agg,
-                    )
+
+                # Always update Prediction with post-XGBoost scores and evidence,
+                # even when the label doesn't change (so TSV reflects final scores).
+                _evidence_type = (
+                    "plsdb_nt_override" if cid in plasmid_db_hits else "xgb_blend"
+                )
+                pred_by_id[cid] = Prediction(
+                    sequence_id=cid,
+                    label=new_label,
+                    confidence=best_conf,
+                    scores=agg,
+                    low_confidence=pred.low_confidence,
+                    mlp_scores=pred.scores,
+                    xgb_scores=marker_scores,
+                    bio_evidence={
+                        k: float(v)
+                        for k, v in vars(feats).items()
+                        if isinstance(v, (int, float, bool)) and not k.startswith("_")
+                    },
+                    evidence_type=_evidence_type,
+                )
 
             logger.info(
                 "Marker XGBoost: promoted %d → plasmid, demoted %d → other",

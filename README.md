@@ -531,24 +531,15 @@ plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy --threads
 
 ### Higher accuracy with geNomad
 
-Running geNomad separately before classification adds 12 gene-signature features to the XGBoost model, which can improve accuracy on novel plasmids:
+`plasflow2 run` invokes geNomad **automatically** if it is on your PATH — no extra steps. Install geNomad and download its database once:
 
 ```bash
-genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
+conda install -c conda-forge -c bioconda genomad
+genomad download-database data/databases/
 
-plasflow2 prepare \
-  --input assembly.fasta \
-  --output annotations.tsv \
-  --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv \
-  --threads 16
-
-plasflow2 classify \
-  --input assembly.fasta \
-  --output predictions.tsv \
-  --annotation-tsv annotations.tsv
+# geNomad runs automatically during plasflow2 run
+plasflow2 run --input assembly.fasta --output results/ --threads 16
 ```
-
-When you use the standard `plasflow2 run` command, geNomad is invoked automatically if it is on your PATH.
 
 ### Rebuild the HTML report
 

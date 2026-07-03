@@ -65,26 +65,19 @@ plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy
 
 ## Higher accuracy with geNomad
 
-Running geNomad separately before PlasFlow v2 adds 12 SPM (sequence-specific plasmid marker) gene features to the XGBoost stage-2 model, improving precision on borderline contigs.
+Running geNomad adds 12 SPM (sequence-specific plasmid marker) gene features to the XGBoost stage-2 model, improving precision on borderline contigs.
 
-When you use `plasflow2 run`, geNomad is invoked **automatically** if it is on your PATH. For manual control:
+`plasflow2 run` invokes geNomad **automatically** if it is on your PATH — no extra steps needed. Just make sure geNomad is installed and its database is in `data/databases/genomad_db/`.
 
 ```bash
-# Step 1 — annotate with geNomad (~5–30 min)
-genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
+# Install geNomad
+conda install -c conda-forge -c bioconda genomad
 
-# Step 2 — generate annotation TSV with geNomad features
-plasflow2 prepare \
-  --input assembly.fasta \
-  --output annotations.tsv \
-  --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv \
-  --threads 16
+# Download the geNomad database (one-time, ~3 GB)
+genomad download-database data/databases/
 
-# Step 3 — classify using both k-mer and biological features
-plasflow2 classify \
-  --input assembly.fasta \
-  --output predictions.tsv \
-  --annotation-tsv annotations.tsv
+# Run — geNomad is called automatically
+plasflow2 run --input assembly.fasta --output results/ --threads 16
 ```
 
 ---

@@ -93,6 +93,14 @@ def _configure_logging(verbose: bool) -> None:
 
 _DB_ROOT = Path(__file__).parent.parent.parent / "data" / "databases"
 _DEFAULT_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
+_DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "marker_xgb.pkl"
+
+# Docker convention: models and databases are mounted at /data/
+# _resolve_model() falls back to these when repo-relative paths don't exist.
+_DOCKER_MODEL = Path("/data/models/mlp_v2.pt")
+_DOCKER_MARKER_MODEL = Path("/data/models/marker_xgb.pkl")
+_DOCKER_DB_ROOT = Path("/data/databases")
+
 _DEFAULT_CARD_DB = _DB_ROOT / "card" / "card.dmnd"
 _DEFAULT_ARO_INDEX = _DB_ROOT / "card" / "aro_index.tsv"
 _DEFAULT_SARG_DB = _DB_ROOT / "sarg" / "sarg.dmnd"
@@ -104,7 +112,9 @@ _DEFAULT_TAXON_MAP = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
 _DEFAULT_KAIJU_DIR = _DB_ROOT / "kaiju"
 _DEFAULT_KAIJU_NODES = _DEFAULT_KAIJU_DIR / "nodes.dmp"
 _DEFAULT_KAIJU_NAMES = _DEFAULT_KAIJU_DIR / "names.dmp"
-_DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "marker_xgb.pkl"
+
+
+_DOCKER_MODEL = Path("/data/models/mlp_v2.pt")
 
 
 def _resolve_model(model_path: str | None) -> Path:
@@ -113,8 +123,10 @@ def _resolve_model(model_path: str | None) -> Path:
         if not p.exists():
             raise click.BadParameter(f"Model file not found: {p}", param_hint="--model")
         return p
-    if _DEFAULT_MODEL.exists():
-        return _DEFAULT_MODEL
+    # Check repo-relative path first, then Docker-convention path (/data/models/)
+    for candidate in (_DEFAULT_MODEL, _DOCKER_MODEL):
+        if candidate.exists():
+            return candidate
     raise click.UsageError(
         "Model weights not found at data/models/mlp_v2.pt\n\n"
         "Download the pre-trained models by running:\n"
@@ -123,6 +135,7 @@ def _resolve_model(model_path: str | None) -> Path:
         "  bash scripts/setup_databases.sh \\\n"
         "    --skip-plsdb --skip-card --skip-sarg --skip-amrfinder \\\n"
         "    --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-mobsuite\n\n"
+        "Docker users: mount models with -v /path/to/data:/data\n"
         "To specify a custom model path: plasflow2 run --model /path/to/mlp_v2.pt ..."
     )
 
@@ -820,17 +833,6 @@ def main(ctx: click.Context, verbose: bool) -> None:
     ),
 )
 @click.option(
-    "--archaea-threshold",
-    "archaea_threshold",
-    default=None,
-    type=float,
-    help=(
-        "Minimum score for archaea calls. Defaults to --threshold (0.70). "
-        "Raise to 0.93+ for non-archaeal environments (wastewater, clinical) "
-        "to reduce false-positive archaea calls."
-    ),
-)
-@click.option(
     "--context",
     default="unspecified",
     show_default=True,
@@ -1037,7 +1039,6 @@ def run(
     aro_index: str | None,
     threshold: float,
     plasmid_threshold: float,
-    archaea_threshold: float | None,
     context: str,
     threads: int,
     min_length: int,
@@ -1098,12 +1099,24 @@ def run(
 
     resolved_model = _resolve_model(model_path)
 
+    # CARD: only error if the user explicitly passed a path that doesn't exist.
+    # If not provided, auto-detect — and skip ARG annotation gracefully if absent.
+    _card_explicit = card_db is not None
     card_db_path = Path(card_db) if card_db else _DEFAULT_CARD_DB
     aro_index_path = Path(aro_index) if aro_index else _DEFAULT_ARO_INDEX
 
-    for p, name in [(card_db_path, "--card-db"), (aro_index_path, "--aro-index")]:
-        if not p.exists():
-            raise click.BadParameter(f"Not found: {p}", param_hint=name)
+    if _card_explicit:
+        for p, name in [(card_db_path, "--card-db"), (aro_index_path, "--aro-index")]:
+            if not p.exists():
+                raise click.BadParameter(f"Not found: {p}", param_hint=name)
+    elif not card_db_path.exists():
+        click.echo(
+            "[warn] CARD database not found — ARG annotation will be skipped.\n"
+            "       Run: bash scripts/setup_databases.sh --skip-plsdb --skip-sarg "
+            "--skip-amrfinder --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-mobsuite"
+        )
+        card_db_path = None  # type: ignore[assignment]
+        aro_index_path = None  # type: ignore[assignment]
 
     # Auto-detect optional databases when not explicitly provided
     if sarg_db is None and _DEFAULT_SARG_DB.exists():
@@ -1203,7 +1216,6 @@ def run(
         kaiju_nodes=kaiju_nodes,
         kaiju_names=kaiju_names,
         genomad_db_path=genomad_db if genomad_db else None,
-        archaea_threshold=archaea_threshold,
         lenient=lenient,
     )
 
@@ -1419,6 +1431,8 @@ def classify(
             resolved_marker = marker_model_path
         elif _DEFAULT_MARKER_MODEL.exists():
             resolved_marker = str(_DEFAULT_MARKER_MODEL)
+        elif _DOCKER_MARKER_MODEL.exists():
+            resolved_marker = str(_DOCKER_MARKER_MODEL)
 
     if resolved_marker:
         click.echo(f"Stage-2 marker XGBoost: {resolved_marker}")
@@ -1452,122 +1466,6 @@ def classify(
     summary = "  ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
     click.echo(f"Classified {len(predictions)} sequences — {summary}")
     click.echo(f"Predictions → {out_path}")
-
-
-# ---------------------------------------------------------------------------
-# plasflow2 prepare  (generate annotation TSV for stage-2 XGBoost)
-# ---------------------------------------------------------------------------
-
-
-@main.command()
-@click.option(
-    "--input",
-    "-i",
-    "input_fasta",
-    required=True,
-    type=click.Path(exists=True),
-    help="Input assembly FASTA — include all contigs, not just plasmids.",
-)
-@click.option(
-    "--output",
-    "-o",
-    "output_tsv",
-    required=True,
-    type=click.Path(),
-    help="Output annotation TSV. Pass this to 'plasflow2 classify --annotation-tsv'.",
-)
-@click.option(
-    "--threads",
-    default=4,
-    show_default=True,
-    help="CPU threads for MOB-suite DIAMOND searches. More threads = faster.",
-)
-@click.option(
-    "--genomad-genes",
-    "genomad_genes",
-    default=None,
-    type=click.Path(exists=True),
-    help=(
-        "Path to genomad annotate output *_genes.tsv. "
-        "When provided, adds 9 geNomad SPM features to the annotation TSV "
-        "(26 total features vs 17 without). "
-        "Generate with: genomad annotate assembly.fasta genomad_out/ genomad_db/"
-    ),
-)
-@click.pass_context
-def prepare(
-    ctx: click.Context,
-    input_fasta: str,
-    output_tsv: str,
-    threads: int,
-    genomad_genes: str | None,
-) -> None:
-    """Generate MOB-suite annotation TSV for XGBoost stage-2 classification.
-
-    Runs MOB-suite DIAMOND searches on all contigs to extract biological marker
-    features: conjugation proteins, relaxases, replicon types, rep proteins,
-    coding density, GC content, ORF density. These features let the XGBoost
-    stage-2 model refine k-mer-based MLP scores with actual biological evidence.
-
-    Requires MOB-suite: conda install -c bioconda -c conda-forge mob_suite
-
-    \b
-    Standard usage (5-30 min depending on dataset size):
-        plasflow2 prepare --input assembly.fasta --output annotations.tsv --threads 16
-        plasflow2 classify --input assembly.fasta --output predictions.tsv \\
-            --annotation-tsv annotations.tsv
-
-    \b
-    With geNomad features for maximum accuracy (only needed for 'classify'; 'run' adds these automatically):
-        genomad annotate assembly.fasta genomad_out/ data/databases/genomad_db/ --threads 16
-        plasflow2 prepare --input assembly.fasta --output annotations.tsv \\
-            --genomad-genes genomad_out/assembly_annotate/assembly_genes.tsv --threads 16
-        plasflow2 classify --input assembly.fasta --output predictions.tsv \\
-            --annotation-tsv annotations.tsv
-    """
-    import subprocess
-    import sys
-
-    # Delegate to annotate_sequences.py which has the full MOB-suite pipeline
-    script = Path(__file__).parent.parent.parent / "scripts" / "annotate_sequences.py"
-    if not script.exists():
-        raise click.UsageError(
-            f"annotate_sequences.py not found at {script}. "
-            "Clone the full repository to use this command."
-        )
-
-    cmd = [
-        sys.executable,
-        str(script),
-        "--fasta",
-        input_fasta,
-        "--out",
-        output_tsv,
-        "--threads",
-        str(threads),
-    ]
-    if genomad_genes:
-        cmd += ["--genomad-genes", genomad_genes]
-
-    click.echo(f"Generating annotation TSV: {input_fasta} → {output_tsv}")
-    if genomad_genes:
-        click.echo(f"  geNomad genes: {genomad_genes}")
-    click.echo(f"  Threads: {threads}")
-    click.echo("  Running MOB-suite DIAMOND searches (this may take several minutes)…")
-
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        raise click.ClickException(
-            f"annotate_sequences.py exited with code {result.returncode}. "
-            "Check that MOB-suite is installed: conda install -c conda-forge -c bioconda mob_suite"
-        )
-
-    click.echo(f"Annotation TSV → {output_tsv}")
-    click.echo(
-        f"\nNext step:\n"
-        f"  plasflow2 classify --input {input_fasta} --output predictions.tsv "
-        f"--annotation-tsv {output_tsv}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1623,12 +1521,24 @@ def annotate(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    # CARD: only error if the user explicitly passed a path that doesn't exist.
+    # If not provided, auto-detect — and skip ARG annotation gracefully if absent.
+    _card_explicit = card_db is not None
     card_db_path = Path(card_db) if card_db else _DEFAULT_CARD_DB
     aro_index_path = Path(aro_index) if aro_index else _DEFAULT_ARO_INDEX
 
-    for p, name in [(card_db_path, "--card-db"), (aro_index_path, "--aro-index")]:
-        if not p.exists():
-            raise click.BadParameter(f"Not found: {p}", param_hint=name)
+    if _card_explicit:
+        for p, name in [(card_db_path, "--card-db"), (aro_index_path, "--aro-index")]:
+            if not p.exists():
+                raise click.BadParameter(f"Not found: {p}", param_hint=name)
+    elif not card_db_path.exists():
+        click.echo(
+            "[warn] CARD database not found — ARG annotation will be skipped.\n"
+            "       Run: bash scripts/setup_databases.sh --skip-plsdb --skip-sarg "
+            "--skip-amrfinder --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-mobsuite"
+        )
+        card_db_path = None  # type: ignore[assignment]
+        aro_index_path = None  # type: ignore[assignment]
 
     db_label = "CARD + SARG" if sarg_db else "CARD"
     click.echo(f"Annotating ARGs on {input_fasta} ({db_label}) …")

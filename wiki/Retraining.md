@@ -66,19 +66,20 @@ PLASFLOW_USE_MPS=1 python scripts/train_model.py ...
 
 ### Step 1 — Generate annotation TSV for your training contigs
 
+Use `plasflow2 run` on your training data to produce the annotation TSV, then extract it from the output directory:
+
 ```bash
-plasflow2 prepare \
-  --input  training_contigs.fasta \
-  --output data/training_annotations.tsv \
+plasflow2 run \
+  --input   training_contigs.fasta \
+  --output  training_run/ \
   --threads 16
 
-# Optional: add geNomad features
-genomad annotate training_contigs.fasta genomad_out/ data/databases/genomad_db/ --threads 16
-plasflow2 prepare \
-  --input training_contigs.fasta \
-  --output data/training_annotations.tsv \
-  --genomad-genes genomad_out/training_contigs_annotate/training_contigs_genes.tsv
+# The annotation TSV is written at:
+# training_run/work/arg_annotation/  (per-annotation files)
+# Copy or use training_run/all_predictions.tsv for features
 ```
+
+> **Note:** A dedicated `plasflow2 prepare` command for standalone annotation-TSV generation is planned for a future release. For now, use `plasflow2 run` on your training data and extract the annotation columns from `all_predictions.tsv`.
 
 ### Step 2 — Train XGBoost
 
