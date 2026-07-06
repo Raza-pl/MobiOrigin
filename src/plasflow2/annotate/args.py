@@ -730,8 +730,8 @@ def merge_arg_hits(
 
 def annotate_contigs_with_orfs(
     fasta_path: Path | str,
-    card_db: Path | str,
-    aro_index_path: Path | str,
+    card_db: Path | str | None,
+    aro_index_path: Path | str | None,
     work_dir: Path | str,
     threads: int = 8,
     sarg_db: Path | str | None = None,
@@ -741,6 +741,10 @@ def annotate_contigs_with_orfs(
 ) -> tuple[list[ARGHit], list[ORF]]:
     """Same as annotate_contigs() but also returns the predicted ORF list.
 
+    card_db and aro_index_path may be None when CARD is not installed; in that
+    case the CARD search is skipped but ORF prediction and any other DB searches
+    (SARG, AMRProt) still run.
+
     Returns:
         Tuple of (arg_hits, orfs).  The ORF list carries start/end/strand
         coordinates needed to build gene-level output tables.
@@ -749,7 +753,6 @@ def annotate_contigs_with_orfs(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     proteins_path = work_dir / "proteins.faa"
-    card_tsv = work_dir / "card_hits.tsv"
 
     # Incremental: skip ORF prediction if proteins.faa already exists
     if proteins_path.exists() and proteins_path.stat().st_size > 0:
@@ -770,21 +773,25 @@ def annotate_contigs_with_orfs(
     else:
         orfs = call_orfs(fasta_path, proteins_path)
 
-    # Incremental: skip CARD search if results already cached
-    if card_tsv.exists() and card_tsv.stat().st_size > 0:
-        logger.info("Reusing cached CARD hits from %s", card_tsv)
+    # CARD search — skip gracefully when database is not available
+    card_hits: list[ARGHit] = []
+    if card_db is not None and aro_index_path is not None:
+        card_tsv = work_dir / "card_hits.tsv"
+        if card_tsv.exists() and card_tsv.stat().st_size > 0:
+            logger.info("Reusing cached CARD hits from %s", card_tsv)
+        else:
+            run_diamond(
+                proteins_path,
+                card_db,
+                card_tsv,
+                threads=threads,
+                min_identity=min_identity,
+                min_coverage=min_coverage,
+            )
+        metadata = load_card_metadata(aro_index_path)
+        card_hits = parse_diamond_hits(card_tsv, metadata)
     else:
-        run_diamond(
-            proteins_path,
-            card_db,
-            card_tsv,
-            threads=threads,
-            min_identity=min_identity,
-            min_coverage=min_coverage,
-        )
-
-    metadata = load_card_metadata(aro_index_path)
-    card_hits = parse_diamond_hits(card_tsv, metadata)
+        logger.info("CARD database not provided — skipping CARD ARG search.")
 
     sarg_hits: list[ARGHit] = []
     if sarg_db is not None:

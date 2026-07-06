@@ -95,11 +95,10 @@ _DB_ROOT = Path(__file__).parent.parent.parent / "data" / "databases"
 _DEFAULT_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
 _DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "marker_xgb.pkl"
 
-# Docker convention: models and databases are mounted at /data/
+# Docker convention: models are mounted at /data/models/
 # _resolve_model() falls back to these when repo-relative paths don't exist.
 _DOCKER_MODEL = Path("/data/models/mlp_v2.pt")
 _DOCKER_MARKER_MODEL = Path("/data/models/marker_xgb.pkl")
-_DOCKER_DB_ROOT = Path("/data/databases")
 
 _DEFAULT_CARD_DB = _DB_ROOT / "card" / "card.dmnd"
 _DEFAULT_ARO_INDEX = _DB_ROOT / "card" / "aro_index.tsv"
@@ -147,7 +146,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
     -------
     All contigs:
         contig_id, length, label, confidence,
-        plasmid_score, chromosome_score, phage_score, archaea_score,
+        plasmid_score, chromosome_score, phage_score,
         taxonomy, taxonomy_rank, taxonomy_lineage
 
     Plasmid contigs (empty string for all other classes):
@@ -172,7 +171,6 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "plasmid_score",
         "chromosome_score",
         "phage_score",
-        "archaea_score",
         # ── prediction evidence (populated when marker XGBoost was used) ─
         "mlp_plasmid",  # raw MLP score before XGBoost blending
         "mlp_chromosome",
@@ -273,7 +271,6 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
                 f"{scores.get('plasmid', 0):.4f}",
                 f"{scores.get('chromosome', 0):.4f}",
                 f"{scores.get('phage', 0):.4f}",
-                f"{scores.get('archaea', 0):.4f}",
                 # Evidence columns
                 f"{mlp['plasmid']:.4f}" if "plasmid" in mlp else "",
                 f"{mlp['chromosome']:.4f}" if "chromosome" in mlp else "",
@@ -632,7 +629,6 @@ def _write_predictions_tsv_simple(predictions: list, output_path: Path) -> None:
                 "plasmid_score",
                 "chromosome_score",
                 "phage_score",
-                "archaea_score",
             ]
         )
         for p in predictions:
@@ -645,7 +641,6 @@ def _write_predictions_tsv_simple(predictions: list, output_path: Path) -> None:
                     f"{scores.get('plasmid', 0):.4f}",
                     f"{scores.get('chromosome', 0):.4f}",
                     f"{scores.get('phage', 0):.4f}",
-                    f"{scores.get('archaea', 0):.4f}",
                 ]
             )
 
@@ -816,7 +811,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
     default=0.7,
     show_default=True,
     help=(
-        "Minimum confidence score (0-1) to assign a contig to chromosome, phage, or archaea. "
+        "Minimum confidence score (0-1) to assign a label (plasmid, chromosome, or phage). "
         "Contigs below this threshold are labelled 'unclassified' rather than forced into a class. "
         "Lower values (e.g. 0.5) assign more contigs but increase misclassification."
     ),
@@ -1362,10 +1357,10 @@ def run(
     default=None,
     type=click.Path(exists=True),
     help=(
-        "Pre-computed MOB-suite annotation TSV from 'plasflow2 prepare'. "
-        "Enables XGBoost stage-2 blending, which adds biological evidence "
-        "(conjugation proteins, replicon type, coding density) on top of k-mer scores. "
-        "Improves accuracy but requires MOB-suite to be installed."
+        "Pre-computed annotation TSV with biological marker features. "
+        "Enables XGBoost stage-2 blending, adding conjugation proteins, replicon type, "
+        "and coding density on top of k-mer scores. "
+        "Generate by running 'plasflow2 run' and providing the work/arg_annotation output."
     ),
 )
 @click.option(
@@ -1408,19 +1403,14 @@ def classify(
 
         plasflow2 classify --input assembly.fasta --output predictions.tsv
 
-    Higher accuracy mode (requires MOB-suite, takes 5-30 min):
-
-    \b
-        plasflow2 prepare --input assembly.fasta --output annotations.tsv
-        plasflow2 classify --input assembly.fasta --output predictions.tsv \\
-            --annotation-tsv annotations.tsv
-
     \b
     Output TSV columns:
-        contig_id, label, confidence, plasmid_score, chromosome_score, phage_score, archaea_score
+        contig_id, label, confidence, plasmid_score, chromosome_score, phage_score
 
     When --annotation-tsv is provided, additional evidence columns are added:
         mlp_plasmid, xgb_plasmid, is_conjugative, is_mobilizable, has_replicon, evidence_type
+
+    For the full pipeline (annotation + reports), use 'plasflow2 run' instead.
     """
     resolved_model = _resolve_model(model_path)
 
