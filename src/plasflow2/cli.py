@@ -1024,6 +1024,17 @@ def main(ctx: click.Context, verbose: bool) -> None:
         "Download with: genomad download-database data/databases/"
     ),
 )
+@click.option(
+    "--skip-genomad",
+    "skip_genomad",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip geNomad SPM feature extraction entirely. "
+        "XGBoost will run without the 12 gene-marker features. "
+        "Useful on macOS where geNomad's MMseqs2 step can be very slow."
+    ),
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -1052,6 +1063,7 @@ def run(
     mge_db: str | None,
     min_confidence: float | None,
     genomad_db: str | None,
+    skip_genomad: bool,
     lenient: bool,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
@@ -1157,7 +1169,11 @@ def run(
     import shutil as _shutil_cli
 
     _gn_db_resolved = Path(genomad_db) if genomad_db else (_DB_ROOT / "genomad_db")
-    if _gn_db_resolved.is_dir() and _shutil_cli.which("genomad"):
+    if skip_genomad:
+        click.echo(
+            "[info] geNomad skipped (--skip-genomad) — XGBoost will run without SPM features."
+        )
+    elif _gn_db_resolved.is_dir() and _shutil_cli.which("genomad"):
         click.echo(
             f"[info] geNomad database found — SPM features will be added automatically ({_gn_db_resolved})"
         )
@@ -1211,6 +1227,7 @@ def run(
         kaiju_nodes=kaiju_nodes,
         kaiju_names=kaiju_names,
         genomad_db_path=genomad_db if genomad_db else None,
+        skip_genomad=skip_genomad,
         lenient=lenient,
     )
 

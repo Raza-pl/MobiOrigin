@@ -181,6 +181,7 @@ def run_pipeline(
     kaiju_nodes: Path | str | None = None,
     kaiju_names: Path | str | None = None,
     genomad_db_path: Path | str | None = None,
+    skip_genomad: bool = False,
     lenient: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
@@ -956,7 +957,7 @@ def run_pipeline(
         if _gn_db_auto.is_dir():
             _gn_db = _gn_db_auto
 
-    if _gn_db is not None and _gn_db.is_dir() and plasmid_records:
+    if not skip_genomad and _gn_db is not None and _gn_db.is_dir() and plasmid_records:
         import shutil as _shutil
         import subprocess as _gn_sp
         import sys as _sys
