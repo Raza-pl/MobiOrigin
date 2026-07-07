@@ -1035,6 +1035,24 @@ def main(ctx: click.Context, verbose: bool) -> None:
         "Useful on macOS where geNomad's MMseqs2 step can be very slow."
     ),
 )
+@click.option(
+    "--skip-plasmid-db",
+    "skip_plasmid_db",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip PLSDB minimap2 search. Plasmid-DB match columns will be empty. "
+        "Useful on macOS where loading the 7.4 GB PLSDB reference is slow."
+    ),
+)
+@click.option(
+    "--plasmid-db-timeout",
+    "plasmid_db_timeout",
+    default=1800,
+    type=int,
+    show_default=True,
+    help="Wall-clock timeout in seconds for the PLSDB minimap2 search (default 1800 = 30 min).",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -1064,6 +1082,8 @@ def run(
     min_confidence: float | None,
     genomad_db: str | None,
     skip_genomad: bool,
+    skip_plasmid_db: bool,
+    plasmid_db_timeout: int,
     lenient: bool,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
@@ -1222,6 +1242,8 @@ def run(
         vfdb=vfdb,
         mge_db=mge_db,
         plasmid_db_dir=plasmid_db_dir,
+        skip_plasmid_db=skip_plasmid_db,
+        plasmid_db_timeout=plasmid_db_timeout,
         taxonomy_engine=taxonomy_engine,
         kaiju_db=kaiju_db,
         kaiju_nodes=kaiju_nodes,

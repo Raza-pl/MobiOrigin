@@ -165,6 +165,7 @@ def run_plasmid_db_search(
     threads: int = 8,
     min_ani: float = PLAS_MIN_ANI,
     min_cov: float = PLAS_MIN_COV,
+    timeout_sec: int = 1800,
 ) -> list[PlasmidDBHit]:
     """Search plasmid contigs against the combined plasmid nucleotide database.
 
@@ -226,11 +227,23 @@ def run_plasmid_db_search(
         "Running minimap2 plasmid-DB search (split-prefix for large ref): %s", " ".join(cmd)
     )
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            logger.error("minimap2 failed (exit %d): %s", result.returncode, result.stderr[:800])
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            logger.warning(
+                "minimap2 plasmid-DB search timed out after %ds — skipping. "
+                "Use --skip-plasmid-db to avoid this wait, or increase timeout with "
+                "--plasmid-db-timeout.",
+                timeout_sec,
+            )
             return []
-        paf_path.write_text(result.stdout)
+        if proc.returncode != 0:
+            logger.error("minimap2 failed (exit %d): %s", proc.returncode, stderr[:800])
+            return []
+        paf_path.write_text(stdout)
     except Exception as exc:
         logger.warning("minimap2 plasmid-DB search error: %s", exc)
         return []
@@ -316,6 +329,7 @@ def annotate_plasmid_db(
     plasmid_db_dir: Path | str,
     work_dir: Path | str,
     threads: int = 8,
+    timeout_sec: int = 1800,
 ) -> dict[str, PlasmidDBHit]:
     """Run plasmid-DB search and return results keyed by contig_id.
 
@@ -334,5 +348,6 @@ def annotate_plasmid_db(
         plasmid_db_dir=plasmid_db_dir,
         work_dir=work_dir,
         threads=threads,
+        timeout_sec=timeout_sec,
     )
     return {h.contig_id: h for h in hits}

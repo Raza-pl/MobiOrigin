@@ -176,6 +176,8 @@ def run_pipeline(
     vfdb: Path | str | None = None,
     mge_db: Path | str | None = None,
     plasmid_db_dir: Path | str | None = None,
+    skip_plasmid_db: bool = False,
+    plasmid_db_timeout: int = 1800,
     taxonomy_engine: str = "auto",
     kaiju_db: Path | str | None = None,
     kaiju_nodes: Path | str | None = None,
@@ -484,7 +486,9 @@ def run_pipeline(
     # ------------------------------------------------------------------
     plasmid_db_hits: dict[str, PlasmidDBHit] = {}
     _pdb_cache = work_dir / "plasmid_db" / "plasmid_db_hits.paf"
-    if plasmid_db_dir is not None and plasmid_records:
+    if skip_plasmid_db:
+        logger.info("Plasmid-DB search skipped (skip_plasmid_db=True)")
+    elif plasmid_db_dir is not None and plasmid_records:
         plasmid_db_path = Path(plasmid_db_dir)
         if plasmid_db_path.is_dir():
             if not _cached(_pdb_cache):
@@ -497,6 +501,7 @@ def run_pipeline(
                     plasmid_db_dir=plasmid_db_path,
                     work_dir=work_dir / "plasmid_db",
                     threads=threads,
+                    timeout_sec=plasmid_db_timeout,
                 )
                 logger.info(
                     "Plasmid-DB: %d / %d contigs matched",
