@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,7 +61,9 @@ class MobilityResult:
 # ---------------------------------------------------------------------------
 
 
-def _mob_typer_one(cid: str, seq: str, contig_tmp_dir: Path) -> tuple[str, list[str]]:
+def _mob_typer_one(
+    cid: str, seq: str, contig_tmp_dir: Path, timeout_sec: int = 120
+) -> tuple[str, list[str]]:
     """Run mob_typer on a single contig.  Returns (contig_id, result_lines).
 
     Caches result on disk — if the output file already exists and has content,
@@ -68,6 +71,7 @@ def _mob_typer_one(cid: str, seq: str, contig_tmp_dir: Path) -> tuple[str, list[
     This makes interrupted runs restartable with zero re-work.
 
     Uses 1 thread per call — parallelism comes from the caller's thread pool.
+    Times out after timeout_sec seconds (default 120) to prevent indefinite hangs.
     """
     contig_fasta = contig_tmp_dir / f"{cid}.fasta"
     contig_out = contig_tmp_dir / f"{cid}_results.txt"
@@ -89,7 +93,11 @@ def _mob_typer_one(cid: str, seq: str, contig_tmp_dir: Path) -> tuple[str, list[
         "--num_threads",
         "1",  # 1 thread per call; pool provides parallelism
     ]
-    subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        logger.warning("mob_typer timed out after %ds on contig %s — skipping", timeout_sec, cid)
+        return cid, []
 
     if not contig_out.exists():
         return cid, []
@@ -102,6 +110,8 @@ def run_mob_typer(
     plasmid_fasta: Path | str,
     out_dir: Path | str,
     threads: int = 4,
+    per_contig_timeout: int = 120,
+    max_wall_seconds: int = 3600,
 ) -> Path:
     """Run MOB-suite mob_typer on classified plasmid contigs.
 
@@ -115,12 +125,18 @@ def run_mob_typer(
     - **Caching**: per-contig result files are kept on disk. If the pipeline is
       interrupted and restarted, already-computed contigs are skipped instantly.
       Restarting after an interruption takes seconds for cached contigs.
+    - **Per-contig timeout**: mob_typer is killed after per_contig_timeout seconds
+      (default 120) if it hangs on a single contig.
+    - **Wall-clock limit**: the entire mob_typer run is aborted after max_wall_seconds
+      (default 3600 = 1 hour); already-computed contigs are written out.
     - **Progress logging**: every 200 contigs (or completion)
 
     Args:
-        plasmid_fasta: FASTA of predicted plasmid sequences.
-        out_dir:       Directory for mob_typer output files.
-        threads:       Number of parallel mob_typer worker processes.
+        plasmid_fasta:       FASTA of predicted plasmid sequences.
+        out_dir:             Directory for mob_typer output files.
+        threads:             Number of parallel mob_typer worker processes.
+        per_contig_timeout:  Seconds before a single mob_typer call is killed (default 120).
+        max_wall_seconds:    Total wall-clock limit for the whole run (default 3600).
 
     Returns:
         Path to combined mob_typer results TSV (mobtyper_results.txt).
@@ -161,12 +177,28 @@ def run_mob_typer(
     results: dict[str, list[str]] = {}
     header_lines: list[str] = []
     done = 0
+    wall_start = time.monotonic()
+    timed_out_wall = False
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = {
-            pool.submit(_mob_typer_one, r.id, str(r.seq), contig_tmp_dir): r.id for r in records
+            pool.submit(_mob_typer_one, r.id, str(r.seq), contig_tmp_dir, per_contig_timeout): r.id
+            for r in records
         }
         for future in as_completed(futures):
+            if time.monotonic() - wall_start > max_wall_seconds:
+                logger.warning(
+                    "mob_typer wall-clock limit reached (%ds) after %d / %d contigs "
+                    "— writing partial results and continuing pipeline.",
+                    max_wall_seconds,
+                    done,
+                    len(records),
+                )
+                timed_out_wall = True
+                # Cancel pending futures (best-effort — running ones finish naturally)
+                for f in futures:
+                    f.cancel()
+                break
             cid, lines = future.result()
             results[cid] = lines
             done += 1
@@ -174,6 +206,14 @@ def run_mob_typer(
                 header_lines = [lines[0]]
             if done % 200 == 0 or done == len(records):
                 logger.info("mob_typer progress: %d / %d done", done, len(records))
+
+    if timed_out_wall:
+        logger.warning(
+            "mob_typer: only %d / %d contigs typed (wall limit hit) — "
+            "untyped contigs will be treated as non-mobilizable.",
+            done,
+            len(records),
+        )
 
     # Write combined TSV in original contig order
     n_success = 0
