@@ -428,8 +428,8 @@ def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     with open(out / "all_predictions.tsv") as fh:
         header = fh.readline().strip().split("\t")
-    # First 8 columns are fixed positional — identity + raw scores
-    assert header[:8] == [
+    # First 7 columns are fixed positional — identity + raw scores
+    assert header[:7] == [
         "contig_id",
         "length",
         "label",
@@ -437,7 +437,6 @@ def test_cli_run_predictions_tsv_columns(tmp_path: Path) -> None:
         "plasmid_score",
         "chromosome_score",
         "phage_score",
-        "archaea_score",
     ]
     # Remaining columns may shift as new features are added — just verify presence
     for col in (
@@ -752,15 +751,15 @@ def _write_test_files(tmp_path: Path) -> tuple[Path, Path]:
 
     preds = tmp_path / "predictions.tsv"
     preds.write_text(
-        "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\tarchaea_score\t"
+        "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\t"
         "taxonomy\ttaxonomy_rank\ttaxonomy_lineage\t"
         "num_args\tdrug_classes\targ_sources\t"
         "mobility_class\treplicon_type\trelaxase_type\tmpf_type\t"
         "risk_score\tmobility_score\targ_score\treplicon_score\t"
         "context_score\thost_score\trisk_evidence\teskape_host\teskape_genus\n"
-        "p1\t5000\tplasmid\t0.97\t0.97\t0.01\t0.01\t0.01\t\t\t\t1\tcar\tCARD\tconjugative\tIncP-1alpha\tMOBP\tMPF_T\t5\t3\t2\t0\t0\t0\tConjugative (+3)\tFalse\t\n"
-        "p2\t4000\tplasmid\t0.94\t0.94\t0.02\t0.02\t0.02\t\t\t\t0\t\t\tmobolizable\tColE1\tMOBQ\tMPF_F\t2\t1\t0\t1\t0\t0\tMobilizable (+1)\tFalse\t\n"
-        "c1\t3000\tchromosome\t0.91\t0.05\t0.91\t0.02\t0.02\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n"
+        "p1\t5000\tplasmid\t0.97\t0.97\t0.01\t0.01\t\t\t\t1\tcar\tCARD\tconjugative\tIncP-1alpha\tMOBP\tMPF_T\t5\t3\t2\t0\t0\t0\tConjugative (+3)\tFalse\t\n"
+        "p2\t4000\tplasmid\t0.94\t0.94\t0.02\t0.02\t\t\t\t0\t\t\tmobolizable\tColE1\tMOBQ\tMPF_F\t2\t1\t0\t1\t0\t0\tMobilizable (+1)\tFalse\t\n"
+        "c1\t3000\tchromosome\t0.91\t0.05\t0.91\t0.02\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n"
     )
     return ann, preds
 
@@ -851,13 +850,13 @@ def test_cli_report_empty_annotations(tmp_path: Path) -> None:
     ann.write_text("[]")
     preds = tmp_path / "predictions.tsv"
     preds.write_text(
-        "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\tarchaea_score\t"
+        "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\t"
         "taxonomy\ttaxonomy_rank\ttaxonomy_lineage\t"
         "num_args\tdrug_classes\targ_sources\t"
         "mobility_class\treplicon_type\trelaxase_type\tmpf_type\t"
         "risk_score\tmobility_score\targ_score\treplicon_score\t"
         "context_score\thost_score\trisk_evidence\teskape_host\teskape_genus\n"
-        "c1\t3000\tchromosome\t0.95\t0.02\t0.95\t0.02\t0.01\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n"
+        "c1\t3000\tchromosome\t0.95\t0.02\t0.95\t0.02\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n"
     )
     out_html = tmp_path / "report.html"
 

@@ -181,7 +181,6 @@ def run_pipeline(
     kaiju_nodes: Path | str | None = None,
     kaiju_names: Path | str | None = None,
     genomad_db_path: Path | str | None = None,
-
     lenient: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
@@ -342,11 +341,16 @@ def run_pipeline(
     )
     _amrprot_db = amrprot_db or (_amrprot_auto if _amrprot_auto.exists() else None)
 
-    dbs_label = (
-        ("CARD" if card_db else "")
-        + (" + SARG" if sarg_db else "")
-        + (" + AMRProt" if _amrprot_db else "")
-    ).lstrip(" + ") or "none"
+    _dbs = [
+        x
+        for x in [
+            "CARD" if card_db else "",
+            "SARG" if sarg_db else "",
+            "AMRProt" if _amrprot_db else "",
+        ]
+        if x
+    ]
+    dbs_label = " + ".join(_dbs) or "none"
     logger.info("Annotating ARGs on ALL %d contigs (%s) …", len(records), dbs_label)
 
     if card_db is not None or sarg_db or _amrprot_db:
@@ -1106,9 +1110,7 @@ def run_pipeline(
 
                 # Always update Prediction with post-XGBoost scores and evidence,
                 # even when the label doesn't change (so TSV reflects final scores).
-                _evidence_type = (
-                    "plsdb_nt_override" if cid in plasmid_db_hits else "xgb_blend"
-                )
+                _evidence_type = "plsdb_nt_override" if cid in plasmid_db_hits else "xgb_blend"
                 pred_by_id[cid] = Prediction(
                     sequence_id=cid,
                     label=new_label,
