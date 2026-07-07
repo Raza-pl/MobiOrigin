@@ -281,7 +281,6 @@ def test_classify_tsv_has_correct_columns(tmp_path: Path) -> None:
         "plasmid_score",
         "chromosome_score",
         "phage_score",
-        "archaea_score",
     ]
 
 
@@ -394,7 +393,7 @@ def test_report_cmd_produces_html(tmp_path: Path) -> None:
     # Write minimal predictions.tsv (38-column format: universal ARG/VF/MGE + plasmid-specific + topology/confidence)
     preds = tmp_path / "predictions.tsv"
     header = (
-        "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\tarchaea_score\t"
+        "contig_id\tlength\tlabel\tconfidence\tplasmid_score\tchromosome_score\tphage_score\t"
         "taxonomy\ttaxonomy_rank\ttaxonomy_lineage\t"
         "num_args\targ_genes\tdrug_classes\targ_sources\t"
         "num_vf\tvf_genes\tnum_mge\tmge_genes\tmge_families\t"
@@ -407,12 +406,12 @@ def test_report_cmd_produces_html(tmp_path: Path) -> None:
     )
     preds.write_text(
         header
-        + "p1\t5000\tplasmid\t0.95\t0.95\t0.02\t0.02\t0.01\t\t\t\t1\tNDM-6\tcarbapenem antibiotic\tCARD\t"
+        + "p1\t5000\tplasmid\t0.95\t0.95\t0.02\t0.02\t\t\t\t1\tNDM-6\tcarbapenem antibiotic\tCARD\t"
         "0\t\t0\t\t\tconjugative\tIncP-1alpha\tMOBP\tMPF_T\t"
         "7\t3\t2\t2\t0\t0\tConjugative (+3)\tFalse\t\t"
         "linear\tFalse\t"
         "PLSDB_NZ_CP073379.1\tPLSDB\t98.5\t95.2\t"
-        "\t\t\n" + "c1\t3000\tchromosome\t0.90\t0.05\t0.90\t0.03\t0.02\t\t\t\t0\t\t\t\t"
+        "\t\t\n" + "c1\t3000\tchromosome\t0.90\t0.05\t0.90\t0.03\t\t\t\t0\t\t\t\t"
         "0\t\t0\t\t\t\t\t\t\t\t\t\t\t\t\t\tFalse\t\t"
         "linear\tFalse\t\t\t\t\t\t\t\n"
     )
