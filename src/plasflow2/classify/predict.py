@@ -358,7 +358,7 @@ def predict(
     use_pyrodigal: bool = True,
     annotation_tsv: Path | str | None = None,
     marker_alpha_base: float = 0.3,
-    pre_computed_annotations: "dict[str, dict[str, float]] | None" = None,
+    pre_computed_annotations: dict[str, dict[str, float]] | None = None,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
