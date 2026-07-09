@@ -78,7 +78,10 @@ def load_model(path: Path | str, device: torch.device | None = None) -> PlasFlow
     Returns:
         PlasFlowMLP in eval mode.
     """
-    state = torch.load(str(path), map_location="cpu")
+    # weights_only=False: model .pt files are our own trusted weights (not
+    # user-supplied), so pickle-based loading is safe here. Explicit False
+    # suppresses the FutureWarning in PyTorch >= 2.4.
+    state = torch.load(str(path), map_location="cpu", weights_only=False)
     # Infer input_dim from the saved first-layer weight rather than hardcoding
     # INPUT_DIM — this survives feature-dimension changes without manual updates.
     input_dim = state["net.0.weight"].shape[1]

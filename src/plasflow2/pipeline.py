@@ -543,19 +543,41 @@ def run_pipeline(
                 _use_diamond_mob = False
 
         if not _use_diamond_mob:
-            logger.info(
-                "Mobility annotation: mob_typer on %d plasmid contigs …", len(plasmid_records)
-            )
+            # Check mob_init has been run before calling mob_typer.
+            # mob_suite stores its typing databases inside the package data dir.
+            # If they're missing, mob_typer will hang trying to download them.
+            _mob_init_ok = False
             try:
-                mob_tsv = run_mob_typer(
-                    plasmid_fasta,
-                    work_dir / "mob_typer",
-                    threads=threads,
+                import mob_suite as _mob_suite_pkg
+
+                _mob_data = Path(_mob_suite_pkg.__file__).parent / "data"
+                _mob_init_ok = any(
+                    (_mob_data / f).exists()
+                    for f in ("mob.proteins.faa", "rep.dna.fas", "mob.proteins.faa.gz")
                 )
-                mobility_results = parse_mob_results(mob_tsv)
-                mobility_by_contig = index_by_contig(mobility_results)
-            except (FileNotFoundError, RuntimeError) as exc:
-                logger.warning("mob_typer unavailable or failed: %s — skipping mobility.", exc)
+            except Exception:
+                pass
+
+            if not _mob_init_ok:
+                logger.warning(
+                    "mob_typer databases not found (mob_init not run) — skipping mobility. "
+                    "Run: mob_init  to download mob-suite databases, then re-run."
+                )
+            else:
+                logger.info(
+                    "Mobility annotation: mob_typer on %d plasmid contigs …",
+                    len(plasmid_records),
+                )
+                try:
+                    mob_tsv = run_mob_typer(
+                        plasmid_fasta,
+                        work_dir / "mob_typer",
+                        threads=threads,
+                    )
+                    mobility_results = parse_mob_results(mob_tsv)
+                    mobility_by_contig = index_by_contig(mobility_results)
+                except (FileNotFoundError, RuntimeError) as exc:
+                    logger.warning("mob_typer unavailable or failed: %s — skipping mobility.", exc)
     else:
         logger.info("Mobility annotation skipped (skip_mobility=True)")
 

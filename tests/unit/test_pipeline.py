@@ -97,8 +97,15 @@ def _mock_pipeline(
         patch("plasflow2.pipeline.write_fasta"),
         patch("plasflow2.pipeline.annotate_contigs_with_orfs", return_value=(arg_hits or [], [])),
         patch("plasflow2.pipeline.annotate_plasmid_db", return_value=plasmid_db_hits or {}),
-        patch("plasflow2.pipeline.run_mob_typer", return_value=tmp_path / "mob.txt"),
-        patch("plasflow2.pipeline.parse_mob_results", return_value=mob_results or []),
+        # Mock DIAMOND fast path (preferred over mob_typer) — return mob_results directly
+        patch(
+            "plasflow2.pipeline.find_mob_diamond_dbs",
+            return_value=("mock.dmnd", "mock.dmnd", None, None),
+        ),
+        patch(
+            "plasflow2.pipeline.annotate_mobility_diamond",
+            return_value=mob_results or [],
+        ),
     ):
         return run_pipeline(
             fasta_path=fasta,
