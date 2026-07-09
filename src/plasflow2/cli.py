@@ -1473,6 +1473,66 @@ def classify(
         click.echo(f"No sequences pass min_length={min_length} — nothing to classify.", err=True)
         return
 
+    # Auto-run mob DIAMOND to give XGBoost real biological evidence.
+    # Only runs when: marker model is active, no manual --annotation-tsv provided,
+    # and mob_suite DIAMOND databases are present.
+    # Adds relaxase/MPF/replicon hits — the highest-impact XGBoost features —
+    # so classify produces biologically-informed counts consistent with 'run'.
+    pre_computed_annotations: dict[str, dict[str, float]] | None = None
+    if resolved_marker and not annotation_tsv:
+        from plasflow2.annotate.mobility_diamond import (
+            annotate_mobility_diamond,
+            find_mob_diamond_dbs,
+        )
+
+        _mob_dir = _DB_ROOT / "mob_suite"
+        _mob_dmnd, _mpf_dmnd, _rep_prot, _rep_fasta = find_mob_diamond_dbs(_mob_dir)
+        if _mob_dmnd is not None or _mpf_dmnd is not None:
+            import tempfile
+
+            click.echo("[info] Running mob DIAMOND to provide XGBoost biological evidence …")
+            with tempfile.TemporaryDirectory() as _mob_tmp:
+                try:
+                    from pathlib import Path as _Path
+
+                    _mob_results = annotate_mobility_diamond(
+                        plasmid_fasta=input_fasta,
+                        mob_suite_dir=_mob_dir,
+                        work_dir=_Path(_mob_tmp),
+                        threads=threads,
+                    )
+                    # Convert MobilityResult list → annotation dict for predict()
+                    pre_computed_annotations = {}
+                    for _mr in _mob_results:
+                        pre_computed_annotations[_mr.contig_id] = {
+                            "is_conjugative": 1.0 if _mr.mobility_class == "conjugative" else 0.0,
+                            "is_mobilizable": (
+                                1.0 if _mr.mobility_class in ("conjugative", "mobilizable") else 0.0
+                            ),
+                            "has_replicon": (
+                                0.0 if _mr.replicon_type in ("", "-", "unknown", "none") else 1.0
+                            ),
+                            "has_ice": 0.0,
+                            "has_rep_protein": 0.0,
+                            "n_arg_per_kb": 0.0,
+                            "n_mge_per_kb": 0.0,
+                            "n_ice_per_kb": 0.0,
+                            "n_rep_per_kb": 0.0,
+                        }
+                    n_mob = sum(
+                        1 for v in pre_computed_annotations.values() if v["is_mobilizable"] > 0
+                    )
+                    click.echo(
+                        f"[info] Mob DIAMOND: {n_mob} mobile contigs detected "
+                        f"({len(pre_computed_annotations)} total with hits)"
+                    )
+                except Exception as _exc:
+                    click.echo(
+                        f"[warn] Mob DIAMOND failed ({_exc}) — XGBoost will run without "
+                        "biological features.",
+                        err=True,
+                    )
+
     predictions = predict(
         [str(r.seq) for r in records],
         [r.id for r in records],
@@ -1484,6 +1544,7 @@ def classify(
         annotation_tsv=annotation_tsv,
         use_pyrodigal=bool(resolved_marker),
         marker_alpha_base=0.3,
+        pre_computed_annotations=pre_computed_annotations,
     )
 
     out_path = Path(output_tsv)

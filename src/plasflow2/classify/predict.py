@@ -358,6 +358,7 @@ def predict(
     use_pyrodigal: bool = True,
     annotation_tsv: Path | str | None = None,
     marker_alpha_base: float = 0.3,
+    pre_computed_annotations: "dict[str, dict[str, float]] | None" = None,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
@@ -483,10 +484,14 @@ def predict(
 
         marker_clf = MarkerClassifier.load(marker_model_path)
 
-        # Load pre-computed DIAMOND annotations (if provided)
+        # Load pre-computed DIAMOND annotations (if provided).
+        # pre_computed_annotations (in-memory dict) is merged first;
+        # annotation_tsv (file) takes precedence if both are supplied.
         annotations: dict[str, dict[str, float]] = {}
+        if pre_computed_annotations:
+            annotations.update(pre_computed_annotations)
         if annotation_tsv:
-            annotations = _load_annotation_tsv(annotation_tsv)
+            annotations.update(_load_annotation_tsv(annotation_tsv))
 
         # Reuse ORF data from Stage 1 (pyrodigal already ran above for gene features).
         orf_data: dict[str, dict] = orf_data_global
