@@ -359,6 +359,7 @@ def predict(
     annotation_tsv: Path | str | None = None,
     marker_alpha_base: float = 0.3,
     pre_computed_annotations: dict[str, dict[str, float]] | None = None,
+    precomputed_orf_data: dict[str, dict] | None = None,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
@@ -388,6 +389,10 @@ def predict(
         marker_alpha_base: Minimum attention weight for XGBoost even when no
             biological markers are detected (default 0.3).  Set to 0.0 to use
             XGBoost only when biological evidence exists.
+        precomputed_orf_data: Pre-computed pyrodigal orf_data dict
+            (seq_id → {n_orfs, covered_bp, genes}).  When provided, the internal
+            pyrodigal call is skipped entirely — useful when the caller has
+            already run pyrodigal for another purpose (e.g. mob DIAMOND).
 
     Returns:
         List of Prediction objects, one per input sequence.
@@ -431,8 +436,14 @@ def predict(
     # ── ORF prediction (runs when pyrodigal available AND needed) ─────────────
     # Gene objects are stored so Stage 2 (marker XGBoost) can reuse them
     # without re-running pyrodigal.
+    # When the caller passes precomputed_orf_data (e.g. already ran pyrodigal
+    # for mob DIAMOND), we skip the internal call entirely — saving ~15 min on
+    # 200k contigs.
     orf_data_global: dict[str, dict] = {}
-    if use_pyrodigal and (_model_wants_gene_features or marker_model_path):
+    if precomputed_orf_data:
+        orf_data_global = precomputed_orf_data
+        logger.info("Reusing pre-computed pyrodigal ORF data (%d sequences)", len(orf_data_global))
+    elif use_pyrodigal and (_model_wants_gene_features or marker_model_path):
         logger.info("Running pyrodigal for gene/ORF features …")
         orf_data_global = _run_pyrodigal(sequences, sequence_ids)
         if orf_data_global:

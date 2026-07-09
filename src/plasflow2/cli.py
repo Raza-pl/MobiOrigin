@@ -1473,12 +1473,16 @@ def classify(
         click.echo(f"No sequences pass min_length={min_length} — nothing to classify.", err=True)
         return
 
-    # Auto-run mob DIAMOND to give XGBoost real biological evidence.
-    # Only runs when: marker model is active, no manual --annotation-tsv provided,
-    # and mob_suite DIAMOND databases are present.
-    # Adds relaxase/MPF/replicon hits — the highest-impact XGBoost features —
-    # so classify produces biologically-informed counts consistent with 'run'.
+    # ── Shared pyrodigal + mob DIAMOND ───────────────────────────────────────
+    # When mob DIAMOND databases are available, we run pyrodigal ONCE here and
+    # share the results with both mob DIAMOND and predict():
+    #   • mob DIAMOND: needs proteins written to a FAA file for DIAMOND blastp
+    #   • predict():   needs in-memory gene objects for coding density features
+    # Sharing saves ~14 min on 200k contigs (eliminates the second pyrodigal call
+    # that predict() would otherwise run internally).
     pre_computed_annotations: dict[str, dict[str, float]] | None = None
+    _shared_orf_data: dict[str, dict] | None = None  # passed to predict() below
+
     if resolved_marker and not annotation_tsv:
         from plasflow2.annotate.mobility_diamond import (
             annotate_mobility_diamond,
@@ -1490,15 +1494,45 @@ def classify(
         if _mob_dmnd is not None or _mpf_dmnd is not None:
             import tempfile
 
+            from plasflow2.classify.predict import _run_pyrodigal
+
+            click.echo("[info] Running pyrodigal (shared: mob DIAMOND + XGBoost features) …")
+            _seqs = [str(r.seq) for r in records]
+            _ids = [r.id for r in records]
+            try:
+                _shared_orf_data = _run_pyrodigal(_seqs, _ids)
+                click.echo(f"[info] ORFs predicted for {len(_shared_orf_data)} sequences")
+            except Exception as _exc:
+                click.echo(
+                    f"[warn] Shared pyrodigal failed ({_exc}) — each stage will run its own",
+                    err=True,
+                )
+                _shared_orf_data = None
+
             click.echo("[info] Running mob DIAMOND to provide XGBoost biological evidence …")
             with tempfile.TemporaryDirectory() as _mob_tmp:
                 try:
                     from pathlib import Path as _Path
 
+                    # Write proteins from the shared orf_data to FAA for DIAMOND
+                    _mob_tmp_path = _Path(_mob_tmp)
+                    _proteins_faa: Path | None = None
+                    if _shared_orf_data:
+                        _proteins_faa = _mob_tmp_path / "mob_proteins.faa"
+                        with open(_proteins_faa, "w") as _fh:
+                            for _sid, _d in _shared_orf_data.items():
+                                for _i, _gene in enumerate(_d.get("genes", []), 1):
+                                    _aa = _gene.translate()
+                                    if isinstance(_aa, bytes):
+                                        _aa = _aa.decode()
+                                    if _aa:
+                                        _fh.write(f">{_sid}_{_i}\n{_aa}\n")
+
                     _mob_results = annotate_mobility_diamond(
                         plasmid_fasta=input_fasta,
                         mob_suite_dir=_mob_dir,
-                        work_dir=_Path(_mob_tmp),
+                        work_dir=_mob_tmp_path,
+                        proteins_faa=_proteins_faa,  # reuse shared proteins
                         threads=threads,
                     )
                     # Convert MobilityResult list → annotation dict for predict()
@@ -1543,8 +1577,13 @@ def classify(
         marker_model_path=resolved_marker,
         annotation_tsv=annotation_tsv,
         use_pyrodigal=bool(resolved_marker),
-        marker_alpha_base=0.3,
+        # alpha_base=0.0: XGBoost only affects sequences WITH biological evidence.
+        # Zero-evidence sequences pass through with pure MLP score unchanged,
+        # preventing XGBoost from penalising non-mobilizable plasmids that lack
+        # a relaxase/replicon hit.
+        marker_alpha_base=0.0,
         pre_computed_annotations=pre_computed_annotations,
+        precomputed_orf_data=_shared_orf_data,  # skip second pyrodigal call
     )
 
     out_path = Path(output_tsv)
