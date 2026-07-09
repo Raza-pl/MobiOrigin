@@ -294,7 +294,8 @@ def extract_marker_features(
         mc = getattr(mobility, "mobility_class", "non-mobilizable")
         is_conj = 1.0 if mc == "conjugative" else 0.0
         is_mob = 1.0 if mc == "mobilizable" else 0.0
-        has_rep = 1.0 if getattr(mobility, "replicon_type", None) else 0.0
+        _rep_type = getattr(mobility, "replicon_type", None)
+        has_rep = 1.0 if _rep_type and _rep_type not in ("unknown", "-", "") else 0.0
 
     has_ice = 1.0 if ice_hits else 0.0
 
