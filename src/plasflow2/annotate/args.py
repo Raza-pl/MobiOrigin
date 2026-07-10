@@ -255,7 +255,8 @@ def call_orfs(
                 if len(aa) * 3 < min_gene_length:
                     continue
                 orf_id = f"{contig_id}_{i}"
-                fh.write(f">{orf_id}\n{aa}\n")
+                # Embed coordinates in description so they survive cache round-trips.
+                fh.write(f">{orf_id} s={gene.begin};e={gene.end};d={gene.strand}\n{aa}\n")
                 orfs.append(
                     ORF(
                         contig_id=contig_id,
@@ -757,15 +758,23 @@ def annotate_contigs_with_orfs(
     # Incremental: skip ORF prediction if proteins.faa already exists
     if proteins_path.exists() and proteins_path.stat().st_size > 0:
         logger.info("Reusing cached ORFs from %s", proteins_path)
-        from Bio import SeqIO  # type: ignore[import]
-        from Bio.SeqRecord import SeqRecord as _SR  # noqa: F401
+        import re as _re
 
-        records = list(SeqIO.parse(str(fasta_path), "fasta"))  # noqa: F841
+        from Bio import SeqIO  # type: ignore[import]
+
+        def _coord(desc: str, key: str, default: int) -> int:
+            """Parse s=N, e=N, or d=N from description; fall back to default."""
+            m = _re.search(rf"\b{key}=(-?\d+)", desc)
+            return int(m.group(1)) if m else default
+
         orfs = [
             ORF(
                 contig_id="_".join(r.id.rsplit("_", 1)[:-1]) if "_" in r.id else r.id,
                 orf_id=r.id,
                 sequence=str(r.seq),
+                start=_coord(r.description, "s", 0),
+                end=_coord(r.description, "e", 0),
+                strand=_coord(r.description, "d", 1),
             )
             for r in SeqIO.parse(str(proteins_path), "fasta")
         ]
