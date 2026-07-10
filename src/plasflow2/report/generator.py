@@ -36,78 +36,103 @@ MAX_TABLE_ROWS = 2_000
 
 _CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,Arial,sans-serif;background:#f4f6f9;color:#333;font-size:14px}
-.nav{display:flex;align-items:stretch;background:#fff;border-bottom:2px solid #e0e8f5;
-     box-shadow:0 2px 6px rgba(0,0,0,.07);padding:0 22px;flex-wrap:wrap}
-.nav a{display:inline-flex;align-items:center;padding:11px 16px;text-decoration:none;
-       font-weight:600;font-size:.86rem;color:#666;border-bottom:3px solid transparent;
-       white-space:nowrap;transition:color .15s,border-color .15s}
-.nav a:hover{color:#2c6fad;border-bottom-color:#2c6fad}
-.nav a.active{color:var(--nc);border-bottom-color:var(--nc)}
-.nav .pill{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:.76rem;
-           color:#888;padding:0 4px;flex-wrap:wrap}
-.nav .pill span{background:#f0f4f8;border-radius:12px;padding:2px 8px;white-space:nowrap}
-.wrap{max-width:1380px;margin:0 auto;padding:22px 24px}
-h1{color:#2c6fad;font-size:1.4rem;margin-bottom:4px}
-h2{color:#444;margin-top:28px;border-bottom:2px solid #e0e8f5;padding-bottom:5px;font-size:1.05rem}
-.meta{color:#777;font-size:.86rem;margin:5px 0 16px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:14px 0}
-.card{background:#fff;padding:12px 14px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-.card h3{font-size:.7rem;text-transform:uppercase;color:#999;letter-spacing:.4px;margin-bottom:4px}
-.card p{font-size:1.55rem;font-weight:700}
-.chart-grid{display:grid;gap:12px;margin:16px 0}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#f0f2f5;
+     color:#1e2633;font-size:14px;line-height:1.5}
+/* ── Nav ── */
+.nav{display:flex;align-items:stretch;background:#1e2633;
+     box-shadow:0 2px 8px rgba(0,0,0,.25);padding:0 24px;flex-wrap:wrap}
+.nav a{display:inline-flex;align-items:center;padding:13px 18px;text-decoration:none;
+       font-weight:600;font-size:.83rem;color:#94a3b8;border-bottom:3px solid transparent;
+       white-space:nowrap;letter-spacing:.2px;transition:color .15s,border-color .15s}
+.nav a:hover{color:#e2e8f0;border-bottom-color:#475569}
+.nav a.active{color:#fff;border-bottom-color:var(--nc)}
+.nav .brand{display:inline-flex;align-items:center;padding:0 20px 0 0;
+            font-size:.9rem;font-weight:700;color:#fff;letter-spacing:.5px;border-bottom:none}
+.nav .pill{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:.72rem;
+           color:#64748b;padding:0 4px;flex-wrap:wrap}
+.nav .pill span{background:#273246;border-radius:10px;padding:2px 9px;
+                color:#94a3b8;white-space:nowrap}
+/* ── Layout ── */
+.wrap{max-width:1440px;margin:0 auto;padding:24px 28px}
+h1{color:#1e2633;font-size:1.5rem;font-weight:700;margin-bottom:2px;letter-spacing:-.3px}
+h2{color:#334155;margin-top:32px;padding-bottom:6px;font-size:1rem;font-weight:600;
+   border-bottom:2px solid #e2e8f0;letter-spacing:.1px}
+.meta{color:#64748b;font-size:.82rem;margin:4px 0 18px}
+/* ── Cards ── */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+       gap:10px;margin:16px 0}
+.card{background:#fff;padding:14px 16px;border-radius:10px;
+      box-shadow:0 1px 3px rgba(0,0,0,.06),0 1px 8px rgba(0,0,0,.04)}
+.card h3{font-size:.67rem;text-transform:uppercase;color:#94a3b8;
+         letter-spacing:.6px;margin-bottom:6px;font-weight:600}
+.card p{font-size:1.65rem;font-weight:700;letter-spacing:-.5px}
+/* ── Charts ── */
+.chart-grid{display:grid;gap:14px;margin:16px 0}
 .g2{grid-template-columns:1fr 1fr}
 .g3{grid-template-columns:1fr 1fr 1fr}
 .g4{grid-template-columns:1fr 1fr 1fr 1fr}
-.cbox{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);
-      padding:4px;min-height:260px}
-/* table */
-.tbl-wrap{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);
-          padding:14px;margin-top:12px}
-.tbl-ctrl{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
-.tbl-ctrl input[type=text]{padding:5px 9px;border:1px solid #d0d8e4;border-radius:6px;
-                font-size:.84rem;width:220px;outline:none}
-.tbl-ctrl input[type=text]:focus{border-color:#2c6fad}
-.pg-info{margin-left:auto;font-size:.8rem;color:#888;white-space:nowrap}
-.pg-btn{padding:4px 11px;border:1px solid #d0d8e4;border-radius:6px;background:#fff;
-        cursor:pointer;font-size:.8rem}
-.pg-btn:hover{background:#f0f4f8}
-.pg-btn:disabled{opacity:.35;cursor:default}
-.dl-btn{padding:5px 14px;border:none;border-radius:6px;cursor:pointer;font-size:.82rem;
-        font-weight:600;color:#fff}
-table{width:100%;border-collapse:collapse;font-size:.82rem}
-th{background:#f8fafc;text-align:left;padding:7px 8px;font-size:.72rem;
-   text-transform:uppercase;color:#777;border-bottom:2px solid #e0e8f5;
-   cursor:pointer;user-select:none;white-space:nowrap}
-th:hover{background:#eef2f7}
-th.sort-asc::after{content:" ▲"}th.sort-desc::after{content:" ▼"}
-th.no-sort{cursor:default}th.no-sort:hover{background:#f8fafc}
-td{padding:6px 8px;border-bottom:1px solid #f0f4f8;vertical-align:middle}
-tr:hover td{background:#f7fbff}
-.ellipsis{max-width:170px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+.cbox{background:#fff;border-radius:10px;
+      box-shadow:0 1px 3px rgba(0,0,0,.06),0 1px 8px rgba(0,0,0,.04);
+      padding:6px;min-height:280px}
+/* ── Table ── */
+.tbl-wrap{background:#fff;border-radius:10px;
+          box-shadow:0 1px 3px rgba(0,0,0,.06),0 1px 8px rgba(0,0,0,.04);
+          padding:16px;margin-top:14px;overflow-x:auto}
+.tbl-ctrl{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.tbl-ctrl input[type=text]{padding:6px 11px;border:1px solid #e2e8f0;border-radius:8px;
+                font-size:.83rem;width:240px;outline:none;background:#f8fafc;
+                transition:border-color .15s,background .15s}
+.tbl-ctrl input[type=text]:focus{border-color:#3b82f6;background:#fff}
+.pg-info{margin-left:auto;font-size:.78rem;color:#94a3b8;white-space:nowrap}
+.pg-btn{padding:5px 13px;border:1px solid #e2e8f0;border-radius:7px;background:#fff;
+        cursor:pointer;font-size:.78rem;color:#475569;font-weight:500}
+.pg-btn:hover{background:#f1f5f9;border-color:#cbd5e1}
+.pg-btn:disabled{opacity:.3;cursor:default}
+.dl-btn{padding:6px 15px;border:none;border-radius:7px;cursor:pointer;
+        font-size:.8rem;font-weight:600;color:#fff;letter-spacing:.1px}
+table{width:100%;border-collapse:collapse;font-size:.81rem}
+th{background:#f8fafc;text-align:left;padding:8px 9px;font-size:.68rem;
+   text-transform:uppercase;color:#64748b;letter-spacing:.5px;
+   border-bottom:2px solid #e2e8f0;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{background:#f1f5f9;color:#334155}
+th.sort-asc::after{content:" ▲";opacity:.7}th.sort-desc::after{content:" ▼";opacity:.7}
+th.no-sort{cursor:default}th.no-sort:hover{background:#f8fafc;color:#64748b}
+td{padding:7px 9px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+tr:hover td{background:#fafbff}
+.ellipsis{max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
           display:inline-block;vertical-align:middle}
-.badge{display:inline-block;padding:1px 6px;border-radius:10px;font-size:.71rem;font-weight:700}
-.bvf {background:#fef3c7;color:#92400e;border:1px solid #f59e0b}
-.bmge{background:#ede9fe;color:#5b21b6;border:1px solid #8b5cf6}
-.bcard{background:#e8f0fe;color:#1a56db}.bsarg{background:#fef3c7;color:#b45309}
-.besk{background:#fde8e8;color:#c0392b;border:1px solid #e74c3c}
-.bwho{background:#fef3c7;color:#b45309;border:1px solid #f39c12}
-.bcirc{background:#e0f2fe;color:#0369a1;border:1px solid #38bdf8}
-.blowconf{background:#fef9c3;color:#854d0e;border:1px solid #fbbf24}
-.risk-h{color:#c0392b;font-weight:700}.risk-m{color:#e67e22;font-weight:700}
-.risk-l{color:#27ae60;font-weight:700}
-.filter-bar{display:flex;gap:7px;margin:8px 0;flex-wrap:wrap;align-items:center}
-.fbtn{padding:4px 12px;border:none;border-radius:14px;cursor:pointer;
-      font-size:.8rem;font-weight:600;opacity:.85;white-space:nowrap}
-.fbtn:hover,.fbtn.active{opacity:1}
-.fbtn.active{outline:2px solid #333}
-.note{color:#888;font-size:.78rem;margin:3px 0 8px;font-style:italic}
-.narrative{background:linear-gradient(135deg,#eef6ff,#f0fff4);border-left:4px solid #2c6fad;
-           border-radius:0 8px 8px 0;padding:14px 18px;margin:12px 0 20px;font-size:.93rem;
-           line-height:1.6;color:#2d3748}
-footer{margin-top:36px;color:#bbb;font-size:.76rem;border-top:1px solid #e5e5e5;padding-top:8px}
-input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:#2c6fad}
-.sel-count{font-size:.8rem;color:#2c6fad;font-weight:600}
+/* ── Badges ── */
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;
+       font-size:.69rem;font-weight:600;letter-spacing:.2px}
+.barg{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+.bvf {background:#fef3c7;color:#92400e;border:1px solid #fbbf24}
+.bmge{background:#ede9fe;color:#5b21b6;border:1px solid #a78bfa}
+.bice{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd}
+.bbacmet{background:#ccfbf1;color:#065f46;border:1px solid #6ee7b7}
+.bcard{background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc}
+.bsarg{background:#fef3c7;color:#b45309;border:1px solid #fbbf24}
+.besk{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+.bwho{background:#fff7ed;color:#9a3412;border:1px solid #fdba74}
+.bcirc{background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc}
+.blowconf{background:#fef9c3;color:#854d0e;border:1px solid #fde68a}
+/* ── Risk colours ── */
+.risk-h{color:#dc2626;font-weight:700}.risk-m{color:#d97706;font-weight:700}
+.risk-l{color:#16a34a;font-weight:700}.risk-z{color:#94a3b8}
+/* ── Filter bar ── */
+.filter-bar{display:flex;gap:7px;margin:10px 0;flex-wrap:wrap;align-items:center}
+.fbtn{padding:5px 14px;border:1px solid transparent;border-radius:20px;cursor:pointer;
+      font-size:.78rem;font-weight:600;transition:opacity .12s,box-shadow .12s}
+.fbtn:hover{opacity:.9;box-shadow:0 0 0 2px rgba(0,0,0,.15)}
+.fbtn.active{box-shadow:0 0 0 2px #1e2633}
+.note{color:#94a3b8;font-size:.77rem;margin:3px 0 8px;font-style:italic}
+.narrative{background:linear-gradient(135deg,#eff6ff,#f0fdf4);
+           border-left:4px solid #3b82f6;border-radius:0 10px 10px 0;
+           padding:14px 18px;margin:14px 0 22px;font-size:.92rem;
+           line-height:1.65;color:#1e2633}
+footer{margin-top:40px;color:#cbd5e1;font-size:.74rem;
+       border-top:1px solid #e2e8f0;padding-top:10px}
+input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:#3b82f6}
+.sel-count{font-size:.78rem;color:#3b82f6;font-weight:600}
 """
 
 # ---------------------------------------------------------------------------
@@ -117,10 +142,11 @@ input[type=checkbox]{width:14px;height:14px;cursor:pointer;accent-color:#2c6fad}
 _PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>'
 
 _LAYOUT_BASE = {
-    "margin": {"t": 40, "b": 30, "l": 150, "r": 15},
+    "margin": {"t": 44, "b": 36, "l": 160, "r": 20},
     "paper_bgcolor": "rgba(0,0,0,0)",
     "plot_bgcolor": "rgba(0,0,0,0)",
-    "font": {"size": 11},
+    "font": {"size": 12, "family": "Segoe UI, system-ui, -apple-system, sans-serif"},
+    "hoverlabel": {"font": {"size": 12}},
 }
 
 
@@ -216,11 +242,11 @@ function LightTable(cfg){
 # ---------------------------------------------------------------------------
 
 _NAV_PAGES = [
-    ("plasmid", "report_plasmid.html", "Plasmid", "#2c6fad"),
-    ("chromosome", "report_chromosome.html", "Chromosome", "#27ae60"),
-    ("phage", "report_phage.html", "Phage", "#e67e22"),
-    ("archaea", "report_archaea.html", "Archaea", "#8e44ad"),
-    ("unclassified", "report_unclassified.html", "Unclassified", "#95a5a6"),
+    ("plasmid", "report_plasmid.html", "Plasmid", "#3b82f6"),
+    ("chromosome", "report_chromosome.html", "Chromosome", "#16a34a"),
+    ("phage", "report_phage.html", "Phage", "#ea580c"),
+    ("archaea", "report_archaea.html", "Archaea", "#7c3aed"),
+    ("unclassified", "report_unclassified.html", "Unclassified", "#64748b"),
 ]
 
 
@@ -230,7 +256,12 @@ def _nav(active: str, class_counts: dict[str, int], color: str) -> str:
         for k, href, label, _ in _NAV_PAGES
     )
     pills = "".join(f"<span>{k.capitalize()}: <b>{v:,}</b></span>" for k, v in class_counts.items())
-    return f'<nav class="nav" style="--nc:{color}">{links}' f'<div class="pill">{pills}</div></nav>'
+    return (
+        f'<nav class="nav" style="--nc:{color}">'
+        f'<span class="brand">PlasFlow v2</span>'
+        f"{links}"
+        f'<div class="pill">{pills}</div></nav>'
+    )
 
 
 def _full_page(title: str, active: str, counts: dict, color: str, body: str, js: str = "") -> str:
@@ -274,6 +305,10 @@ class PlasmidRow:
     num_mge: int = 0
     mge_genes: str = ""  # actual IS element names e.g. "ISAba1; IS26"
     mge_families: str = ""  # IS families e.g. "IS4; Tn3"
+    num_ice: int = 0
+    ice_genes: str = ""  # ICE gene functions e.g. "T4SS; Relaxase"
+    num_bacmet: int = 0
+    bacmet_genes: str = ""  # BacMet gene names e.g. "merA; copA"
     topology: str = "linear"  # "circular" | "linear" | "too_short"
     low_confidence: bool = False  # True if confidence < 0.70
 
@@ -893,6 +928,10 @@ def _p_row(r: PlasmidRow) -> list:
         r.num_mge,
         r.mge_genes,
         r.mge_families,
+        r.num_ice,
+        r.ice_genes,
+        r.num_bacmet,
+        r.bacmet_genes,
         r.eskape_genus if r.eskape_host else "",
         r.mobility_class,
         r.replicon_type,
@@ -917,6 +956,10 @@ _PLASMID_COL_HEADERS = [
     "MGEs",
     "MGE Elements",
     "MGE Families",
+    "ICEs",
+    "ICE Genes",
+    "BacMet",
+    "BacMet Genes",
     "Pathogen",
     "Mobility",
     "Replicon",
@@ -940,6 +983,10 @@ _PLASMID_DOWNLOAD_HEADERS = [
     "num_mge",
     "mge_genes",
     "mge_families",
+    "num_ice",
+    "ice_genes",
+    "num_bacmet",
+    "bacmet_genes",
     "pathogen_host",
     "mobility_class",
     "replicon_type",
@@ -953,38 +1000,39 @@ _PLASMID_DOWNLOAD_HEADERS = [
 
 def _render_plasmid_page(data: dict) -> str:
     all_rows: list[PlasmidRow] = data["plasmid_rows"]
-    # Exclude risk score = 0 from HTML display
-    rows = [r for r in all_rows if r.risk_score > 0]
+    # Show ALL plasmids — risk filter is done in the browser via buttons
+    rows = all_rows
     counts = data["class_counts"]
     n_total = len(all_rows)
-    n_shown = len(rows)
-    n_zero = n_total - n_shown
+    n_shown = n_total
     display = rows[:MAX_TABLE_ROWS]
     truncated = n_shown > MAX_TABLE_ROWS
 
+    n_with_args = sum(1 for r in all_rows if r.num_args > 0)
+    n_high_risk = sum(1 for r in all_rows if r.risk_score >= 7)
     stat_cards = (
-        f'<div class="card" style="border-left:4px solid #2c6fad">'
-        f'<h3>Plasmids (risk≥1)</h3><p style="color:#2c6fad">{n_shown:,}</p></div>'
-        f'<div class="card" style="border-left:4px solid #95a5a6">'
-        f'<h3>Risk = 0 (hidden)</h3><p style="color:#95a5a6">{n_zero:,}</p></div>'
-        f'<div class="card" style="border-left:4px solid #c0392b">'
-        f'<h3>ARGs</h3><p style="color:#c0392b">{data["total_args"]:,}</p></div>'
-        f'<div class="card" style="border-left:4px solid #f59e0b">'
+        f'<div class="card" style="border-left:4px solid #3b82f6">'
+        f'<h3>Total Plasmids</h3><p style="color:#1d4ed8">{n_total:,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #dc2626">'
+        f'<h3>ARG Hits</h3><p style="color:#991b1b">{data["total_args"]:,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #dc2626">'
+        f'<h3>Plasmids w/ ARGs</h3><p style="color:#991b1b">{n_with_args:,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #d97706">'
         f'<h3>VF Genes</h3><p style="color:#92400e">{data["total_vf"]:,}</p></div>'
-        f'<div class="card" style="border-left:4px solid #8b5cf6">'
+        f'<div class="card" style="border-left:4px solid #7c3aed">'
         f'<h3>MGEs</h3><p style="color:#5b21b6">{data["total_mge"]:,}</p></div>'
-        f'<div class="card" style="border-left:4px solid #e74c3c">'
-        f'<h3>Pathogenic Contigs</h3><p style="color:#c0392b">{data.get("total_pathogens",0):,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #dc2626">'
+        f'<h3>High Risk (≥7)</h3><p style="color:#991b1b">{n_high_risk:,}</p></div>'
+        f'<div class="card" style="border-left:4px solid #dc2626">'
+        f'<h3>Pathogenic Contigs</h3><p style="color:#991b1b">{data.get("total_pathogens",0):,}</p></div>'
     )
 
     note = ""
     if truncated:
         note = (
             f'<p class="note">Showing top {MAX_TABLE_ROWS:,} of {n_shown:,} '
-            f"risk≥1 plasmid contigs. Full data in predictions.tsv.</p>"
+            f"plasmid contigs. Full data in all_predictions.tsv.</p>"
         )
-    if n_zero:
-        note += f'<p class="note">{n_zero:,} contigs with risk score = 0 are hidden. Full list in predictions.tsv.</p>'
 
     row_data_json = json.dumps([_p_row(r) for r in display])
     headers_json = json.dumps(_PLASMID_DOWNLOAD_HEADERS)
@@ -1043,15 +1091,16 @@ def _render_plasmid_page(data: dict) -> str:
   <div id="cesk"  class="cbox"></div>
 </div>
 
-<h2>Plasmid Predictions — risk ≥ 1 ({n_shown:,} contigs)</h2>
+<h2>All Plasmid Predictions ({n_total:,} contigs)</h2>
 <div class="filter-bar">
-  <button class="fbtn active" id="fa" onclick="setRisk('')"  style="background:#ddd;color:#333">All</button>
-  <button class="fbtn" id="fh" onclick="setRisk('h')" style="background:#c0392b;color:#fff">High ≥7</button>
-  <button class="fbtn" id="fm" onclick="setRisk('m')" style="background:#e67e22;color:#fff">Medium 4–6</button>
-  <button class="fbtn" id="fl" onclick="setRisk('l')" style="background:#27ae60;color:#fff">Low 1–3</button>
-  <span style="margin-left:8px">
-    <button class="dl-btn" style="background:#2c6fad" onclick="downloadSel()">⬇ Download Selected</button>
-    <button class="dl-btn" style="background:#555;margin-left:4px" onclick="downloadFiltered()">⬇ Download All Filtered</button>
+  <button class="fbtn active" id="fa" onclick="setRisk('')"  style="background:#475569;color:#fff">All</button>
+  <button class="fbtn" id="fh" onclick="setRisk('h')" style="background:#dc2626;color:#fff">High Risk ≥7</button>
+  <button class="fbtn" id="fm" onclick="setRisk('m')" style="background:#d97706;color:#fff">Medium 4–6</button>
+  <button class="fbtn" id="fl" onclick="setRisk('l')" style="background:#16a34a;color:#fff">Low 1–3</button>
+  <button class="fbtn" id="fz" onclick="setRisk('z')" style="background:#94a3b8;color:#fff">No Risk (0)</button>
+  <span style="margin-left:auto;display:flex;gap:6px">
+    <button class="dl-btn" style="background:#3b82f6" onclick="downloadSel()">⬇ Selected</button>
+    <button class="dl-btn" style="background:#475569" onclick="downloadFiltered()">⬇ All Filtered</button>
   </span>
   <span class="sel-count" id="sel-count"></span>
 </div>
@@ -1100,7 +1149,7 @@ document.getElementById('chk-all').addEventListener('change',function(){{
   document.getElementById('sel-count').textContent=SEL.size>0?SEL.size+' selected':'';
 }});
 
-function riskCls(v){{return v>=7?'h':v>=4?'m':'l';}}
+function riskCls(v){{return v>=7?'h':v>=4?'m':v>=1?'l':'z';}}
 function renderR(v){{var c=riskCls(v);return '<span class="risk-'+c+'">'+v+'</span>';}}
 function srcBadges(s){{if(!s)return'—';
   return s.split(',').map(function(x){{x=x.trim();
@@ -1110,31 +1159,35 @@ function eskBadge(e){{if(!e)return'—';
   return'<span class="badge '+(ek.indexOf(e)>=0?'besk':'bwho')+'">'+esc(e)+'</span>';}}
 
 var COLS=[
-  {{render:function(v){{return ellipsis(v,28);}}}},           // 0 contig_id
-  {{render:function(v){{return Number(v).toLocaleString();}}}}, // 1 length
-  {{render:function(v){{return v;}}}},                        // 2 confidence
-  {{render:function(v){{return v;}}}},                        // 3 num_args
-  {{render:function(v){{return ellipsis(v,36);}}}},           // 4 arg_genes
-  {{render:function(v){{return ellipsis(v,32);}}}},           // 5 drug_classes
-  {{render:function(v){{return srcBadges(v);}}}},             // 6 arg_sources (DB)
-  {{render:function(v){{return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}}}}, // 7 num_vf
-  {{render:function(v){{return ellipsis(v,28);}}}},           // 8 vf_genes
+  {{render:function(v){{return ellipsis(v,28);}}}},            // 0  contig_id
+  {{render:function(v){{return Number(v).toLocaleString();}}}}, // 1  length
+  {{render:function(v){{return v;}}}},                         // 2  confidence
+  {{render:function(v){{return v>0?'<span class="badge barg">'+v+' ARG</span>':'—';}}}}, // 3 num_args
+  {{render:function(v){{return ellipsis(v,36);}}}},            // 4  arg_genes
+  {{render:function(v){{return ellipsis(v,32);}}}},            // 5  drug_classes
+  {{render:function(v){{return srcBadges(v);}}}},              // 6  arg_sources (DB)
+  {{render:function(v){{return v>0?'<span class="badge bvf">'+v+' VF</span>':'—';}}}},  // 7  num_vf
+  {{render:function(v){{return ellipsis(v,28);}}}},            // 8  vf_genes
   {{render:function(v){{return v>0?'<span class="badge bmge">'+v+' MGE</span>':'—';}}}}, // 9 num_mge
-  {{render:function(v){{return ellipsis(v,28);}}}},           // 10 mge_genes
-  {{render:function(v){{return ellipsis(v,22);}}}},           // 11 mge_families
-  {{render:function(v){{return eskBadge(v);}}}},              // 12 pathogen
-  {{render:function(v){{return esc(v);}}}},                   // 13 mobility_class
-  {{render:function(v){{return esc(v);}}}},                   // 14 replicon_type
-  {{render:function(v){{return renderR(v);}}}},               // 15 risk_score
-  {{render:function(v){{return ellipsis(v,25);}}}},           // 16 taxonomy
-  {{render:function(v){{return ellipsis(v,32);}}}},           // 17 risk_evidence
-  {{render:function(v){{                                     // 18 topology
+  {{render:function(v){{return ellipsis(v,28);}}}},            // 10 mge_genes
+  {{render:function(v){{return ellipsis(v,22);}}}},            // 11 mge_families
+  {{render:function(v){{return v>0?'<span class="badge bice">'+v+' ICE</span>':'—';}}}}, // 12 num_ice
+  {{render:function(v){{return ellipsis(v,28);}}}},            // 13 ice_genes
+  {{render:function(v){{return v>0?'<span class="badge bbacmet">'+v+'</span>':'—';}}}},  // 14 num_bacmet
+  {{render:function(v){{return ellipsis(v,28);}}}},            // 15 bacmet_genes
+  {{render:function(v){{return eskBadge(v);}}}},               // 16 pathogen
+  {{render:function(v){{return esc(v);}}}},                    // 17 mobility_class
+  {{render:function(v){{return esc(v);}}}},                    // 18 replicon_type
+  {{render:function(v){{return renderR(v);}}}},                // 19 risk_score
+  {{render:function(v){{return ellipsis(v,25);}}}},            // 20 taxonomy
+  {{render:function(v){{return ellipsis(v,32);}}}},            // 21 risk_evidence
+  {{render:function(v){{                                      // 22 topology
     if(v==='circular')return'<span class="badge bcirc">⭕ circular</span>';
-    if(v==='too_short')return'<span style="color:#95a5a6">too short</span>';
-    return'<span style="color:#7f8c8d">— linear</span>';
+    if(v==='too_short')return'<span style="color:#94a3b8">too short</span>';
+    return'<span style="color:#94a3b8">linear</span>';
   }}}},
-  {{render:function(v){{                                     // 19 low_confidence
-    return v?'<span class="badge blowconf">⚠ low conf</span>':'<span style="color:#27ae60">✓</span>';
+  {{render:function(v){{                                      // 23 low_confidence
+    return v?'<span class="badge blowconf">⚠ low conf</span>':'<span style="color:#16a34a">✓</span>';
   }}}},
 ];
 
@@ -1143,9 +1196,9 @@ var tbl=new LightTable({{tableId:'ptable',data:ALL,cols:COLS,pageSize:50,
   onCheck:true,selected:SEL,selCountId:'sel-count'}});
 
 function setRisk(r){{
-  ['fa','fh','fm','fl'].forEach(function(id){{document.getElementById(id).classList.remove('active');}});
-  document.getElementById(r===''?'fa':r==='h'?'fh':r==='m'?'fm':'fl').classList.add('active');
-  cur=r===''?ALL.slice():ALL.filter(function(row){{return riskCls(row[15])===r;}});
+  ['fa','fh','fm','fl','fz'].forEach(function(id){{document.getElementById(id).classList.remove('active');}});
+  document.getElementById(r===''?'fa':r==='h'?'fh':r==='m'?'fm':r==='l'?'fl':'fz').classList.add('active');
+  cur=r===''?ALL.slice():ALL.filter(function(row){{return riskCls(row[19])===r;}});
   tbl.data=cur;tbl.filtered=cur.slice();tbl.page=0;tbl.applySort();tbl.render();
   document.getElementById('psearch').value='';
 }}
@@ -1535,10 +1588,29 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
         tax = getattr(cr, "taxonomy", None) or taxonomy.get(cr.record.id)
         vf_hits = getattr(cr, "vf_hits", [])
         mge_hits = getattr(cr, "mge_hits", [])
+        ice_hits = getattr(cr, "ice_hits", [])
+        bacmet_hits = getattr(cr, "bacmet_hits", [])
         sources = sorted({h.source for h in cr.arg_hits if getattr(h, "source", "")})
         arg_genes_str = "; ".join(sorted({h.gene_name for h in cr.arg_hits})) if cr.arg_hits else ""
         mge_genes_str = "; ".join(sorted({h.is_name for h in mge_hits})) if mge_hits else ""
         mge_fams_str = "; ".join(sorted({h.is_family for h in mge_hits})) if mge_hits else ""
+        ice_genes_str = (
+            "; ".join(
+                sorted(
+                    {
+                        getattr(h, "gene_function", "") or getattr(h, "gene_name", "")
+                        for h in ice_hits
+                    }
+                )
+            )
+            if ice_hits
+            else ""
+        )
+        bacmet_genes_str = (
+            "; ".join(sorted({getattr(h, "gene_name", "") for h in bacmet_hits}))
+            if bacmet_hits
+            else ""
+        )
         cid = cr.record.id
         plasmid_rows.append(
             PlasmidRow(
@@ -1561,6 +1633,10 @@ def build_report_data(pipeline_result, input_file: str = "") -> dict:  # noqa: C
                 num_mge=len(mge_hits),
                 mge_genes=mge_genes_str,
                 mge_families=mge_fams_str,
+                num_ice=len(ice_hits),
+                ice_genes=ice_genes_str,
+                num_bacmet=len(bacmet_hits),
+                bacmet_genes=bacmet_genes_str,
                 topology=topology_map.get(cid, "linear"),
                 low_confidence=cr.prediction.low_confidence or cr.prediction.confidence < 0.70,
             )
@@ -1749,10 +1825,11 @@ def generate_reports(report_data: dict, output_dir: Path | str) -> dict[str, Pat
         path.write_text(html_map[key], encoding="utf-8")
         logger.info("Report written to %s", path)
 
-    # Circular plasmid maps — separate page, only when ORF data is available
+    # Circular plasmid maps — separate page, generated whenever circular plasmids exist
     pipeline_result = report_data.get("_pipeline_result")
     topology_map = report_data.get("topology_map", {})
-    if pipeline_result is not None and getattr(pipeline_result, "orfs", None):
+    n_circular_in_map = sum(1 for v in topology_map.values() if v == "circular")
+    if pipeline_result is not None and n_circular_in_map > 0:
         from plasflow2.report.circular_map import build_circular_maps_page
 
         circular_path = out / "report_circular_plasmids.html"

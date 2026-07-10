@@ -290,15 +290,7 @@ def build_circular_maps_page(
     for orf in all_orfs:
         orfs_by_contig[orf.contig_id].append(orf)
 
-    if not all_orfs:
-        return _wrap_html(
-            "",
-            input_file,
-            "<p style='color:#888;margin:40px'>No ORF data available "
-            "(requires full pipeline run).</p>",
-        )
-
-    # Build annotation lookup sets per ORF
+    # Build annotation lookup sets per ORF (empty when no ORF data available)
     arg_orf_ids: set[str] = set()
     vf_orf_ids: set[str] = set()
     mge_orf_ids: set[str] = set()
@@ -364,8 +356,9 @@ def build_circular_maps_page(
         n_ice = len(getattr(cr, "ice_hits", []))
         risk = cr.risk.score
         mob = cr.mobility.mobility_class if cr.mobility else "unknown"
+        orfs_note = f"{len(orfs)} ORFs · " if orfs else "no ORF data · "
         summary = (
-            f"Risk {risk} · {mob} · {len(orfs)} ORFs · "
+            f"Risk {risk} · {mob} · {orfs_note}"
             f"{n_args} ARGs · {n_vf} VFs · {n_mge} MGEs · "
             f"{n_bm} BacMet · {n_ice} ICE"
         )
@@ -391,12 +384,16 @@ def build_circular_maps_page(
         )
 
     maps_html = "\n".join(svgs)
+    gene_note = (
+        "outer track = forward strand · inner track = reverse strand"
+        if all_orfs
+        else "gene tracks not shown (ARG databases were not configured at run time)"
+    )
     return _wrap_html(
         maps_html,
         input_file,
         f"<p class='subtitle'>{len(circular_results)} circular plasmid"
-        f"{'s' if len(circular_results)!=1 else ''} · "
-        f"outer track = forward strand · inner track = reverse strand</p>",
+        f"{'s' if len(circular_results)!=1 else ''} · {gene_note}</p>",
     )
 
 
