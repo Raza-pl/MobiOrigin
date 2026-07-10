@@ -277,10 +277,12 @@ def build_circular_maps_page(
     topology_map: dict[str, str],
     input_file: str = "",
 ) -> str:
-    """Generate standalone HTML page with circular maps for all circular plasmids.
+    """Generate standalone HTML page with circular maps for all circular contigs.
 
-    Only contigs with topology == 'circular' and label == 'plasmid' are included.
-    Returns empty-body HTML if none found.
+    Includes plasmid, unclassified, and other contigs with circular topology so
+    that contigs demoted by the hallmark gate (e.g. short plasmids without MOB
+    evidence) still appear in the circular maps view.
+    Returns empty-body HTML if no circular contigs are found.
     """
     from collections import defaultdict
 
@@ -298,11 +300,16 @@ def build_circular_maps_page(
     ice_orf_ids: set[str] = set()
     name_by_orf: dict[str, str] = {}
 
-    for cr in pipeline_result.plasmid_results:
-        for h in cr.arg_hits:
-            if h._orf_id:
-                arg_orf_ids.add(h._orf_id)
-                name_by_orf[h._orf_id] = h.gene_name
+    # Collect annotation hits from ALL contigs (plasmid + non-plasmid)
+    all_results = list(getattr(pipeline_result, "plasmid_results", [])) + list(
+        getattr(pipeline_result, "non_plasmid_results", [])
+    )
+    for cr in all_results:
+        for h in getattr(cr, "arg_hits", []):
+            oid = getattr(h, "_orf_id", "")
+            if oid:
+                arg_orf_ids.add(oid)
+                name_by_orf[oid] = h.gene_name
         for h in getattr(cr, "vf_hits", []):
             oid = getattr(h, "_orf_id", "")
             if oid:
@@ -324,11 +331,9 @@ def build_circular_maps_page(
                 ice_orf_ids.add(oid)
                 name_by_orf[oid] = h.gene_function
 
-    # Find circular plasmid contigs
+    # Find ALL circular contigs (plasmid + unclassified + chromosome)
     circular_results = [
-        cr
-        for cr in pipeline_result.plasmid_results
-        if topology_map.get(cr.record.id, "") == "circular"
+        cr for cr in all_results if topology_map.get(cr.record.id, "") == "circular"
     ]
 
     if not circular_results:
@@ -336,27 +341,50 @@ def build_circular_maps_page(
             "",
             input_file,
             "<p style='color:#888;margin:40px'>"
-            "No circular plasmid contigs detected in this assembly.</p>",
+            "No circular contigs detected in this assembly.</p>",
         )
 
-    # Sort by length descending (largest / most complete plasmids first)
-    circular_results.sort(key=lambda cr: -len(cr.record.seq))
+    # Sort: plasmids first, then by length descending
+    _label_order = {"plasmid": 0, "unclassified": 1, "chromosome": 2, "phage": 3}
+
+    def _sort_key(cr):
+        lbl = getattr(cr.prediction, "label", "unclassified")
+        return (_label_order.get(lbl, 9), -len(cr.record.seq))
+
+    circular_results.sort(key=_sort_key)
 
     svgs: list[str] = []
     for cr in circular_results:
         cid = cr.record.id
         clen = len(cr.record.seq)
         orfs = orfs_by_contig.get(cid, [])
+        label = getattr(cr.prediction, "label", "unclassified")
 
-        # Summary line for this plasmid
-        n_args = len(cr.arg_hits)
+        # Summary line for this contig
+        n_args = len(getattr(cr, "arg_hits", []))
         n_vf = len(getattr(cr, "vf_hits", []))
         n_mge = len(getattr(cr, "mge_hits", []))
         n_bm = len(getattr(cr, "bacmet_hits", []))
         n_ice = len(getattr(cr, "ice_hits", []))
-        risk = cr.risk.score
-        mob = cr.mobility.mobility_class if cr.mobility else "unknown"
+        risk_obj = getattr(cr, "risk", None)
+        risk = risk_obj.score if risk_obj else 0
+        mob_obj = getattr(cr, "mobility", None)
+        mob = mob_obj.mobility_class if mob_obj else "unknown"
         orfs_note = f"{len(orfs)} ORFs · " if orfs else "no ORF data · "
+
+        _label_colors = {
+            "plasmid": "#1a7a4a",
+            "unclassified": "#8B6914",
+            "chromosome": "#6b6b6b",
+            "phage": "#7b4a9a",
+        }
+        label_color = _label_colors.get(label, "#555")
+        label_badge = (
+            f'<span style="font-size:.7rem;font-weight:600;color:{label_color};'
+            f"background:{label_color}18;border:1px solid {label_color}40;"
+            f'border-radius:3px;padding:1px 5px;margin-left:6px">{label}</span>'
+        )
+
         summary = (
             f"Risk {risk} · {mob} · {orfs_note}"
             f"{n_args} ARGs · {n_vf} VFs · {n_mge} MGEs · "
@@ -377,7 +405,7 @@ def build_circular_maps_page(
 
         svgs.append(
             f'<div class="map-card">'
-            f'<p class="cid">{cid}</p>'
+            f'<p class="cid">{cid}{label_badge}</p>'
             f'<p class="meta">{summary}</p>'
             f"{svg}"
             f"</div>"
@@ -389,11 +417,15 @@ def build_circular_maps_page(
         if all_orfs
         else "gene tracks not shown (ARG databases were not configured at run time)"
     )
+    n_plasmid = sum(
+        1 for cr in circular_results if getattr(cr.prediction, "label", "") == "plasmid"
+    )
+    plasmid_note = f"{n_plasmid} plasmid · " if n_plasmid < len(circular_results) else ""
     return _wrap_html(
         maps_html,
         input_file,
-        f"<p class='subtitle'>{len(circular_results)} circular plasmid"
-        f"{'s' if len(circular_results)!=1 else ''} · {gene_note}</p>",
+        f"<p class='subtitle'>{len(circular_results)} circular contig"
+        f"{'s' if len(circular_results)!=1 else ''} · {plasmid_note}{gene_note}</p>",
     )
 
 
