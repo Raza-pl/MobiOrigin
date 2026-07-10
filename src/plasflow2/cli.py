@@ -50,9 +50,10 @@ from plasflow2.annotate.mobility import annotate_mobility  # noqa: E402
 from plasflow2.classify.predict import predict  # noqa: E402
 from plasflow2.output.genes_tsv import write_genes_tsv  # noqa: E402
 from plasflow2.pipeline import PipelineResult, run_pipeline  # noqa: E402
-from plasflow2.report.generator import (  # noqa: E402
+from plasflow2.report.generator import (  # noqa: E402  # noqa: E402
     NonPlasmidRow,
     PlasmidRow,
+    _build_high_risk_table,
     build_report_data,
     generate_reports,
 )
@@ -1900,12 +1901,16 @@ def report_cmd(
 
                 # ARG gene names (new column; absent in old TSV files)
                 arg_genes_str = row.get("arg_genes", "") or ""
-                # VF / MGE — read from TSV (gracefully absent in old files)
+                # VF / MGE / ICE / BacMet — read from TSV (gracefully absent in old files)
                 num_vf = int(row.get("num_vf", 0) or 0)
                 vf_genes_str = row.get("vf_genes", "") or ""
                 num_mge = int(row.get("num_mge", 0) or 0)
                 mge_genes_str = row.get("mge_genes", "") or ""
                 mge_fam_str = row.get("mge_families", "") or ""
+                num_ice = int(row.get("num_ice", 0) or 0)
+                ice_genes_str = row.get("ice_genes", "") or ""
+                num_bacmet = int(row.get("num_bacmet", 0) or 0)
+                bacmet_genes_str = row.get("bacmet_genes", "") or ""
 
                 plasmid_rows.append(
                     PlasmidRow(
@@ -1928,6 +1933,10 @@ def report_cmd(
                         num_mge=num_mge,
                         mge_genes=mge_genes_str,
                         mge_families=mge_fam_str,
+                        num_ice=num_ice,
+                        ice_genes=ice_genes_str,
+                        num_bacmet=num_bacmet,
+                        bacmet_genes=bacmet_genes_str,
                         topology=row.get("topology", "linear") or "linear",
                         low_confidence=(row.get("low_confidence", "False") or "False").lower()
                         == "true",
@@ -2042,8 +2051,12 @@ def report_cmd(
         "has_phages": bool(phage_rows),
         "has_chromosomes": bool(chromosome_rows),
         "has_others": bool(archaea_rows or unclassified_rows),
-        # genome maps not available when rebuilding from TSV (no ORF data)
-        "genome_maps": {},
+        # high-risk and pathogen tables (computed after rows are built)
+        "high_risk_table": _build_high_risk_table(plasmid_rows, {}),
+        "pathogen_table": "",
+        # circular maps not available when rebuilding from TSV (no sequence/ORF data)
+        "_pipeline_result": None,
+        "topology_map": {},
     }
     # narrative summary (computed after report_data is assembled)
     report_data["narrative"] = _narrative_summary(report_data)
