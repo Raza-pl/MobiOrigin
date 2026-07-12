@@ -93,83 +93,91 @@ def _search_assemblies(taxon: str, n: int, email: str) -> list[str]:
     return uids[:n]
 
 
-def _get_assembly_accessions(uid: str, email: str) -> list[str]:
-    """Return RefSeq nucleotide accessions (chr + plasmids) for an assembly UID."""
+def _get_ftp_path(uid: str, email: str) -> str | None:
+    """Return the RefSeq HTTPS base URL for an assembly UID, or None.
+
+    Uses the FtpPath_RefSeq field from the assembly summary — much more
+    reliable than elink because it points directly to the downloadable files
+    (no WGS master records, no empty-sequence issues).
+    """
     from Bio import Entrez
 
     Entrez.email = email
-    # Fetch assembly summary to get the RefSeq accession
     handle = Entrez.esummary(db="assembly", id=uid, report="full")
     summary = Entrez.read(handle, validate=False)
     handle.close()
 
     doc = summary["DocumentSummarySet"]["DocumentSummary"][0]
-    refseq_cat = str(doc.get("RefSeq_category", ""))
     rs_acc = str(doc.get("AssemblyAccession", ""))
-
     if not rs_acc.startswith("GCF_"):
-        return []
-    # Avoid non-reference / anomalous assemblies
+        return None
     if "suppressed" in str(doc.get("AssemblyStatus", "")).lower():
-        return []
+        return None
 
-    # Use nuccore link to get all sequences in this assembly
-    handle = Entrez.elink(
-        dbfrom="assembly", db="nuccore", id=uid, linkname="assembly_nuccore_refseq"
-    )
-    links = Entrez.read(handle)
-    handle.close()
+    ftp_path = str(doc.get("FtpPath_RefSeq", "na")).strip()
+    if not ftp_path or ftp_path == "na":
+        return None
+
+    # NCBI now prefers HTTPS; convert ftp:// → https://
+    return ftp_path.replace("ftp://", "https://", 1)
+
+
+def _fetch_from_ftp(ftp_base: str) -> list[dict]:
+    """Download and parse the *_genomic.gbff.gz for an assembly.
+
+    One HTTPS request per assembly — always contains proper sequence data,
+    no WGS master record issues.  Plasmid labels come from the GenBank
+    /plasmid source qualifier and from the record description.
+    """
+    import gzip
+    import urllib.request
+    from io import StringIO
+
+    from Bio import SeqIO
+
+    assembly_name = ftp_base.rstrip("/").split("/")[-1]
+    url = f"{ftp_base}/{assembly_name}_genomic.gbff.gz"
 
     try:
-        ids = [lnk["Id"] for lnk in links[0]["LinkSetDb"][0]["Link"]]
-    except (IndexError, KeyError):
-        ids = []
-
-    logger.debug("    assembly %s (%s): %d sequences", rs_acc, refseq_cat, len(ids))
-    return ids
-
-
-def _fetch_sequences(nuccore_ids: list[str], email: str) -> list[dict]:
-    """Fetch FASTA + metadata for a list of nuccore IDs."""
-    from Bio import Entrez, SeqIO
-
-    Entrez.email = email
-    if not nuccore_ids:
+        req = urllib.request.Request(url, headers={"User-Agent": "PlasFlow2-benchmark/1.0"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+    except Exception as exc:
+        logger.warning("    download failed (%s): %s", url, exc)
         return []
 
-    batch_size = 50
+    try:
+        text = gzip.decompress(raw).decode("utf-8", errors="replace")
+    except Exception as exc:
+        logger.warning("    decompression failed: %s", exc)
+        return []
+
     results = []
-    for i in range(0, len(nuccore_ids), batch_size):
-        batch = nuccore_ids[i : i + batch_size]
-        handle = Entrez.efetch(
-            db="nuccore",
-            id=",".join(batch),
-            rettype="gb",
-            retmode="text",
+    for rec in SeqIO.parse(StringIO(text), "genbank"):
+        if not rec.seq or len(rec.seq) == 0:
+            continue  # skip master/contig records without sequence
+
+        mol_type = "chromosome"
+        desc_lower = rec.description.lower()
+        if any(kw in desc_lower for kw in ("plasmid", "plas.", "mega-plasmid", "megaplasmid")):
+            mol_type = "plasmid"
+
+        # Prefer GenBank /plasmid source qualifier — definitive
+        for feat in rec.features:
+            if feat.type == "source":
+                if "plasmid" in feat.qualifiers:
+                    mol_type = "plasmid"
+                break
+
+        results.append(
+            {
+                "accession": rec.id,
+                "description": rec.description,
+                "length": len(rec.seq),
+                "molecule_type": mol_type,
+                "sequence": str(rec.seq),
+            }
         )
-        for rec in SeqIO.parse(handle, "genbank"):
-            mol_type = "chromosome"
-            desc_lower = rec.description.lower()
-            if any(kw in desc_lower for kw in ("plasmid", "plas.", "mega-plasmid", "megaplasmid")):
-                mol_type = "plasmid"
-            # Also check the source feature
-            for feat in rec.features:
-                if feat.type == "source":
-                    quals = feat.qualifiers
-                    if "plasmid" in quals:
-                        mol_type = "plasmid"
-                    break
-            results.append(
-                {
-                    "accession": rec.id,
-                    "description": rec.description,
-                    "length": len(rec.seq),
-                    "molecule_type": mol_type,
-                    "sequence": str(rec.seq),
-                }
-            )
-        handle.close()
-        time.sleep(0.4)  # NCBI rate limit: max 3 req/s without API key
 
     return results
 
@@ -203,11 +211,13 @@ def download(
             if downloaded >= per_taxon:
                 break
             try:
-                nuc_ids = _get_assembly_accessions(uid, email)
-                if not nuc_ids:
+                ftp_base = _get_ftp_path(uid, email)
+                if not ftp_base:
+                    logger.debug("  skip UID %s — no RefSeq FTP path", uid)
+                    time.sleep(0.4)
                     continue
 
-                seqs = _fetch_sequences(nuc_ids, email)
+                seqs = _fetch_from_ftp(ftp_base)
                 if not seqs:
                     continue
 
