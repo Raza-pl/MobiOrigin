@@ -66,7 +66,7 @@ from plasflow2.classify.marker_classifier import (
     extract_marker_features,
     marker_classifier_available,
 )
-from plasflow2.classify.predict import Prediction, predict
+from plasflow2.classify.predict import Prediction, _get_length_thresholds, predict
 from plasflow2.risk.scorer import RiskScore, score_nonplasmid, score_plasmid
 from plasflow2.utils.fasta import load_fasta, write_fasta
 
@@ -1013,8 +1013,19 @@ def run_pipeline(
                     str(threads),
                     "--quiet",
                 ]
+                # Dynamic timeout: 900s floor (geNomad always loads its full
+                # database regardless of input size, which takes ~10 min) plus
+                # 1s per plasmid contig for annotation time.
+                _gn_timeout = 900 + len(plasmid_records)
+                logger.info(
+                    "geNomad: timeout set to %d s (%d plasmid contigs).",
+                    _gn_timeout,
+                    len(plasmid_records),
+                )
                 try:
-                    _gn_proc = _gn_sp.run(_gn_cmd, capture_output=True, text=True, timeout=600)
+                    _gn_proc = _gn_sp.run(
+                        _gn_cmd, capture_output=True, text=True, timeout=_gn_timeout
+                    )
                     if _gn_proc.returncode != 0:
                         logger.warning(
                             "geNomad annotate failed (exit %d): %s — SPM features disabled.",
@@ -1033,7 +1044,12 @@ def run_pipeline(
                                 _gn_out_dir,
                             )
                 except _gn_sp.TimeoutExpired:
-                    logger.warning("geNomad annotate timed out (600 s) — SPM features disabled.")
+                    logger.warning(
+                        "geNomad annotate timed out (%d s) — SPM features disabled. "
+                        "Use --skip-genomad to skip, or increase timeout by reducing "
+                        "input contig count.",
+                        _gn_timeout,
+                    )
                     _gn_genes_tsv = None
                 except Exception as _gn_exc:
                     logger.warning("geNomad annotate error: %s — SPM features disabled.", _gn_exc)
@@ -1123,12 +1139,35 @@ def run_pipeline(
 
                 best_class = max(agg, key=agg.get)
                 best_conf = agg[best_class]
-                thresh = plasmid_threshold if best_class == "plasmid" else confidence_threshold
+
+                # Use the same length-aware thresholds as the initial MLP stage.
+                # The global plasmid_threshold (0.95) is the default for short
+                # contigs, but longer contigs use lower per-length floors
+                # (0.93 for 10-20 kb, 0.94 for >20 kb).  Applying a flat 0.95
+                # here would wrongly demote contigs classified near that floor.
+                _xgb_plas_t, _xgb_phage_t, _xgb_chr_t = _get_length_thresholds(len(seq))
+                if best_class == "plasmid":
+                    thresh = _xgb_plas_t
+                elif best_class == "chromosome":
+                    thresh = _xgb_chr_t
+                else:  # phage
+                    thresh = _xgb_phage_t
+
                 new_label = (
                     best_class
                     if best_conf >= thresh
                     else (best_class if argmax_fallback else "unclassified")
                 )
+
+                # No-mob guard: if mobility data is absent for this contig,
+                # sparse mob features (all 0) are not negative evidence —
+                # don't let XGBoost demote an existing plasmid call in that case.
+                if (
+                    pred.label == "plasmid"
+                    and new_label != "plasmid"
+                    and mobility_by_contig.get(cid) is None
+                ):
+                    new_label = "plasmid"
 
                 if new_label != pred.label:
                     if new_label == "plasmid":
