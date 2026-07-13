@@ -279,15 +279,6 @@ bash scripts/setup_databases.sh --plsdb-path /path/to/your/PLSDB.fna \
 
 This creates a symlink at `data/databases/plasmids/PLSDB.fna` pointing to your existing file.
 
-#### Pass PLSDB path at runtime
-
-If you don't want to symlink it, pass the path directly when running:
-
-```bash
-plasflow2 run --input assembly.fasta --output results/ \
-  --plsdb-path /path/to/PLSDB.fna
-```
-
 #### Run without PLSDB
 
 PLSDB is optional. Without it, the hallmark gate falls back to relaxase, replicon, ICE, and rep protein evidence. For exploratory analysis or when databases aren't available, use `--lenient` to skip the hallmark gate entirely:
@@ -304,13 +295,6 @@ plasflow2 run --input assembly.fasta --output results/ --lenient
 
 ```bash
 plasflow2 run --input assembly.fasta --output ./results/ --threads 16
-```
-
-**With PLSDB from a non-default path:**
-
-```bash
-plasflow2 run --input assembly.fasta --output ./results/ \
-  --plsdb-path /data/PLSDB.fna --threads 16
 ```
 
 **Clinical context** — adjusts AMR risk scoring for healthcare samples:
@@ -430,7 +414,7 @@ Run `conda init bash` then restart your terminal (close and reopen the WSL windo
 
 **Database not found at runtime**
 
-Re-run `bash scripts/setup_databases.sh` for the missing database. Use `--skip-X` for databases you already have, or `--plsdb-path` / `--card-path` to point to existing files.
+Re-run `bash scripts/setup_databases.sh` for the missing database. Use `--skip-X` for databases you already have, or `--plsdb-path` / `--card-path` to point to existing files (setup script options).
 
 **PLSDB download fails (connection timeout)**
 
@@ -438,7 +422,7 @@ PLSDB servers occasionally have downtime. Try again after a few minutes. The scr
 
 1. Go to **[https://ccb-microbe.cs.uni-saarland.de/plsdb2025/](https://ccb-microbe.cs.uni-saarland.de/plsdb2025/)** and download the FASTA file (`plsdb.fna.bz2`)
 2. Decompress: `bzip2 -d plsdb.fna.bz2`
-3. Place the file at `data/databases/plasmids/PLSDB.fna` inside the cloned repo, or pass the path directly: `plasflow2 run --plsdb-path /path/to/PLSDB.fna`
+3. Place the file at `data/databases/plasmids/PLSDB.fna` inside the cloned repo (or use `bash scripts/setup_databases.sh --plsdb-path /path/to/PLSDB.fna` to symlink it)
 
 **Docker: "database not found" inside container**
 

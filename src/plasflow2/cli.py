@@ -101,6 +101,7 @@ _DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" 
 _DOCKER_MODEL = Path("/data/models/mlp_v2.pt")
 _DOCKER_MARKER_MODEL = Path("/data/models/marker_xgb.pkl")
 
+
 _DEFAULT_CARD_DB = _DB_ROOT / "card" / "card.dmnd"
 _DEFAULT_ARO_INDEX = _DB_ROOT / "card" / "aro_index.tsv"
 _DEFAULT_SARG_DB = _DB_ROOT / "sarg" / "sarg.dmnd"
@@ -112,9 +113,6 @@ _DEFAULT_TAXON_MAP = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
 _DEFAULT_KAIJU_DIR = _DB_ROOT / "kaiju"
 _DEFAULT_KAIJU_NODES = _DEFAULT_KAIJU_DIR / "nodes.dmp"
 _DEFAULT_KAIJU_NAMES = _DEFAULT_KAIJU_DIR / "names.dmp"
-
-
-_DOCKER_MODEL = Path("/data/models/mlp_v2.pt")
 
 
 def _resolve_model(model_path: str | None) -> Path:
@@ -2210,6 +2208,96 @@ def setup_cmd() -> None:
     and example commands for the full pipeline.
     """
     click.echo(_SETUP_TEXT)
+
+
+# ---------------------------------------------------------------------------
+# plasflow2 serve
+# ---------------------------------------------------------------------------
+
+
+@main.command("serve")
+@click.option("--port", default=8501, show_default=True, help="Port to serve on.")
+@click.option("--host", default="localhost", show_default=True, help="Address to bind.")
+@click.option(
+    "--jobs-dir",
+    default=None,
+    envvar="PLASFLOW_JOBS_DIR",
+    type=click.Path(),
+    help="Directory for job results (default: ~/.plasflow2/jobs).",
+)
+@click.option(
+    "--browser/--no-browser",
+    default=True,
+    show_default=True,
+    help="Open a browser tab automatically.",
+)
+def serve_cmd(port: int, host: str, jobs_dir: str | None, browser: bool) -> None:
+    """Launch the PlasFlow v2 web interface.
+
+    Starts a local Streamlit server so you can upload FASTA files, run the
+    pipeline, and download reports without touching the command line.
+
+    Requires streamlit:
+        pip install streamlit
+    or:
+        conda install -c conda-forge streamlit
+
+    Examples
+    --------
+    # Start on default port 8501
+    plasflow2 serve
+
+    # Use a different port and store jobs in a custom directory
+    plasflow2 serve --port 8080 --jobs-dir /data/plasflow_jobs
+    """
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        click.echo(
+            "Error: streamlit is not installed.\n"
+            "Install it with:\n"
+            "    pip install streamlit\n"
+            "or:\n"
+            "    conda install -c conda-forge streamlit",
+            err=True,
+        )
+        raise SystemExit(1) from None
+
+    import os
+    import subprocess
+    from pathlib import Path as _Path
+
+    app_py = _Path(__file__).parent / "webapp" / "app.py"
+
+    env = os.environ.copy()
+    if jobs_dir:
+        env["PLASFLOW_JOBS_DIR"] = str(jobs_dir)
+
+    cmd = [
+        "streamlit",
+        "run",
+        str(app_py),
+        "--server.port",
+        str(port),
+        "--server.address",
+        host,
+        "--theme.base",
+        "light",
+        "--theme.primaryColor",
+        "#1a7a4a",
+        "--browser.gatherUsageStats",
+        "false",
+    ]
+    if not browser:
+        cmd += ["--server.headless", "true"]
+
+    click.echo(f"[PlasFlow v2] Web interface starting at http://{host}:{port}")
+    click.echo("Press Ctrl+C to stop.\n")
+
+    try:
+        subprocess.run(cmd, env=env, check=False)
+    except KeyboardInterrupt:
+        click.echo("\n[PlasFlow v2] Server stopped.")
 
 
 if __name__ == "__main__":

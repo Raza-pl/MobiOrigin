@@ -142,11 +142,13 @@ plasflow2 run \
   --card-db      /custom/card/card.dmnd \
   --aro-index    /custom/card/aro_index.tsv \
   --sarg-db      /custom/sarg/sarg.dmnd \
-  --plsdb-path   /custom/plasmids/PLSDB.fna \
   --taxonomy-db  /custom/taxonomy/refseq_taxonomy.dmnd \
   --taxon-map    /custom/taxonomy/taxon_map.tsv \
   --threads      16
 ```
+
+> **Note:** PLSDB is auto-detected from `data/databases/plasmids/`. To use a file at a custom path, symlink it first:
+> `bash scripts/setup_databases.sh --plsdb-path /custom/plasmids/PLSDB.fna --skip-models --skip-card --skip-sarg --skip-vfdb --skip-mge --skip-mobsuite`
 
 ---
 

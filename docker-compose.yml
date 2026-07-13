@@ -7,6 +7,8 @@ services:
     volumes:
       # Mount your databases directory (read-only)
       - ${PLASFLOW_DB_DIR:-./data/databases}:/data/databases:ro
+      # Mount model weights (required — run scripts/setup_databases.sh first)
+      - ${PLASFLOW_MODEL_DIR:-./data/models}:/data/models:ro
       # Mount your input FASTA directory (read-only)
       - ${PLASFLOW_INPUT_DIR:-./data/input}:/data/input:ro
       # Mount your results directory (read-write)
@@ -23,13 +25,14 @@ services:
       --threads 8
       --skip-taxonomy
 
-  # Convenience service: just classify, no external databases required
+  # Convenience service: classify only (no annotation databases required)
   classify:
     image: plasflow2:latest
     build:
       context: .
       target: runtime
     volumes:
+      - ${PLASFLOW_MODEL_DIR:-./data/models}:/data/models:ro
       - ${PLASFLOW_INPUT_DIR:-./data/input}:/data/input:ro
       - ${PLASFLOW_RESULTS_DIR:-./results}:/results:rw
     command: >

@@ -150,10 +150,11 @@ bash scripts/setup_databases.sh \
 
 If auto-download fails, get it manually from [https://ccb-microbe.cs.uni-saarland.de/plsdb2025/](https://ccb-microbe.cs.uni-saarland.de/plsdb2025/), decompress with `bzip2 -d plsdb.fna.bz2`, and place at `data/databases/plasmids/PLSDB.fna`.
 
-Or pass the path at runtime:
+Or symlink it via the setup script:
 
 ```bash
-plasflow2 run --input assembly.fasta --output results/ --plsdb-path /path/to/PLSDB.fna
+bash scripts/setup_databases.sh --plsdb-path /path/to/PLSDB.fna \
+  --skip-models --skip-card --skip-sarg --skip-vfdb --skip-mge --skip-mobsuite
 ```
 
 ### GTDB — taxonomy database (optional)

@@ -85,10 +85,11 @@ plasflow2 run \
 
 ```bash
 python scripts/train_marker_model.py \
-  --annotations data/training_annotations.tsv \
-  --labels      data/labels.tsv \
-  --output      data/models/marker_xgb_custom.pkl
+  --features data/marker_features.npz \
+  --out      data/models/
 ```
+
+The `--features` `.npz` file is produced by `scripts/build_marker_dataset.py`. The trained weights are written to `{--out}/marker_xgb.pkl`.
 
 ### Step 3 — Use the custom model
 

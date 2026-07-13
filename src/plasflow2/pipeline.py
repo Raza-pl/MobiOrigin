@@ -588,7 +588,7 @@ def run_pipeline(
     # it carries no relaxase (non-mobilizable). Detecting rep proteins provides
     # biological evidence for plasmid identity independent of mobility class.
     # Build the DB with: bash scripts/setup_rep_diamond.sh
-    rep_protein_hits: set[str] = set()
+    rep_protein_hits: dict[str, int] = {}  # contig_id → number of distinct rep-protein ORF hits
     _mob_diamond_dir_rep = Path(__file__).parent.parent.parent / "data" / "databases" / "mob_suite"
     _rep_prot_db = _mob_diamond_dir_rep / "rep_proteins.dmnd"
     if _rep_prot_db.exists() and arg_proteins.exists():
@@ -631,7 +631,7 @@ def run_pipeline(
                     for _line in _fh:
                         _orf_id = _line.split("\t")[0].strip()
                         _cid = _re.sub(r"_\d+$", "", _orf_id)
-                        rep_protein_hits.add(_cid)
+                        rep_protein_hits[_cid] = rep_protein_hits.get(_cid, 0) + 1
                 logger.info(
                     "Rep protein hits: %d contigs with replication proteins", len(rep_protein_hits)
                 )
@@ -920,7 +920,8 @@ def run_pipeline(
         mob = mobility_by_contig.get(cid)
         has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
         has_plsdb = cid in plasmid_db_hits
-        has_replicon = mob is not None and bool(mob.replicon_type)
+        _rep_type = (mob.replicon_type if mob is not None else None) or ""
+        has_replicon = _rep_type.lower() not in ("", "-", "unknown", "none")
         has_ice = bool(ice_by_contig.get(cid))
         has_rep_protein = cid in rep_protein_hits
         has_evidence = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
@@ -1125,9 +1126,7 @@ def run_pipeline(
                     ice_hits=ice_by_contig.get(cid, []),
                     orfs=_orfs_by_contig.get(cid, []),
                     has_rep_protein=cid in rep_protein_hits,
-                    n_rep_hits=len(
-                        [h for h in _orfs_by_contig.get(cid, []) if cid in rep_protein_hits]
-                    ),
+                    n_rep_hits=rep_protein_hits.get(cid, 0),
                     genomad_spm=_gn_spm_by_contig.get(cid),
                 )
                 marker_scores = _marker_clf.predict_scores(feats)
