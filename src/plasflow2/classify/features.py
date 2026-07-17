@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -453,6 +454,43 @@ def extract_features(
 def save_features(X: NDArray[np.float32], path: Path | str) -> None:
     """Save feature matrix to an .npy file."""
     np.save(str(path), X)
+
+
+def extract_features_to_npy(
+    sequences: list[str],
+    path: Path | str,
+    *,
+    chunk_size: int = 1000,
+) -> tuple[int, int]:
+    """Extract features in bounded-memory chunks into an atomic ``.npy`` file.
+
+    The output is written to ``<path>.incomplete`` and renamed only after every
+    chunk has been flushed. Interrupted builds therefore cannot masquerade as a
+    complete training matrix.
+    """
+
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    incomplete_path = path.with_name(f"{path.name}.incomplete")
+    shape = (len(sequences), FEATURE_DIM)
+    matrix = np.lib.format.open_memmap(
+        incomplete_path,
+        mode="w+",
+        dtype=np.float32,
+        shape=shape,
+    )
+    try:
+        for start in range(0, len(sequences), chunk_size):
+            end = min(start + chunk_size, len(sequences))
+            matrix[start:end] = extract_features(sequences[start:end])
+            matrix.flush()
+            logger.info("Feature rows written: %d / %d", end, len(sequences))
+    finally:
+        del matrix
+    os.replace(incomplete_path, path)
+    return shape
 
 
 def load_features(path: Path | str) -> NDArray[np.float32]:

@@ -97,12 +97,11 @@ _time_tool "genomad" "$OUTDIR/genomad" \
 
 # ── PlasClass ─────────────────────────────────────────────────────────────────
 
-_time_tool "plasclass" "$OUTDIR/plasclass" bash -c "
-  plasclass \
-    -f '$INPUT' \
-    -o '$OUTDIR/plasclass/plasclass_scores.csv' \
-    -p $THREADS 2>&1
-"
+_time_tool "plasclass" "$OUTDIR/plasclass" \
+  python -u scripts/benchmark/run_plasclass_streaming.py \
+    --input "$INPUT" \
+    --output "$OUTDIR/plasclass/plasclass_scores.csv" \
+    --processes "$THREADS"
 
 # ── RFPlasmid ─────────────────────────────────────────────────────────────────
 

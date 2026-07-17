@@ -525,7 +525,17 @@ class MarkerClassifier:
         """
         x = features.to_array().reshape(1, -1)
         proba = self.predict_proba(x)[0]
-        return {c: float(proba[i]) for i, c in enumerate(self._classes)}
+        scores = {
+            class_name: float(proba[i])
+            for i, class_name in enumerate(self._classes[: len(proba)])
+        }
+        # Legacy production marker checkpoints are binary
+        # (plasmid/chromosome). Keep them usable beside a 3-class MLP by
+        # exposing an explicit zero phage score instead of indexing past the
+        # two-column probability array.
+        for class_name in self._classes:
+            scores.setdefault(class_name, 0.0)
+        return scores
 
     def save(self, path: Path | str) -> None:
         """Pickle the fitted model."""

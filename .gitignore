@@ -100,6 +100,10 @@ email_professor_beta_test.md
 
 # Dev / training scripts (moved to scripts/dev/)
 scripts/dev/
+# The primary dataset builder is research-critical and must remain reproducible.
+!scripts/dev/
+scripts/dev/*
+!scripts/dev/build_dataset.py
 
 # macOS
 .DS_Store

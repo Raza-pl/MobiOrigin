@@ -41,6 +41,11 @@ pandas = ">=2.1.0"
 h5py = ">=3.10.0"
 xgboost = ">=2.0.0"
 
+[tool.poetry.group.webapp.dependencies]
+# Optional web interface — install with: pip install streamlit
+# or: conda install -c conda-forge streamlit
+streamlit = ">=1.35.0"
+
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.4.0"
 pytest-cov = ">=4.1.0"

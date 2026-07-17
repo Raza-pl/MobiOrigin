@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Default confidence thresholds (class-specific)
 DEFAULT_THRESHOLD = 0.70  # chromosome
 DEFAULT_PHAGE_THRESHOLD = 0.70  # phage — restored to 0.70 (was 0.85, over-suppressed recall)
-DEFAULT_PLASMID_THRESHOLD = 0.95  # plasmid — higher bar to correct for class-prior imbalance
+DEFAULT_PLASMID_THRESHOLD = 0.862  # plasmid — calibrated for Rev5 (T=1.547); see LENGTH_THRESHOLD_TIERS
 
 # Per-length plasmid threshold multipliers.
 # Short sequences (<3kb) have noisier k-mer profiles → require higher confidence.
@@ -64,27 +64,27 @@ LENGTH_THRESHOLD_TIERS = [
     # NOTE: conjugative plasmids bypass these via hard override in predict().
     # All other sequences use these per-length thresholds.
     #
-    # Calibrated for k=7 3-CLASS model v2 (Jun 2026).
-    # The 3-class softmax spreads probability across plasmid/chromosome/phage,
-    # so chromosome scores are systematically lower than in the binary model.
-    # Phage thresholds are raised (0.90+) to suppress chromosome→phage FPs:
-    # on the benchmark (no true phage), 2,906 chromosomes score phage>0.70
-    # but only ~1,600 score phage>0.95.  On real metagenomes true phage
-    # sequences score >>0.95, so this threshold preserves recall on W1.
-    # Chromosome thresholds lowered to 0.60–0.70 to recover chromosome recall
-    # lost to phage probability bleed.
+    # Rev5 calibrated (Jul 2026) — temperature T=1.547 baked into model weights.
+    # Plasmid thresholds derived from precision-recall sweep on Tier 1 benchmark
+    # (max-F1 threshold per length tier from calibration.json).
+    # Previous thresholds (0.93–0.99) were over-strict, suppressing recall to ~0.46.
+    # New thresholds (~0.86) recover recall to ~0.73 at comparable precision (0.42).
     #
-    #   1-2kb:   short sequences noisy; strict plasmid, high phage threshold.
-    #   2-5kb:   small plasmids; phage raised 0.80→0.92.
-    #   5-10kb:  phage raised 0.75→0.90.
-    #   10-20kb: main plasmid tier; phage raised 0.72→0.90.
-    #   >20kb:   long sequences; phage raised 0.70→0.90; chr lowered 0.68→0.62.
-    (2_000, 0.99, 0.95, 0.75),  # <2kb
-    (4_999, 0.95, 0.92, 0.68),  # 2-5kb
-    (9_999, 0.98, 0.90, 0.65),  # 5-10kb
+    # Phage thresholds raised (0.90+) to suppress chromosome→phage FPs on isolates;
+    # real phage in metagenomes score >>0.95, so recall is preserved on W1.
+    # Chromosome thresholds kept at 0.60–0.70 (no change from prior calibration).
+    #
+    #   <2kb:    F1=0.432  P=0.337  R=0.602 at t=0.862
+    #   2-5kb:   F1=0.542  P=0.424  R=0.752 at t=0.864
+    #   5-10kb:  F1=0.615  P=0.489  R=0.828 at t=0.859
+    #   10-50kb: F1=0.735  P=0.631  R=0.880 at t=0.857
+    #   >50kb:   F1=1.000  P=1.000  R=1.000 at t=0.809 (only 3 plasmids in benchmark)
+    (2_000, 0.862, 0.95, 0.75),  # <2kb
+    (4_999, 0.864, 0.92, 0.68),  # 2-5kb
+    (9_999, 0.859, 0.90, 0.65),  # 5-10kb
     # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
-    (19_999, 0.93, 0.90, 0.63),  # 10-20kb
-    (float("inf"), 0.94, 0.90, 0.62),  # >20kb
+    (19_999, 0.857, 0.90, 0.63),  # 10-20kb
+    (float("inf"), 0.809, 0.90, 0.62),  # >20kb
 ]
 
 
@@ -343,6 +343,43 @@ def _assign_label(
 # ---------------------------------------------------------------------------
 
 
+def _mlp_scores_chunked(
+    sequences: list[str],
+    sequence_ids: list[str],
+    model,
+    device,
+    *,
+    batch_size: int,
+    gene_data: dict[str, list] | None = None,
+) -> list[dict[str, float]]:
+    """Extract features and infer scores in bounded-memory chunks."""
+
+    import torch
+
+    if len(sequences) != len(sequence_ids):
+        raise ValueError("sequences and sequence_ids must have the same length")
+
+    all_raw_scores: list[dict[str, float]] = []
+    for start in range(0, len(sequences), batch_size):
+        end = min(start + batch_size, len(sequences))
+        feature_chunk = extract_features(
+            sequences[start:end],
+            gene_data=gene_data,
+            seq_ids=sequence_ids[start:end],
+        )
+        batch = torch.from_numpy(feature_chunk).to(device)
+        with torch.no_grad():
+            logits = model(batch)
+            probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
+        all_raw_scores.extend(
+            {IDX_TO_CLASS[j]: float(probability[j]) for j in range(len(probability))}
+            for probability in probabilities
+        )
+        if end == len(sequences) or end % 10_000 == 0:
+            logger.info("MLP inference: %d / %d sequences", end, len(sequences))
+    return all_raw_scores
+
+
 def predict(
     sequences: list[str],
     sequence_ids: list[str],
@@ -452,23 +489,18 @@ def predict(
     # Build gene_data dict (seq_id → gene list) for extract_features().
     # Only pass gene_data when the loaded model was actually trained with them.
     gene_data_for_extract: dict[str, list] | None = None
-    if _model_wants_gene_features and orf_data_global:
+    if _model_wants_gene_features:
         gene_data_for_extract = {sid: d.get("genes", []) for sid, d in orf_data_global.items()}
 
-    X = extract_features(sequences, gene_data=gene_data_for_extract, seq_ids=sequence_ids)
-
     # ── Stage 1: MLP softmax scores ──────────────────────────────────────────
-    all_raw_scores: list[dict[str, float]] = []
-
-    for start in range(0, len(X), batch_size):
-        batch = torch.tensor(X[start : start + batch_size]).to(device)
-        with torch.no_grad():
-            logits = model(batch)
-            probs = torch.softmax(logits, dim=-1).cpu().numpy()
-        for prob_row in probs:
-            all_raw_scores.append(
-                {IDX_TO_CLASS[j]: float(prob_row[j]) for j in range(len(prob_row))}
-            )
+    all_raw_scores = _mlp_scores_chunked(
+        sequences,
+        sequence_ids,
+        model,
+        device,
+        batch_size=batch_size,
+        gene_data=gene_data_for_extract,
+    )
 
     # Apply prior correction
     all_scores: list[dict[str, float]] = []

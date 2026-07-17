@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 TOOLS = ["plasflow2", "genomad", "plasclass", "rfplasmid", "mobrecon"]
 
+# These parsers are expected to emit one row for essentially every input
+# contig.  Positive-only tools such as geNomad are intentionally excluded.
+FULL_COVERAGE_TOOLS = {"plasflow2", "plasclass", "rfplasmid", "mobrecon"}
+
 LENGTH_TIERS = ["<2 kb", "2-5 kb", "5-10 kb", "10-50 kb", ">50 kb"]
 
 
@@ -170,6 +174,42 @@ PARSERS = {
 }
 
 
+def _load_run_status(results_dir: Path) -> dict[str, str]:
+    """Load the final status recorded for each tool by ``run_tools.sh``."""
+
+    timing_path = results_dir / "timing.tsv"
+    if not timing_path.exists():
+        return {}
+    statuses: dict[str, str] = {}
+    with open(timing_path) as fh:
+        for row in csv.DictReader(fh, delimiter="\t"):
+            tool = row.get("tool", "").strip()
+            if tool:
+                # Later rows win. This handles a failed first attempt followed
+                # by a successful retry, or a timeout recorded after launch.
+                statuses[tool] = row.get("status", "").strip().lower()
+    return statuses
+
+
+def _assess_tool(
+    tool: str,
+    predictions: dict[str, str],
+    run_status: dict[str, str],
+    n_labels: int,
+) -> tuple[bool, str, float]:
+    """Return availability, reason, and prediction coverage for a tool run."""
+
+    coverage = len(predictions) / n_labels if n_labels else 0.0
+    recorded = run_status.get(tool)
+    if recorded is not None and recorded not in ("", "ok", "success", "completed"):
+        return False, f"run status: {recorded}", coverage
+    if tool in FULL_COVERAGE_TOOLS and coverage < 0.99:
+        return False, f"incomplete output: {coverage:.1%} contig coverage", coverage
+    if not predictions and recorded is None:
+        return False, "no output and no successful run status", coverage
+    return True, "ok", coverage
+
+
 # ── Metrics ────────────────────────────────────────────────────────────────────
 
 
@@ -212,11 +252,35 @@ def evaluate(
 
     # Load all tool predictions
     predictions: dict[str, dict[str, str]] = {}
+    run_status = _load_run_status(results_dir)
+    tool_status_rows: list[dict] = []
+    valid_tools: list[str] = []
     for tool in TOOLS:
         if tool in PARSERS:
             predictions[tool] = PARSERS[tool](results_dir)
         else:
             predictions[tool] = {}
+        available, reason, coverage = _assess_tool(tool, predictions[tool], run_status, len(labels))
+        tool_status_rows.append(
+            {
+                "tool": tool,
+                "available": str(available).lower(),
+                "run_status": run_status.get(tool, "not_recorded"),
+                "prediction_count": len(predictions[tool]),
+                "coverage": round(coverage, 4),
+                "reason": reason,
+            }
+        )
+        if available:
+            valid_tools.append(tool)
+        else:
+            logger.warning("%s excluded from metrics: %s", tool, reason)
+
+    _write_tsv(
+        tool_status_rows,
+        out_dir / "tool_status.tsv",
+        ["tool", "available", "run_status", "prediction_count", "coverage", "reason"],
+    )
 
     # Per-contig table
     per_contig_rows: list[dict] = []
@@ -228,7 +292,7 @@ def evaluate(
             "length_tier": gt.get("length_tier", ""),
             "taxon": gt.get("taxon", ""),
         }
-        for tool in TOOLS:
+        for tool in valid_tools:
             preds = predictions[tool]
             # Missing prediction → default to "non-plasmid" (tools only report positives)
             row[f"pred_{tool}"] = preds.get(cid, "non-plasmid")
@@ -237,7 +301,7 @@ def evaluate(
     # Write per_contig.tsv
     per_contig_path = out_dir / "per_contig.tsv"
     fieldnames = ["contig_id", "true_label", "length", "length_tier", "taxon"] + [
-        f"pred_{t}" for t in TOOLS
+        f"pred_{t}" for t in valid_tools
     ]
     with open(per_contig_path, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames, delimiter="\t")
@@ -249,7 +313,7 @@ def evaluate(
     overall_rows: list[dict] = []
     confusion_rows: list[dict] = []
 
-    for tool in TOOLS:
+    for tool in valid_tools:
         tp = fp = tn = fn = 0
         for row in per_contig_rows:
             true = row["true_label"]
@@ -294,7 +358,7 @@ def evaluate(
 
     # ── Metrics by length tier ────────────────────────────────────────────────
     by_len_rows: list[dict] = []
-    for tool in TOOLS:
+    for tool in valid_tools:
         for tier in LENGTH_TIERS:
             tier_rows = [r for r in per_contig_rows if r["length_tier"] == tier]
             if not tier_rows:
@@ -336,7 +400,7 @@ def evaluate(
     # ── Metrics by taxon ──────────────────────────────────────────────────────
     taxa = sorted({r["taxon"] for r in per_contig_rows if r["taxon"]})
     by_taxon_rows: list[dict] = []
-    for tool in TOOLS:
+    for tool in valid_tools:
         for taxon in taxa:
             t_rows = [r for r in per_contig_rows if r["taxon"] == taxon]
             tp = fp = tn = fn = 0

@@ -1,6 +1,0 @@
-bin,n_plasmid,n_chromosome,plasmid_precision,plasmid_recall,plasmid_f1
-1-2kb,0,32296,0.0,0,0
-2-5kb,5,16549,0.0008,0.2,0.0017
-5-10kb,4,6502,0.0,0.0,0
-10-50kb,385,4653,0.621,0.2,0.3026
->50kb,0,0,0,0,0

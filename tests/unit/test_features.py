@@ -9,6 +9,7 @@ from plasflow2.classify.features import (
     FEATURE_DIM,
     K7_CANON_SIZE,
     extract_features,
+    extract_features_to_npy,
     kmer_vector,
 )
 
@@ -42,6 +43,18 @@ def test_extract_features_dtype() -> None:
     seqs = ["ACGT" * 50]
     X = extract_features(seqs)
     assert X.dtype == np.float32
+
+
+def test_extract_features_to_npy_is_chunked_and_atomic(tmp_path) -> None:
+    seqs = ["ACGT" * 50, "GGCC" * 50, "TTAA" * 50]
+    path = tmp_path / "features.npy"
+
+    shape = extract_features_to_npy(seqs, path, chunk_size=2)
+
+    assert shape == (3, FEATURE_DIM)
+    assert path.exists()
+    assert not (tmp_path / "features.npy.incomplete").exists()
+    np.testing.assert_allclose(np.load(path), extract_features(seqs))
 
 
 def test_extract_features_different_seqs() -> None:
