@@ -1,0 +1,23 @@
+{
+  "benchmark_label_files": [
+    "data/benchmark/tier1/all_species/labels.tsv",
+    "data/benchmark/tier2_metagenome/labels.tsv"
+  ],
+  "external_groups": 1155,
+  "locked_phage_groups": 2587,
+  "locked_phage_rows": 10105,
+  "locked_training_rows_total": 10235,
+  "phage_dev_fraction": 0.5,
+  "phage_dev_groups": 1270,
+  "phage_dev_rows": 4898,
+  "phage_final_groups": 1317,
+  "phage_final_rows": 5207,
+  "phage_fraction": 0.1,
+  "remaining_class_counts": {
+    "0": 109792,
+    "1": 108997,
+    "2": 89895
+  },
+  "remaining_training_rows": 308684,
+  "seed": 42
+}
