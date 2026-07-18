@@ -526,8 +526,7 @@ class MarkerClassifier:
         x = features.to_array().reshape(1, -1)
         proba = self.predict_proba(x)[0]
         scores = {
-            class_name: float(proba[i])
-            for i, class_name in enumerate(self._classes[: len(proba)])
+            class_name: float(proba[i]) for i, class_name in enumerate(self._classes[: len(proba)])
         }
         # Legacy production marker checkpoints are binary
         # (plasmid/chromosome). Keep them usable beside a 3-class MLP by

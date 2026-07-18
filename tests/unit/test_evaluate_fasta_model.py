@@ -97,10 +97,10 @@ def test_evaluate_fasta_models_shares_one_feature_pass(tmp_path, monkeypatch) ->
     real_extract_features = evaluator.extract_features
     calls = 0
 
-    def counted_extract_features(sequences):
+    def counted_extract_features(sequences, *args, **kwargs):
         nonlocal calls
         calls += 1
-        return real_extract_features(sequences)
+        return real_extract_features(sequences, *args, **kwargs)
 
     monkeypatch.setattr(evaluator, "extract_features", counted_extract_features)
     results = evaluate_fasta_models(

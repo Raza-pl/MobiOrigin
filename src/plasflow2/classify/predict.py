@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Default confidence thresholds (class-specific)
 DEFAULT_THRESHOLD = 0.70  # chromosome
 DEFAULT_PHAGE_THRESHOLD = 0.70  # phage — restored to 0.70 (was 0.85, over-suppressed recall)
-DEFAULT_PLASMID_THRESHOLD = 0.80   # plasmid — optimal with COMPASS post-filter (sweep: Tier 1 F1=0.7332 at t=0.80+per-length COMPASS tiers, Jul 2026)
+DEFAULT_PLASMID_THRESHOLD = 0.80  # plasmid — optimal with COMPASS post-filter (sweep: Tier 1 F1=0.7332 at t=0.80+per-length COMPASS tiers, Jul 2026)
 
 # Per-length plasmid threshold multipliers.
 # Short sequences (<3kb) have noisier k-mer profiles → require higher confidence.
@@ -106,11 +106,11 @@ LENGTH_THRESHOLD_TIERS = [
 # Tiers scale proportionally when --compass-threshold overrides the 0.002 base.
 COMPASS_LENGTH_TIERS = [
     # (max_length_bp, compass_threshold)
-    (4_999, 0.002),          # <5kb  — base threshold
-    (9_999, 0.003),          # 5-10kb
-    (19_999, 0.006),         # 10-20kb
-    (49_999, 0.010),         # 20-50kb
-    (float("inf"), 0.001),   # ≥50kb — very few FPs; keep low to retain TPs
+    (4_999, 0.002),  # <5kb  — base threshold
+    (9_999, 0.003),  # 5-10kb
+    (19_999, 0.006),  # 10-20kb
+    (49_999, 0.010),  # 20-50kb
+    (float("inf"), 0.001),  # ≥50kb — very few FPs; keep low to retain TPs
 ]
 
 _COMPASS_CALIBRATED_BASE = 0.002  # base threshold used when calibrating COMPASS_LENGTH_TIERS

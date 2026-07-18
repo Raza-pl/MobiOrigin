@@ -89,8 +89,8 @@ FEATURE_DIM_FULL = FEATURE_DIM + GENE_DIM  # 9563
 #   col 9557 (or 9563): compass_containment  — fraction of query k-mers in COMPASS plasmid sketch
 #   col 9558 (or 9564): chr_containment      — fraction of query k-mers in chromosome sketch
 CONTAINMENT_DIM = 2
-FEATURE_DIM_CONTAINMENT = FEATURE_DIM + CONTAINMENT_DIM           # 9559
-FEATURE_DIM_FULL_CONTAINMENT = FEATURE_DIM_FULL + CONTAINMENT_DIM # 9565
+FEATURE_DIM_CONTAINMENT = FEATURE_DIM + CONTAINMENT_DIM  # 9559
+FEATURE_DIM_FULL_CONTAINMENT = FEATURE_DIM_FULL + CONTAINMENT_DIM  # 9565
 
 # Canonical Shine-Dalgarno motifs as recognised by pyrodigal
 _CANONICAL_SD: frozenset[str] = frozenset({"AGGAG", "GGAG", "AGGA", "AGG", "GGA", "GAGG"})
@@ -385,8 +385,8 @@ def extract_features(
     k6_pca_path: Path | str | None = None,
     gene_data: dict[str, list] | None = None,
     seq_ids: list[str] | None = None,
-    compass_sketch: "NDArray[np.uint64] | None" = None,
-    chr_sketch: "NDArray[np.uint64] | None" = None,
+    compass_sketch: NDArray[np.uint64] | None = None,
+    chr_sketch: NDArray[np.uint64] | None = None,
 ) -> NDArray[np.float32]:
     """Extract k=1–5 + k=7-canonical k-mer features + length feature.
 
@@ -436,11 +436,11 @@ def extract_features(
     if use_gene and use_containment:
         dim = FEATURE_DIM_FULL_CONTAINMENT  # 9565
     elif use_gene:
-        dim = FEATURE_DIM_FULL              # 9563
+        dim = FEATURE_DIM_FULL  # 9563
     elif use_containment:
-        dim = FEATURE_DIM_CONTAINMENT       # 9559
+        dim = FEATURE_DIM_CONTAINMENT  # 9559
     else:
-        dim = FEATURE_DIM                   # 9557
+        dim = FEATURE_DIM  # 9557
     X = np.zeros((n, dim), dtype=np.float32)
 
     # k=1–5 block (1364 dims)
@@ -479,13 +479,13 @@ def extract_features(
     # Comparative-genomics containment block (2 dims, Rev6+ models)
     if use_containment:
         logger.info("  Computing COMPASS + chromosome containment features (%d seqs) …", n)
-        from plasflow2.classify.containment import _minhash, _containment
+        from plasflow2.classify.containment import _containment, _minhash
 
         compass_arr = compass_sketch.astype(np.uint64)
         chr_arr = chr_sketch.astype(np.uint64)
         for i, seq in enumerate(sequences):
             q = _minhash(seq)
-            X[i, offset]     = float(_containment(q, compass_arr))
+            X[i, offset] = float(_containment(q, compass_arr))
             X[i, offset + 1] = float(_containment(q, chr_arr))
             if n >= 10_000 and (i + 1) % 10_000 == 0:
                 logger.info("  containment: %d / %d sequences", i + 1, n)

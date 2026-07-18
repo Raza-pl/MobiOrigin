@@ -21,6 +21,7 @@ and call ``plasmid_containment()`` on each candidate sequence::
     filt = CompassFilter.load(sketch_path)
     keep = filt.check(sequence)          # True = retain as plasmid
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,9 +50,7 @@ def _mix64(x: np.ndarray) -> np.ndarray:
 
 def _minhash(seq: str, S: int = 5_000) -> np.ndarray:
     """Compute bottom-S canonical k-mer MinHash sketch for a sequence."""
-    arr = _BASE[
-        np.frombuffer(seq.upper().encode("ascii", errors="replace"), dtype=np.uint8)
-    ]
+    arr = _BASE[np.frombuffer(seq.upper().encode("ascii", errors="replace"), dtype=np.uint8)]
     if len(arr) < _K:
         return np.array([], dtype=np.uint64)
     w = sliding_window_view(arr, _K)
@@ -84,6 +83,7 @@ def _containment(query: np.ndarray, db_sketch: np.ndarray) -> float:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 class CompassFilter:
     """Loaded COMPASS sketch, ready to test sequences.
 
@@ -114,7 +114,7 @@ class CompassFilter:
         *,
         threshold: float = 0.001,
         project_root: Path | str | None = None,
-    ) -> "CompassFilter":
+    ) -> CompassFilter:
         """Load sketch from *sketch_path* (or the default location).
 
         Parameters
@@ -133,6 +133,7 @@ class CompassFilter:
         FileNotFoundError
             If no sketch file can be located.
         """
+        path: Path | None
         if sketch_path is not None:
             path = Path(sketch_path)
         else:
@@ -144,7 +145,7 @@ class CompassFilter:
             path = next((p for p in candidates if p.exists()), None)
             if path is None:
                 raise FileNotFoundError(
-                    f"COMPASS sketch not found. Expected at one of:\n"
+                    "COMPASS sketch not found. Expected at one of:\n"
                     + "\n".join(f"  {p}" for p in candidates)
                     + "\nRun scripts/build_comparative_sketches.py to build it."
                 )
@@ -194,7 +195,4 @@ class CompassFilter:
 
     # ------------------------------------------------------------------
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"CompassFilter(sketch_size={len(self._sketch):,}, "
-            f"threshold={self.threshold})"
-        )
+        return f"CompassFilter(sketch_size={len(self._sketch):,}, " f"threshold={self.threshold})"

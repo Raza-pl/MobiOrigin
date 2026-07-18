@@ -59,7 +59,6 @@ def test_build_hard_negative_augmentation_filters_and_balances(tmp_path, monkeyp
     assert summary["skipped_large_files"] == [str(input_dir / "too_large.fna")]
     assert set(np.load(output_dir / "labels.npy")) == {1}
     assert all(
-        line.startswith("KEEP_")
-        for line in (output_dir / "seq_ids.txt").read_text().splitlines()
+        line.startswith("KEEP_") for line in (output_dir / "seq_ids.txt").read_text().splitlines()
     )
     assert json.loads((output_dir / "augmentation_summary.json").read_text())["total_rows"] == 4

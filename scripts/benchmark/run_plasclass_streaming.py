@@ -15,7 +15,11 @@ import sklearn.preprocessing._data as _preprocessing_data
 sys.modules.setdefault("sklearn.linear_model.logistic", _logistic)
 sys.modules.setdefault("sklearn.preprocessing.data", _preprocessing_data)
 
-from plasclass.plasclass import plasclass as PlasClass  # noqa: E402
+try:
+    from plasclass.plasclass import plasclass as PlasClass  # noqa: E402
+except ImportError:  # pragma: no cover - PlasClass is an external benchmark tool
+    PlasClass = None  # type: ignore[assignment,misc]
+
 from plasflow2.utils.fasta import iter_fasta  # noqa: E402
 
 
@@ -30,6 +34,11 @@ def run_plasclass_streaming(
 
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if PlasClass is None:
+        raise RuntimeError(
+            "PlasClass is not installed. Install the external PlasClass tool "
+            "(https://github.com/Shamir-Lab/PlasClass) to run this benchmark."
+        )
     classifier = PlasClass(n_procs=processes)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     total = 0
