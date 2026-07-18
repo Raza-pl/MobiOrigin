@@ -1,0 +1,55 @@
+{
+  "bins": {
+    "1-2kb": {
+      "best_thr": 0.99,
+      "n_true": 0,
+      "f1": 0.0
+    },
+    "2-5kb": {
+      "best_thr": 0.98,
+      "n_true": 5,
+      "tp": 2,
+      "fp": 204,
+      "fn": 3,
+      "precision": 0.0097,
+      "recall": 0.4,
+      "f1": 0.019
+    },
+    "5-10kb": {
+      "best_thr": 0.98,
+      "n_true": 4,
+      "tp": 1,
+      "fp": 56,
+      "fn": 3,
+      "precision": 0.0175,
+      "recall": 0.25,
+      "f1": 0.0328
+    },
+    "10-20kb": {
+      "best_thr": 0.96,
+      "n_true": 379,
+      "tp": 250,
+      "fp": 105,
+      "fn": 129,
+      "precision": 0.7042,
+      "recall": 0.6596,
+      "f1": 0.6812
+    },
+    ">20kb": {
+      "best_thr": 0.98,
+      "n_true": 6,
+      "tp": 3,
+      "fp": 6,
+      "fn": 3,
+      "precision": 0.3333,
+      "recall": 0.5,
+      "f1": 0.4
+    }
+  },
+  "overall": {
+    "plasmid_f1": 0.4976,
+    "chromosome_f1": 0.9957,
+    "macro_f1": 0.7467
+  },
+  "length_threshold_tiers": "LENGTH_THRESHOLD_TIERS = [\n    (  2000, 0.99,  0.85, 0.70),  # 1-2kb\n    (  4999, 0.98,  0.85, 0.70),  # 2-5kb\n    (  9999, 0.98,  0.85, 0.70),  # 5-10kb\n    ( 19999, 0.96,  0.85, 0.70),  # 10-20kb\n    (float('inf'), 0.98, 0.82, 0.68),  # >20kb\n]"
+}

@@ -1,0 +1,21 @@
+{
+  "plasmid": {
+    "precision": 0.06,
+    "recall": 0.876,
+    "f1": 0.112,
+    "tp": 345,
+    "fp": 5417,
+    "fn": 49
+  },
+  "chromosome": {
+    "precision": 0.999,
+    "recall": 0.91,
+    "f1": 0.952,
+    "tp": 54583,
+    "fp": 49,
+    "fn": 5417
+  },
+  "macro_f1": 0.532,
+  "threshold": 0.7,
+  "total": 60394
+}

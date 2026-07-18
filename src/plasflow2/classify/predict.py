@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Default confidence thresholds (class-specific)
 DEFAULT_THRESHOLD = 0.70  # chromosome
 DEFAULT_PHAGE_THRESHOLD = 0.70  # phage — restored to 0.70 (was 0.85, over-suppressed recall)
-DEFAULT_PLASMID_THRESHOLD = 0.862  # plasmid — calibrated for Rev5 (T=1.547); see LENGTH_THRESHOLD_TIERS
+DEFAULT_PLASMID_THRESHOLD = 0.80   # plasmid — optimal with COMPASS post-filter (sweep: Tier 1 F1=0.7332 at t=0.80+per-length COMPASS tiers, Jul 2026)
 
 # Per-length plasmid threshold multipliers.
 # Short sequences (<3kb) have noisier k-mer profiles → require higher confidence.
@@ -86,6 +86,47 @@ LENGTH_THRESHOLD_TIERS = [
     (19_999, 0.857, 0.90, 0.63),  # 10-20kb
     (float("inf"), 0.809, 0.90, 0.62),  # >20kb
 ]
+
+# Per-length COMPASS containment thresholds.
+# Longer sequences require higher containment to be called plasmids because
+# long chromosomal HGT fragments match the plasmid database at low containment
+# (a single 5kb HGT hotspot contributes ~0.002 in a 100kb contig).
+# True plasmids in longer length bins have distinctly higher containment.
+#
+# Calibrated on Tier 1 benchmark (299,589 sequences, Jul 2026).
+# Optimal thresholds discovered by 2D sweep (plasmid_threshold × compass_threshold
+# per length tier):
+#   <5kb:    ct=0.002  → unchanged (short TPs and FPs have overlapping scores)
+#   5-10kb:  ct=0.003  → FP p25=0.0028 vs TP p10=0.0036
+#   10-20kb: ct=0.006  → FP p50=0.0056 vs TP p25=0.0090
+#   20-50kb: ct=0.010  → FP p50=0.0072 vs TP p25=0.0200
+#   ≥50kb:   ct=0.001  → essentially no FPs at this length; keep low to maximise TP
+#
+# Net effect vs uniform ct=0.002: F1 0.7247 → 0.7332 (+0.0085).
+# Tiers scale proportionally when --compass-threshold overrides the 0.002 base.
+COMPASS_LENGTH_TIERS = [
+    # (max_length_bp, compass_threshold)
+    (4_999, 0.002),          # <5kb  — base threshold
+    (9_999, 0.003),          # 5-10kb
+    (19_999, 0.006),         # 10-20kb
+    (49_999, 0.010),         # 20-50kb
+    (float("inf"), 0.001),   # ≥50kb — very few FPs; keep low to retain TPs
+]
+
+_COMPASS_CALIBRATED_BASE = 0.002  # base threshold used when calibrating COMPASS_LENGTH_TIERS
+
+
+def _get_compass_threshold(seq_len: int, base_threshold: float) -> float:
+    """Return the per-length COMPASS containment threshold for a given sequence length.
+
+    Uses COMPASS_LENGTH_TIERS scaled by (base_threshold / 0.002) so that
+    custom --compass-threshold values preserve the relative tier ratios.
+    """
+    scale = base_threshold / _COMPASS_CALIBRATED_BASE if _COMPASS_CALIBRATED_BASE > 0 else 1.0
+    for max_len, tier_ct in COMPASS_LENGTH_TIERS:
+        if seq_len <= max_len:
+            return tier_ct * scale
+    return base_threshold
 
 
 def _get_length_thresholds(seq_len: int) -> tuple[float, float, float]:
@@ -397,6 +438,9 @@ def predict(
     marker_alpha_base: float = 0.3,
     pre_computed_annotations: dict[str, dict[str, float]] | None = None,
     precomputed_orf_data: dict[str, dict] | None = None,
+    # --- COMPASS containment filter (post-processing) ---
+    compass_sketch_path: Path | str | None = None,
+    compass_threshold: float = 0.002,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
@@ -430,6 +474,21 @@ def predict(
             (seq_id → {n_orfs, covered_bp, genes}).  When provided, the internal
             pyrodigal call is skipped entirely — useful when the caller has
             already run pyrodigal for another purpose (e.g. mob DIAMOND).
+        compass_sketch_path: Optional path to the COMPASS MinHash sketch .npy
+            file (k=21, sorted uint64 bottom-S hashes).  When provided, sequences
+            predicted as plasmid are validated against the sketch: those with
+            containment < compass_threshold are reclassified as chromosome.
+            Improves Tier 1 plasmid F1 from 0.534 → 0.733 at plasmid_threshold=0.80,
+            compass_threshold=0.002 with per-length COMPASS tiers
+            (Tier 1 benchmark, 299,589 sequences, Jul 2026).
+            Hard biological overrides (conjugative_override, hallmark_boost,
+            replicon_boost) are exempt — biological evidence supersedes containment.
+        compass_threshold: Base containment score for COMPASS filtering (default 0.002).
+            Per-length thresholds are applied automatically (see COMPASS_LENGTH_TIERS):
+            longer sequences require higher containment because chromosomal HGT
+            fragments can match the plasmid database at low containment.
+            This threshold is the baseline for <5kb sequences; longer tiers
+            scale proportionally if you override this value.
 
     Returns:
         List of Prediction objects, one per input sequence.
@@ -987,6 +1046,52 @@ def predict(
                 ),
             )
         )
+
+    # ── COMPASS containment filter (post-processing) ──────────────────────────
+    # Applied AFTER label assignment so that biological hard overrides
+    # (conjugative_override, hallmark_boost, replicon_boost) are honoured even
+    # when COMPASS containment is low (e.g. novel conjugative plasmid not yet in
+    # the database).
+    if compass_sketch_path is not None:
+        from plasflow2.classify.containment import CompassFilter
+
+        _EXEMPT_EVIDENCE = {"conjugative_override", "hallmark_boost", "replicon_boost"}
+        try:
+            _compass = CompassFilter.load(compass_sketch_path, threshold=compass_threshold)
+            n_reclassified = 0
+            for i, result in enumerate(results):
+                if result.label != "plasmid":
+                    continue
+                # Exempt hard biological overrides
+                if result.evidence_type in _EXEMPT_EVIDENCE:
+                    continue
+                c_score = _compass.score(sequences[i])
+                # Per-length threshold: longer sequences need higher containment
+                # (chromosomal HGT fragments match at low containment; true
+                # plasmids of the same length score distinctly higher).
+                eff_threshold = _get_compass_threshold(len(sequences[i]), compass_threshold)
+                if c_score < eff_threshold:
+                    results[i] = Prediction(
+                        sequence_id=result.sequence_id,
+                        label="chromosome",
+                        confidence=result.confidence,
+                        scores=result.scores,
+                        low_confidence=True,  # flagged: containment-rejected plasmid
+                        mlp_scores=result.mlp_scores,
+                        xgb_scores=result.xgb_scores,
+                        bio_evidence=result.bio_evidence,
+                        evidence_type="compass_rejected",
+                    )
+                    n_reclassified += 1
+            logger.info(
+                "COMPASS containment filter: %d plasmid predictions reclassified as chromosome "
+                "(compass_threshold=%.4f base, per-length tiers active, sketch=%s)",
+                n_reclassified,
+                compass_threshold,
+                Path(compass_sketch_path).name,
+            )
+        except FileNotFoundError as e:
+            logger.warning("COMPASS filter skipped — sketch not found: %s", e)
 
     n_unclassified = sum(1 for r in results if r.label == "unclassified")
     logger.info(

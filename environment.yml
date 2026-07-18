@@ -1,0 +1,64 @@
+# PlasFlow v2 — Conda environment
+#
+# Resolves mob-suite / pandas / pytz compatibility across:
+#   Mac Intel (x86_64), Mac M1-M5 (arm64), Linux x86_64, WSL Ubuntu
+#
+# Create:  conda env create -f environment.yml
+# Activate: conda activate plasflow2
+# Install pkg: pip install -e .
+#
+# NOTE: torch is installed via pip (conda version is large and slow to resolve)
+# NOTE: pytz is pinned explicitly because mob-suite imports it but pandas 2.x
+#       removed the dependency — conda does not always pull it automatically.
+
+name: plasflow2
+
+channels:
+  - conda-forge   # highest priority — resolves most conflicts
+  - bioconda
+  - defaults
+
+dependencies:
+  # ── Core Python ──────────────────────────────────────────────────────────
+  - python=3.10          # 3.11 has issues with some mob-suite deps; 3.10 is safe
+  - pip
+
+  # ── Bioinformatics tools (conda-managed for correct shared-library linking) ─
+  - diamond>=2.1
+  - minimap2>=2.26
+  # mob-suite is installed via pip (see pip section below) to avoid bioconda
+  # channel resolution failures on Linux/WSL where the package is inconsistently
+  # named mob-suite vs mob_suite across mirror snapshots.
+  - pytz>=2022.7         # explicit — mob-suite imports pytz but pandas 2.x dropped it
+  - genomad>=1.7         # optional but recommended; adds geNomad features to XGBoost
+
+  # ── Numerics (pip versions avoid conda solver slowdowns) ─────────────────
+  - pip:
+    # ML / numerics
+    - "torch>=2.0.0,<2.6"
+    - "scikit-learn>=1.5.0"
+    - "numpy>=1.24.0"          # numpy 2.x compatible (torch 2.5+, scipy 1.11+, xgboost 2+ all support it)
+    - "scipy>=1.11.0"
+
+    # Bioinformatics
+    # mob-suite is installed separately in install.sh with --no-deps because its
+    # package metadata declares numpy<1.23.5 (a stale constraint from 2022) which
+    # conflicts with any modern numpy. It works fine at runtime with numpy 2.x.
+    - "biopython>=1.82"
+    - "pyrodigal>=3.0.0"
+
+    # CLI & output
+    - "click>=8.1.0"
+    - "tqdm>=4.66.0"
+
+    # Reporting
+    - "plotly>=5.18.0"
+    - "jinja2>=3.1.0"
+    - "pandas>=2.1.0"
+
+    # Data / models
+    - "h5py>=3.10.0"
+    - "xgboost>=2.0.0"
+
+    # PlasFlow v2 itself (editable install from repo root)
+    - "-e ."

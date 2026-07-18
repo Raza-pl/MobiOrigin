@@ -85,6 +85,13 @@ GENE_DIM = 6  # gc_content, coding_density, n_orfs_per_kb, strand_switch_rate,
 # canonical_sd_freq, no_rbs_freq
 FEATURE_DIM_FULL = FEATURE_DIM + GENE_DIM  # 9563
 
+# Comparative-genomics containment features (appended for Rev6+ models)
+#   col 9557 (or 9563): compass_containment  — fraction of query k-mers in COMPASS plasmid sketch
+#   col 9558 (or 9564): chr_containment      — fraction of query k-mers in chromosome sketch
+CONTAINMENT_DIM = 2
+FEATURE_DIM_CONTAINMENT = FEATURE_DIM + CONTAINMENT_DIM           # 9559
+FEATURE_DIM_FULL_CONTAINMENT = FEATURE_DIM_FULL + CONTAINMENT_DIM # 9565
+
 # Canonical Shine-Dalgarno motifs as recognised by pyrodigal
 _CANONICAL_SD: frozenset[str] = frozenset({"AGGAG", "GGAG", "AGGA", "AGG", "GGA", "GAGG"})
 
@@ -378,13 +385,20 @@ def extract_features(
     k6_pca_path: Path | str | None = None,
     gene_data: dict[str, list] | None = None,
     seq_ids: list[str] | None = None,
+    compass_sketch: "NDArray[np.uint64] | None" = None,
+    chr_sketch: "NDArray[np.uint64] | None" = None,
 ) -> NDArray[np.float32]:
     """Extract k=1–5 + k=7-canonical k-mer features + length feature.
 
     When *gene_data* and *seq_ids* are provided, 6 gene content features are
     appended, extending the output from 9557 to 9563 dims.
 
-    Feature layout (9557 dims without gene_data, 9563 with):
+    When *compass_sketch* and *chr_sketch* are provided (Rev6+ models), 2
+    comparative-genomics containment features are appended last:
+      compass_containment  — fraction of query MinHash k-mers in COMPASS plasmid sketch
+      chr_containment      — fraction of query MinHash k-mers in chromosome sketch
+
+    Feature layout:
       cols    0–3      : k=1 (4 dims)
       cols    4–19     : k=2 (16 dims)
       cols   20–83     : k=3 (64 dims)
@@ -393,26 +407,40 @@ def extract_features(
       cols 1364–9555   : k=7 canonical (8192 dims)
       col  9556        : log10(length) scaled to [0, 1]
       cols 9557–9562   : gene content (6 dims, only when gene_data provided)
+      cols 9557/9563+  : compass_containment, chr_containment (2 dims, Rev6)
 
     The `k6_pca_path` argument is accepted for API compatibility but ignored.
 
     Args:
-        sequences:   List of DNA strings.
-        k6_pca_path: Ignored (kept for backward compat).
-        gene_data:   Optional dict mapping sequence ID → list of pyrodigal.Gene
-                     objects.  Must be paired with *seq_ids*.
-        seq_ids:     Sequence identifiers aligned to *sequences*.  Required when
-                     *gene_data* is provided.
+        sequences:      List of DNA strings.
+        k6_pca_path:    Ignored (kept for backward compat).
+        gene_data:      Optional dict mapping sequence ID → list of pyrodigal.Gene
+                        objects.  Must be paired with *seq_ids*.
+        seq_ids:        Sequence identifiers aligned to *sequences*.  Required when
+                        *gene_data* is provided.
+        compass_sketch: Sorted uint64 numpy array — bottom-S MinHash hashes from
+                        the COMPASS plasmid database.  When provided, compass
+                        containment is appended as a feature.  Requires chr_sketch.
+        chr_sketch:     Sorted uint64 numpy array — bottom-S MinHash hashes from
+                        the chromosome database.  Required when compass_sketch is set.
 
     Returns:
-        Float32 array of shape (N, 9557) or (N, 9563).
+        Float32 array of shape (N, 9557), (N, 9559), (N, 9563), or (N, 9565).
     """
     if k6_pca_path is not None:
         logger.debug("k6_pca_path ignored — k=7 canonical architecture does not use PCA")
 
     use_gene = gene_data is not None and seq_ids is not None
+    use_containment = compass_sketch is not None and chr_sketch is not None
     n = len(sequences)
-    dim = FEATURE_DIM_FULL if use_gene else FEATURE_DIM  # 9563 or 9557
+    if use_gene and use_containment:
+        dim = FEATURE_DIM_FULL_CONTAINMENT  # 9565
+    elif use_gene:
+        dim = FEATURE_DIM_FULL              # 9563
+    elif use_containment:
+        dim = FEATURE_DIM_CONTAINMENT       # 9559
+    else:
+        dim = FEATURE_DIM                   # 9557
     X = np.zeros((n, dim), dtype=np.float32)
 
     # k=1–5 block (1364 dims)
@@ -446,6 +474,21 @@ def extract_features(
         for i, (sid, seq) in enumerate(zip(seq_ids, sequences)):
             genes = gene_data.get(sid, [])
             X[i, offset : offset + GENE_DIM] = gene_content_vector(seq, genes)
+        offset += GENE_DIM
+
+    # Comparative-genomics containment block (2 dims, Rev6+ models)
+    if use_containment:
+        logger.info("  Computing COMPASS + chromosome containment features (%d seqs) …", n)
+        from plasflow2.classify.containment import _minhash, _containment
+
+        compass_arr = compass_sketch.astype(np.uint64)
+        chr_arr = chr_sketch.astype(np.uint64)
+        for i, seq in enumerate(sequences):
+            q = _minhash(seq)
+            X[i, offset]     = float(_containment(q, compass_arr))
+            X[i, offset + 1] = float(_containment(q, chr_arr))
+            if n >= 10_000 and (i + 1) % 10_000 == 0:
+                logger.info("  containment: %d / %d sequences", i + 1, n)
 
     logger.info("Extracted features: shape %s", X.shape)
     return X
