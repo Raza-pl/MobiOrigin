@@ -916,9 +916,19 @@ def predict(
         #   - Marker-invisible (no conjugation, mob, or hallmark genes)
         #   - But carry a recognisable origin of replication
         #
-        # Note: has_replicon has been 0 for all training sequences because
-        # makeblastdb was unavailable.  XGBoost has never learned its weight,
-        # so we apply it as a post-prediction modifier here.
+        # Note: has_replicon was 0 for all 90,000 rows in the committed marker
+        # training set (data/marker_features_balanced_28_genomad.npz) because
+        # the minimap2-vs-rep.dna.fas step never ran successfully when that
+        # dataset was built — see scripts/fix_has_replicon_feature.py, which
+        # fixed the column in place (777/90,000 rows now correctly flagged;
+        # feature importance goes from 0.0 to ~0.03 in a fresh XGBoost train).
+        # This post-prediction boost is kept for now because the *deployed*
+        # data/models/marker_xgb.pkl binary (a separate, untracked build
+        # artifact — see install.sh) has not yet been retrained on the fixed
+        # data and redistributed. Once that happens, re-evaluate whether this
+        # heuristic still adds value on top of the model's own learned
+        # has_replicon weight, or whether it now double-counts the same
+        # evidence.
         #
         # Boost is stronger than hallmark_boost (65% transfer vs 55%) because
         # replicon typing is more plasmid-specific.  Threshold mlp_plas ≥ 0.15
