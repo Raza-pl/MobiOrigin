@@ -698,6 +698,43 @@ def predict(
         is_binary_model = n_marker_classes < 3
         marker_classes = classes[:n_marker_classes]  # ["plasmid","chromosome"] or all 3
 
+        # ── Post hoc rule map: trained-feature redundancy vs. genuinely new
+        # evidence ─────────────────────────────────────────────────────────
+        # Everything from here down is a hand-coded override/boost applied
+        # AFTER the marker XGBoost has already produced marker_s above. Some
+        # of these key off evidence the XGBoost was never trained on (so the
+        # boost is the only place that evidence has any effect); others key
+        # off evidence that IS already a trained XGBoost feature (see
+        # MARKER_FEATURE_NAMES in marker_classifier.py), which means the
+        # signal gets counted twice — once via the model's learned weight,
+        # once via the hard-coded transfer. Recorded here (rather than fixed
+        # outright) because removing the redundant ones requires a real
+        # tier1 benchmark run to confirm they're not silently compensating
+        # for something else the model underweights; that couldn't be done
+        # in this pass:
+        #
+        #   conjugative_override   -- is_conjugative     -- TRAINED feature (redundant)
+        #   hallmark_boost         -- n_plasmid_markers   -- TRAINED feature (redundant)
+        #   marker_threshold_boost -- n_plasmid_markers   -- TRAINED feature (redundant)
+        #   replicon_boost         -- has_replicon        -- TRAINED as of the
+        #                               fix in fix_has_replicon_feature.py, but the
+        #                               *deployed* marker_xgb.pkl predates that fix
+        #                               (see commit 6946b66) -- currently still the
+        #                               only place this evidence has any effect.
+        #   plsdb_prot_boost       -- plsdb_prot_hits_per_kb / max_plsdb_prot_pct_id
+        #                               -- NEVER a trained feature; no training data
+        #                               for it exists anywhere in the repo. Not
+        #                               redundant -- this is the only source of
+        #                               this signal.
+        #   plsdb_nt_override      -- direct PLSDB/COMPASS nucleotide match --
+        #                               deliberately kept as a hard override rather
+        #                               than a feature (see has_plsdb_match comment
+        #                               in marker_classifier.py): a database
+        #                               membership match is closer to ground truth
+        #                               than a probabilistic signal, by design, not
+        #                               an oversight.
+        #   phage suppression      -- v_marker_freq       -- TRAINED feature (redundant)
+        #
         # Blend MLP + marker scores using attention weighting
         # Hard override ONLY for truly unambiguous conjugative plasmids
         # (relaxase + MPF together).  Mobilizable-only and rep-protein-only
