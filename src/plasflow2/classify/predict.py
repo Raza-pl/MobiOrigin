@@ -79,6 +79,23 @@ LENGTH_THRESHOLD_TIERS = [
     #   5-10kb:  F1=0.615  P=0.489  R=0.828 at t=0.859
     #   10-50kb: F1=0.735  P=0.631  R=0.880 at t=0.857
     #   >50kb:   F1=1.000  P=1.000  R=1.000 at t=0.809 (only 3 plasmids in benchmark)
+    #
+    # Attempted re-sweep against the has_replicon-fixed marker_xgb.pkl (commit
+    # 6946b66) on Jul 19 2026 using data/benchmark/benchmark.fna (60,394
+    # contigs) + annotations_with_replicons.tsv. Not applied: the sweep script
+    # used round-number bin edges (5000/10000/20000) instead of this table's
+    # actual boundaries (4999/9999/19999), and this benchmark's window lengths
+    # cluster hard at exactly 1000/2000/5000/10000/20000bp -- so "5-10kb" as
+    # swept and "5-10kb" as coded here are almost disjoint sets (the coded
+    # tier has 4 sequences in this benchmark; the swept sample of 379
+    # positives was actually the 10-20kb tier's population). Re-running with
+    # correct boundaries also didn't reproduce consistent results end to end
+    # (a full-cascade rerun showed FP +141 that a 4-sequence tier change can't
+    # explain), which isn't understood yet -- so no threshold values were
+    # changed here. What IS validated on the same benchmark: the has_replicon
+    # model fix alone (no threshold changes) moves full-cascade plasmid recall
+    # 0.284->0.538, precision 0.806->0.777, F1 0.420->0.636. Re-attempting
+    # this recalibration is a distinct follow-up, not done in this pass.
     (2_000, 0.862, 0.95, 0.75),  # <2kb
     (4_999, 0.864, 0.92, 0.68),  # 2-5kb
     (9_999, 0.859, 0.90, 0.65),  # 5-10kb
