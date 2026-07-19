@@ -1,5 +1,47 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 3: hallmark-gate ICE/PLSDB fix reverted (real-hardware regression)
+
+Items 4+5 (below, "Fixes applied — round 1") shipped in `cbf9a7e` without
+benchmark validation, flagged explicitly as such. The user then ran the
+real pipeline on real hardware and found it: default-mode recall came in
+at **0.251**, far below the 0.538 predicted from sandbox testing (which
+never exercised the hallmark gate — only `predict()` directly). Using
+`scripts/diagnose_hallmark_gate_impact.py` against the actual
+`all_predictions.tsv`, isolated the cause precisely:
+
+| Bucket (out of 295 total false negatives, 394 true plasmids) | Count |
+|---|---|
+| Never a Stage-1 MLP candidate at all | 170 |
+| Reached marker-XGBoost rescoring, lost there | 0 |
+| Hallmark-gate demoted | 125 |
+| — of which: would have survived the OLD gate (ICE/PLSDB evidence only) | **78** |
+
+78 out of 394 true plasmids (~20 points of recall) were demoted specifically
+because the gate fix stopped accepting a bare ICE hit or raw PLSDB match as
+sufficient evidence. That's a real, measured, substantial regression — the
+analogy to predict.py's *standalone* policy (which disables the same
+signals as a hard override forcing 0.97 confidence) didn't transfer to the
+hallmark gate's much weaker use of the same evidence (one of several signals
+that can avoid demoting an already-plausible MLP candidate, not a
+confidence-forcing override). **Reverted** the hallmark-gate evidence set
+back to the original (any-evidence, including ICE/PLSDB) policy.
+
+The other half of that original fix — removing a separate, more aggressive
+hard override that forced plasmid confidence to 0.97 on any PLSDB match
+during marker-XGBoost rescoring — was **kept**: the same diagnostic showed
+zero false negatives attributable to the XGBoost-rescoring stage in this
+run, so there's no evidence it caused harm, and it's a much closer analogue
+to predict.py's own already-validated override removal (forcing near-
+certain confidence from one weak signal, not just avoiding a demotion).
+
+Lesson for next time: an architecturally-motivated fix based on "this same
+evidence type was already shown unreliable elsewhere in the codebase" is
+not automatically safe to generalize to a different use of that evidence —
+each use of a signal (hard override vs. veto-avoidance vs. trained feature)
+has a different risk profile and needs its own validation, not inherited
+reasoning from a superficially similar case.
+
 ## Round 2 (same session, after "do all"): pickle migration + double-counting investigation
 
 **Item 10 (pickle → JSON) — shipped.** `MarkerClassifier.save()` now writes

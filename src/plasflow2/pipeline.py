@@ -928,24 +928,31 @@ def run_pipeline(
     # with plasmid-like k-mer composition — the dominant false-positive source.
     #
     # Evidence types (any one is sufficient):
-    #   1. Relaxase gene (conjugative or mobilizable class)
-    #   2. Replicon type (IncF, IncP, IncQ, …)
-    #   3. Rep protein hit
+    #   1. PLSDB / RefSeq / COMPASS nucleotide match
+    #   2. Relaxase gene (conjugative or mobilizable class)
+    #   3. Replicon type (IncF, IncP, IncQ, …)
+    #   4. ICE hit (integrative conjugative elements)
     #
-    # ICE hits and raw PLSDB/RefSeq/COMPASS nucleotide matches are
-    # deliberately NOT treated as sufficient evidence here, matching the
-    # standalone predict.py policy (see predict.py's ContigMarkerFeatures
-    # construction and the "PLSDB nucleotide hard override" comment there):
-    #   - ICEs integrate into chromosomes; using an ICE hit alone to confirm
-    #     a plasmid call produces chromosomal false positives.
-    #   - PLSDB nucleotide matching at this pipeline's minimap2 settings
-    #     (asm20-class, no chromosome-comparison margin) is non-specific —
-    #     predict.py measured ~3,300 chromosome FPs from the same signal and
-    #     disabled it as a classification override outright. Using it here
-    #     as "sufficient hallmark evidence" reintroduced exactly that FP
-    #     source through a different code path. Before this fix, the two
-    #     files disagreed on both signals; this made the pipeline's evidence
-    #     policy match predict.py's documented, already-validated one.
+    # NOTE (2026-07-19): a prior version of this gate dropped ICE hits and raw
+    # PLSDB matches from the evidence set, reasoning by analogy from
+    # predict.py's *separate* standalone policy (which disables the same
+    # signals as a HARD OVERRIDE that forces near-certain plasmid confidence
+    # -- a much stronger claim than "this is one of several signals that can
+    # avoid demoting an already MLP-scored candidate"). That analogy did not
+    # hold: a real-hardware run on the Tier 1 benchmark
+    # (data/benchmark/benchmark.fna, scripts/diagnose_hallmark_gate_impact.py)
+    # showed the ICE/PLSDB-exclusion version directly caused 78 additional
+    # false negatives out of 394 true plasmids (~20 points of recall) --
+    # contigs with a real ICE or PLSDB hit and nothing else that got demoted
+    # to unclassified and would have been correctly kept as plasmid
+    # otherwise. That is a real, measured regression, not a hypothetical
+    # concern, so it was reverted back to the original (any-evidence)
+    # policy. The genuinely-validated part of that change -- removing a
+    # separate, much more aggressive hard override that forced plasmid
+    # confidence to 0.97 on any PLSDB match during marker-XGBoost rescoring,
+    # a few hundred lines below -- caused zero measured false negatives in
+    # the same run and was kept. See docs/CODE_REVIEW_FINDINGS_2026-07.md
+    # for the full numbers and reasoning.
     #
     # Length tiers:
     #   < 50,000 bp  → demote to unclassified if no evidence
@@ -961,14 +968,12 @@ def run_pipeline(
         cid = record.id
         mob = mobility_by_contig.get(cid)
         has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
+        has_plsdb = cid in plasmid_db_hits
         _rep_type = (mob.replicon_type if mob is not None else None) or ""
         has_replicon = _rep_type.lower() not in ("", "-", "unknown", "none")
+        has_ice = bool(ice_by_contig.get(cid))
         has_rep_protein = cid in rep_protein_hits
-        # Deliberately not counted toward has_evidence (see comment above):
-        # `cid in plasmid_db_hits` (PLSDB/RefSeq/COMPASS match) and
-        # `bool(ice_by_contig.get(cid))` (ICE hit). Both are still recorded
-        # elsewhere in the per-contig output for users to inspect.
-        has_evidence = has_mobility or has_replicon or has_rep_protein
+        has_evidence = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
 
         if has_evidence:
             continue  # good evidence — keep as plasmid
