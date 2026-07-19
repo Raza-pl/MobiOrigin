@@ -66,7 +66,12 @@ from plasflow2.classify.marker_classifier import (
     extract_marker_features,
     marker_classifier_available,
 )
-from plasflow2.classify.predict import Prediction, _get_length_thresholds, predict
+from plasflow2.classify.predict import (
+    DEFAULT_THRESHOLD,
+    Prediction,
+    _get_length_thresholds,
+    predict,
+)
 from plasflow2.risk.scorer import RiskScore, score_nonplasmid, score_plasmid
 from plasflow2.utils.fasta import load_fasta, write_fasta
 
@@ -161,8 +166,8 @@ def run_pipeline(
     aro_index: Path | str | None,
     work_dir: Path | str,
     source_context: str = "unspecified",
-    confidence_threshold: float = 0.70,
-    plasmid_threshold: float = 0.95,
+    confidence_threshold: float | None = None,
+    plasmid_threshold: float | None = None,
     argmax_fallback: bool = False,
     min_contig_length: int = 1000,
     threads: int = 8,
@@ -209,10 +214,18 @@ def run_pipeline(
             ``unspecified``.
         confidence_threshold: Minimum MLP confidence for chromosome / phage /
             archaea calls (sequences below this are labelled ``unclassified``).
-        plasmid_threshold: Minimum MLP confidence for plasmid calls.  Defaults
-            to 0.95 — higher than *confidence_threshold* — to compensate for
-            class-prior imbalance: the model trains on ~25 % plasmid but real
-            metagenomes contain only ~2–5 % plasmid.
+            ``None`` (default) reproduces the historical CLI default (0.70,
+            applied only below 5kb — see predict.py module docstring for why).
+            An explicit value overrides the tier value at every length.
+        plasmid_threshold: Minimum MLP confidence for plasmid calls. ``None``
+            (default) reproduces the historical CLI default (0.95, applied
+            only below 5kb) to compensate for class-prior imbalance (the
+            model trains on ~25 % plasmid but real metagenomes contain only
+            ~2–5 % plasmid) without silently regressing precision — see
+            predict.py's ``_assign_label`` docstring for the benchmark that
+            motivated preserving this instead of a clean tier-profile
+            default. An explicit value overrides the tier value at every
+            length.
         min_contig_length: Discard sequences shorter than this (bp).
         threads: CPU threads for DIAMOND and MOB-suite.
         skip_mobility: If True, skip mob_typer and set mobility to None
@@ -291,11 +304,25 @@ def run_pipeline(
     # 2. Classify
     # ------------------------------------------------------------------
     logger.info("Classifying %d contigs …", len(sequences))
-    # In lenient mode lower plasmid threshold to match the general threshold so
-    # that moderate-confidence plasmid calls reach the hallmark gate (which is
-    # also skipped in lenient mode).  In normal mode keep the high plasmid
-    # threshold (default 0.95) to suppress false positives from class imbalance.
-    _effective_plasmid_threshold = confidence_threshold if lenient else plasmid_threshold
+    if lenient:
+        # Lenient mode intentionally lowers the plasmid bar to the general
+        # (chromosome/phage) threshold so moderate-confidence plasmid calls
+        # reach the hallmark gate — except the hallmark gate is also disabled
+        # in lenient mode, so this is what actually admits weaker plasmid
+        # calls. Applies uniformly at every length: previously this override
+        # only took effect below 5kb, and even there was combined with the
+        # tier default via max(), which silently discarded the lower value
+        # entirely (tier defaults are ~0.81-0.86, always higher than any
+        # value meant to loosen the classifier). See predict.py docstring.
+        _effective_plasmid_threshold = (
+            confidence_threshold if confidence_threshold is not None else DEFAULT_THRESHOLD
+        )
+    else:
+        # None => predict() reproduces the historical default (0.95 below
+        # 5kb, tier profile at/above 5kb) rather than a clean tier-profile
+        # default — see predict.py's _assign_label docstring for why.
+        # An explicit --plasmid-threshold overrides it at every length.
+        _effective_plasmid_threshold = plasmid_threshold
     predictions = predict(
         sequences,
         seq_ids,
@@ -900,10 +927,24 @@ def run_pipeline(
     # with plasmid-like k-mer composition — the dominant false-positive source.
     #
     # Evidence types (any one is sufficient):
-    #   1. PLSDB / RefSeq / COMPASS nucleotide match
-    #   2. Relaxase gene (conjugative or mobilizable class)
-    #   3. Replicon type (IncF, IncP, IncQ, …)
-    #   4. ICE hit (integrative conjugative elements)
+    #   1. Relaxase gene (conjugative or mobilizable class)
+    #   2. Replicon type (IncF, IncP, IncQ, …)
+    #   3. Rep protein hit
+    #
+    # ICE hits and raw PLSDB/RefSeq/COMPASS nucleotide matches are
+    # deliberately NOT treated as sufficient evidence here, matching the
+    # standalone predict.py policy (see predict.py's ContigMarkerFeatures
+    # construction and the "PLSDB nucleotide hard override" comment there):
+    #   - ICEs integrate into chromosomes; using an ICE hit alone to confirm
+    #     a plasmid call produces chromosomal false positives.
+    #   - PLSDB nucleotide matching at this pipeline's minimap2 settings
+    #     (asm20-class, no chromosome-comparison margin) is non-specific —
+    #     predict.py measured ~3,300 chromosome FPs from the same signal and
+    #     disabled it as a classification override outright. Using it here
+    #     as "sufficient hallmark evidence" reintroduced exactly that FP
+    #     source through a different code path. Before this fix, the two
+    #     files disagreed on both signals; this made the pipeline's evidence
+    #     policy match predict.py's documented, already-validated one.
     #
     # Length tiers:
     #   < 50,000 bp  → demote to unclassified if no evidence
@@ -919,12 +960,14 @@ def run_pipeline(
         cid = record.id
         mob = mobility_by_contig.get(cid)
         has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
-        has_plsdb = cid in plasmid_db_hits
         _rep_type = (mob.replicon_type if mob is not None else None) or ""
         has_replicon = _rep_type.lower() not in ("", "-", "unknown", "none")
-        has_ice = bool(ice_by_contig.get(cid))
         has_rep_protein = cid in rep_protein_hits
-        has_evidence = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
+        # Deliberately not counted toward has_evidence (see comment above):
+        # `cid in plasmid_db_hits` (PLSDB/RefSeq/COMPASS match) and
+        # `bool(ice_by_contig.get(cid))` (ICE hit). Both are still recorded
+        # elsewhere in the per-contig output for users to inspect.
+        has_evidence = has_mobility or has_replicon or has_rep_protein
 
         if has_evidence:
             continue  # good evidence — keep as plasmid
@@ -1132,19 +1175,45 @@ def run_pipeline(
                 marker_scores = _marker_clf.predict_scores(feats)
                 agg = aggregate_scores(pred.scores, marker_scores, feats.marker_gene_fraction)
 
-                # PLSDB match: hard override — confirmed plasmid identity
-                if cid in plasmid_db_hits:
-                    agg = {k: (0.97 if k == "plasmid" else (1 - 0.97) / 2) for k in agg}
+                # NOTE: a PLSDB nucleotide-match hard override (forcing plasmid
+                # confidence to 0.97) used to live here. Removed for consistency
+                # with predict.py, which explicitly disables the same signal as
+                # a classification override — this pipeline's minimap2 match
+                # (same non-specific settings: ~50% qcov / ~90% identity) was
+                # measured there to cause ~3,300 chromosome false positives.
+                # Forcing 0.97 confidence from that signal was an even stronger
+                # version of the same bug (see docs/CODE_REVIEW_FINDINGS_2026-07.md,
+                # item 5). PLSDB matches are still recorded in the per-contig
+                # output (plasmid_db_hits / bio_evidence) for users to inspect;
+                # they no longer force the label outright. (Note: PLSDB is not
+                # currently one of the marker-XGBoost input features either —
+                # extract_marker_features() does not take a plasmid_db_hits
+                # argument — so removing this override does not create a new
+                # double-counting path.)
 
                 best_class = max(agg, key=agg.get)
                 best_conf = agg[best_class]
 
-                # Use the same length-aware thresholds as the initial MLP stage.
-                # The global plasmid_threshold (0.95) is the default for short
-                # contigs, but longer contigs use lower per-length floors
-                # (0.93 for 10-20 kb, 0.94 for >20 kb).  Applying a flat 0.95
-                # here would wrongly demote contigs classified near that floor.
+                # Only apply an EXPLICIT user override here (--lenient or
+                # --plasmid-threshold); when neither is set,
+                # _effective_plasmid_threshold / confidence_threshold are
+                # None and this reassignment is unchanged from before this
+                # fix — it keeps using the raw per-length tier profile,
+                # exactly as it always has for default runs. Before this fix,
+                # an *explicit* --lenient / --plasmid-threshold had no effect
+                # at all on this second-stage (marker-fused) relabeling —
+                # only on the candidate list that fed into marker fusion —
+                # which defeated the point of asking for it. This narrower
+                # fix (explicit-only, default behavior untouched) hasn't been
+                # benchmark-validated against real DIAMOND/mob-suite
+                # annotation data — that requires the full run_pipeline()
+                # path, which isn't runnable in the sandbox this was written
+                # in. Validate with a real --lenient run before relying on it.
                 _xgb_plas_t, _xgb_phage_t, _xgb_chr_t = _get_length_thresholds(len(seq))
+                if _effective_plasmid_threshold is not None:
+                    _xgb_plas_t = _effective_plasmid_threshold
+                if confidence_threshold is not None:
+                    _xgb_chr_t = confidence_threshold
                 if best_class == "plasmid":
                     thresh = _xgb_plas_t
                 elif best_class == "chromosome":

@@ -497,6 +497,14 @@ def main() -> None:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Seed every RNG this run touches. np.random.default_rng(_SEED) (used below
+    # for the grouped split) was already seeded; torch weight init, dropout,
+    # and any CUDA kernels were not, so two runs on identical data could still
+    # diverge. Seeding torch here makes the full pipeline reproducible.
+    torch.manual_seed(_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(_SEED)
+
     # ── Random Forest ────────────────────────────────────────────────────────
     if args.rf:
         from plasflow2.classify.splits import (

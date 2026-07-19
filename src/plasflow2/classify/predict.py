@@ -9,10 +9,24 @@ Class-specific thresholds
 -------------------------
 The MLP is trained on a balanced dataset (~33 % per class), but real
 metagenome assemblies contain only ~2–5 % plasmid contigs.  We apply
-*class-specific* thresholds to compensate:
+*class-specific, length-tiered* thresholds to compensate (see
+``LENGTH_THRESHOLD_TIERS``).
 
-* **plasmid** — default 0.95 (high bar; false positives are costly).
-* **chromosome / phage** — default 0.70 (lower bar).
+``plasmid_threshold`` and ``threshold`` are ``None`` by default. That does
+NOT mean "use the tier profile at every length" — it means "reproduce
+today's actually-shipped default behavior," which is a legacy quirk: the
+CLI's historical default (0.95 / 0.70) only ever applied below 5 kb; ≥5 kb
+sequences always used the tier profile untouched. That quirk is preserved
+on purpose (see ``_assign_label`` docstring for why — short version: the
+tier profile's <5kb values were never validated as standalone thresholds,
+and applying them "correctly" by default was measured to collapse plasmid
+precision from 0.777 to 0.224 on the Tier 1 benchmark). Passing an
+*explicit* float (e.g. via ``--plasmid-threshold`` / ``--lenient``) overrides
+the tier value at ALL lengths, in whichever direction the caller asks for —
+that part WAS a real bug (an explicit lower value was silently discarded by
+a ``max()`` against the tier default, since tier defaults ~0.81–0.86 are
+always higher than any value meant to loosen the classifier) and is fixed
+unconditionally.
 
 Argmax fallback (--min-confidence)
 ------------------------------------
@@ -363,21 +377,58 @@ def _run_pyrodigal(
 # ---------------------------------------------------------------------------
 
 
+_LEGACY_DEFAULT_SHORT_PLASMID_FLOOR = 0.95  # historical CLI default for --plasmid-threshold
+_LEGACY_DEFAULT_SHORT_CHR_CEILING = 0.70  # historical CLI default for --threshold
+
+
 def _assign_label(
     scores: dict[str, float],
     seq_len: int,
-    plasmid_threshold: float,
-    threshold: float,
+    plasmid_threshold: float | None,
+    threshold: float | None,
     argmax_fallback: bool,
 ) -> tuple[str, float]:
-    """Return (label, confidence) from scores + length-aware thresholds."""
+    """Return (label, confidence) from scores + length-aware thresholds.
+
+    ``plasmid_threshold`` / ``threshold`` of ``None`` mean "no explicit CLI
+    override" — this reproduces today's actually-shipped default behavior
+    exactly (see below), NOT a clean "always use the tier profile" default.
+    An explicit float (e.g. from ``--plasmid-threshold`` or ``--lenient``)
+    overrides the tier value at every length, as a direct replacement rather
+    than a max()/min() against the tier default.
+
+    Why the ``None`` case isn't just "use the tier profile everywhere":
+    the CLI has always defaulted ``--plasmid-threshold`` to 0.95, but the
+    previous implementation only applied that default below 5kb (via
+    ``max(tier_default, 0.95)``); sequences >=5kb always used the tier
+    profile untouched, regardless of any CLI setting. That is what every
+    validated benchmark number for this project actually measured. A
+    benchmark re-run while fixing this (docs/CODE_REVIEW_FINDINGS_2026-07.md,
+    item 2) showed that applying the tier profile below 5kb "correctly" by
+    default collapses plasmid precision from 0.777 to 0.224 on the Tier 1
+    benchmark — the <5kb tier values in LENGTH_THRESHOLD_TIERS were
+    calibrated by a sweep that (unintentionally) always ran with the 0.95
+    floor already in place, so they were never actually validated as
+    standalone thresholds. Until someone reruns that calibration sweep with
+    the floor genuinely removed, the *default* (no explicit CLI value)
+    reproduces the legacy floor exactly, so default runs don't silently
+    regress. An *explicit* override (a real ask from the caller) is honored
+    literally, at every length — that part of the old behavior was simply
+    broken (an explicit lower value was discarded by max()) and is fixed
+    here unconditionally.
+    """
     best_class = max(scores, key=scores.__getitem__)
     confidence = float(scores[best_class])
 
     plas_t, phage_t, chr_t = _get_length_thresholds(seq_len)
-    if seq_len < 5_000:
-        plas_t = max(plas_t, plasmid_threshold)
-        chr_t = min(chr_t, threshold)
+    if plasmid_threshold is not None:
+        plas_t = plasmid_threshold
+    elif seq_len < 5_000:
+        plas_t = max(plas_t, _LEGACY_DEFAULT_SHORT_PLASMID_FLOOR)
+    if threshold is not None:
+        chr_t = threshold
+    elif seq_len < 5_000:
+        chr_t = min(chr_t, _LEGACY_DEFAULT_SHORT_CHR_CEILING)
 
     if best_class == "plasmid":
         applicable_threshold = plas_t
@@ -442,8 +493,8 @@ def predict(
     sequences: list[str],
     sequence_ids: list[str],
     model_path: Path | str,
-    threshold: float = DEFAULT_THRESHOLD,
-    plasmid_threshold: float = DEFAULT_PLASMID_THRESHOLD,
+    threshold: float | None = None,
+    plasmid_threshold: float | None = None,
     batch_size: int = 512,
     argmax_fallback: bool = False,
     source_context: str = "unspecified",
@@ -468,8 +519,16 @@ def predict(
         sequences: DNA strings.
         sequence_ids: Identifiers corresponding to each sequence.
         model_path: Path to saved .pt weights.
-        threshold: Minimum confidence for chromosome / phage calls (default 0.70).
-        plasmid_threshold: Minimum confidence for plasmid calls (default 0.95).
+        threshold: Minimum confidence for chromosome calls. ``None`` (default)
+            reproduces the historical CLI default (0.70, applied only below
+            5kb; ≥5kb uses the tier profile) — see module docstring. An
+            explicit value overrides the tier value at every length.
+        plasmid_threshold: Minimum confidence for plasmid calls. ``None``
+            (default) reproduces the historical CLI default (0.95, applied
+            only below 5kb; ≥5kb uses the tier profile) — see module
+            docstring for why this isn't simply "use the tier profile." An
+            explicit value overrides the tier value at every length (this is
+            what ``--lenient`` / ``--plasmid-threshold`` set).
         batch_size: Inference batch size.
         argmax_fallback: When True, contigs below threshold receive the argmax
             class instead of "unclassified".  Activated by ``--min-confidence``.
@@ -1158,12 +1217,14 @@ def predict(
             logger.warning("COMPASS filter skipped — sketch not found: %s", e)
 
     n_unclassified = sum(1 for r in results if r.label == "unclassified")
+    _plas_t_desc = f"{plasmid_threshold:.2f}" if plasmid_threshold is not None else "tiered"
+    _chr_t_desc = f"{threshold:.2f}" if threshold is not None else "tiered"
     logger.info(
-        "Classified %d sequences (plasmid_threshold=%.2f, threshold=%.2f, "
+        "Classified %d sequences (plasmid_threshold=%s, threshold=%s, "
         "argmax_fallback=%s, unclassified=%d, marker_stage=%s)",
         len(results),
-        plasmid_threshold,
-        threshold,
+        _plas_t_desc,
+        _chr_t_desc,
         argmax_fallback,
         n_unclassified,
         marker_model_path is not None,

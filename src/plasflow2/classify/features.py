@@ -280,26 +280,26 @@ def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
     encoded: NDArray[np.uint8] = _encode_seq(seq)
     powers = _POWERS[k]
 
-    # Count raw k=7 k-mer occurrences (forward strand only — canonical folding
-    # via the map already handles both strands simultaneously because each
-    # kmer ID and its rc map to the SAME canonical index).
+    # Count raw k=7 k-mer occurrences on the forward strand only. Canonical
+    # folding via _K7_CANON_MAP already accounts for both strands: every raw
+    # k-mer ID and its reverse complement map to the SAME canonical index
+    # (canon_map[raw] == canon_map[rc(raw)] for all raw IDs, by construction
+    # of _build_k7_canon_map). Consequently the reverse-complement strand's
+    # canonical-ID multiset is *exactly* the same as the forward strand's —
+    # not just similar, but identical, since {canon_map[rc(w)] : w in fwd
+    # windows} == {canon_map[w] : w in fwd windows}. A previous version of
+    # this function counted the RC strand separately and added it in, which
+    # exactly doubled every count. That doubling has zero effect after L2
+    # normalisation (2C / ||2C|| == C / ||C||), so it was pure wasted compute
+    # — a second sliding-window pass, matmul, and bincount for a vector that
+    # was always going to normalise away. Removed.
     windows = np.lib.stride_tricks.sliding_window_view(encoded, k).astype(np.int64)
     raw_ids: NDArray[np.int64] = windows @ powers  # shape (L-6,)
 
     # Map raw IDs → canonical IDs
     canon_ids = _K7_CANON_MAP[raw_ids]  # shape (L-6,), dtype int16
 
-    # Also do the reverse-complement strand so counts from both strands are
-    # summed (mirrors kmer_vector behaviour for k=1–5).
-    rc_encoded: NDArray[np.uint8] = (3 - encoded.astype(np.int16)).astype(np.uint8)[::-1]
-    rc_windows = np.lib.stride_tricks.sliding_window_view(rc_encoded, k).astype(np.int64)
-    rc_raw_ids: NDArray[np.int64] = rc_windows @ powers
-    rc_canon_ids = _K7_CANON_MAP[rc_raw_ids]
-
-    counts = (
-        np.bincount(canon_ids.astype(np.int64), minlength=K7_CANON_SIZE)
-        + np.bincount(rc_canon_ids.astype(np.int64), minlength=K7_CANON_SIZE)
-    ).astype(np.float32)
+    counts = np.bincount(canon_ids.astype(np.int64), minlength=K7_CANON_SIZE).astype(np.float32)
 
     norm = float(np.linalg.norm(counts))
     if norm > 0:

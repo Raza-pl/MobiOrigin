@@ -360,7 +360,9 @@ plasflow2 run --input assembly.fasta --output results/ --lenient
 ```
 
 `--lenient` does two things:
-1. Lowers the MLP plasmid threshold from 0.95 → 0.70 (catches weaker signals).
+1. Lowers the MLP plasmid threshold from the calibrated per-length profile
+   (~0.81–0.86 depending on contig length) to a flat 0.70 at every length
+   (catches weaker signals).
 2. Skips the hallmark gate entirely (no biological evidence required).
 
 Expect **more plasmid calls** and **more false positives** compared to the default mode.

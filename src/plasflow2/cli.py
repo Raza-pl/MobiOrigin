@@ -47,7 +47,7 @@ import click  # noqa: E402
 from plasflow2 import __version__  # noqa: E402
 from plasflow2.annotate.args import annotate_contigs  # noqa: E402
 from plasflow2.annotate.mobility import annotate_mobility  # noqa: E402
-from plasflow2.classify.predict import predict  # noqa: E402
+from plasflow2.classify.predict import DEFAULT_THRESHOLD, predict  # noqa: E402
 from plasflow2.output.genes_tsv import write_genes_tsv  # noqa: E402
 from plasflow2.pipeline import PipelineResult, run_pipeline  # noqa: E402
 from plasflow2.report.generator import (  # noqa: E402  # noqa: E402
@@ -807,23 +807,28 @@ def main(ctx: click.Context, verbose: bool) -> None:
 )
 @click.option(
     "--threshold",
-    default=0.7,
-    show_default=True,
+    default=None,
+    type=float,
     help=(
-        "Minimum confidence score (0-1) to assign a label (plasmid, chromosome, or phage). "
+        "Minimum confidence score (0-1) to assign a chromosome/phage label. "
         "Contigs below this threshold are labelled 'unclassified' rather than forced into a class. "
-        "Lower values (e.g. 0.5) assign more contigs but increase misclassification."
+        "Default (unset): use the calibrated per-length threshold profile. "
+        "An explicit value overrides that profile at every contig length."
     ),
 )
 @click.option(
     "--plasmid-threshold",
     "plasmid_threshold",
-    default=0.95,
-    show_default=True,
+    default=None,
+    type=float,
     help=(
-        "Minimum score (0-1) to call a contig as plasmid. Set higher than --threshold (default 0.95) "
-        "to compensate for class-prior imbalance — plasmids are rare in typical metagenomes. "
-        "Lower to 0.80-0.90 if you expect a high plasmid fraction (e.g. plasmid-enriched samples)."
+        "Minimum score (0-1) to call a contig as plasmid. "
+        "Default (unset): use the calibrated per-length threshold profile "
+        "(~0.81-0.86, higher than --threshold to compensate for class-prior "
+        "imbalance — plasmids are rare in typical metagenomes). "
+        "An explicit value overrides that profile at every contig length; "
+        "lower it (e.g. 0.70-0.80) if you expect a high plasmid fraction "
+        "(e.g. plasmid-enriched samples)."
     ),
 )
 @click.option(
@@ -1060,8 +1065,8 @@ def run(
     model_path: str | None,
     card_db: str | None,
     aro_index: str | None,
-    threshold: float,
-    plasmid_threshold: float,
+    threshold: float | None,
+    plasmid_threshold: float | None,
     context: str,
     threads: int,
     min_length: int,
@@ -1205,14 +1210,20 @@ def run(
     click.echo(f"[PlasFlow v2 v{__version__}] Running pipeline on {input_fasta}")
 
     # --min-confidence: when set, use argmax fallback below this threshold.
-    # The lower of (min_confidence, threshold / plasmid_threshold) becomes the
-    # effective floor; anything above the class-specific threshold is still a
-    # normal high-confidence call.
+    # The lower of (threshold, min_confidence) becomes the effective floor;
+    # anything above the class-specific threshold is still a normal
+    # high-confidence call. When --threshold itself was left unset, fall back
+    # to DEFAULT_THRESHOLD (0.70) as the comparison baseline only for this
+    # blend — it does not change the "unset --threshold" default elsewhere.
     argmax_fallback = min_confidence is not None
     # --min-confidence lowers the general class threshold but must NOT override
     # --plasmid-threshold which is intentionally set higher to reduce FP plasmids.
-    effective_threshold = min(threshold, min_confidence) if argmax_fallback else threshold
-    effective_plasmid_threshold = plasmid_threshold  # always honour explicitly set value
+    if argmax_fallback:
+        _threshold_baseline = threshold if threshold is not None else DEFAULT_THRESHOLD
+        effective_threshold = min(_threshold_baseline, min_confidence)
+    else:
+        effective_threshold = threshold
+    effective_plasmid_threshold = plasmid_threshold  # always honour explicitly set value (or None)
     if argmax_fallback:
         click.echo(
             f"[info] --min-confidence={min_confidence}: contigs below threshold will receive "
@@ -1365,21 +1376,26 @@ def run(
 )
 @click.option(
     "--threshold",
-    default=0.7,
-    show_default=True,
+    default=None,
+    type=float,
     help=(
-        "Minimum confidence score (0-1) to assign a label. "
-        "Contigs below this are returned as 'unclassified'."
+        "Minimum confidence score (0-1) to assign a chromosome/phage label. "
+        "Contigs below this are returned as 'unclassified'. "
+        "Default (unset): use the calibrated per-length threshold profile; "
+        "an explicit value overrides it at every contig length."
     ),
 )
 @click.option(
     "--plasmid-threshold",
     "plasmid_threshold",
-    default=0.95,
-    show_default=True,
+    default=None,
+    type=float,
     help=(
-        "Minimum score to call a contig as plasmid (default 0.95). "
-        "Set higher than --threshold to reduce false-positive plasmid calls."
+        "Minimum score to call a contig as plasmid. "
+        "Default (unset): use the calibrated per-length threshold profile "
+        "(~0.81-0.86). An explicit value overrides it at every contig length; "
+        "set higher to reduce false-positive plasmid calls, lower if you "
+        "expect a high plasmid fraction."
     ),
 )
 @click.option(
@@ -1449,8 +1465,8 @@ def classify(
     input_fasta: str,
     output_tsv: str,
     model_path: str | None,
-    threshold: float,
-    plasmid_threshold: float,
+    threshold: float | None,
+    plasmid_threshold: float | None,
     min_length: int,
     annotation_tsv: str | None,
     marker_model_path: str | None,
