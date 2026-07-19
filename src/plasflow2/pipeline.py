@@ -65,6 +65,7 @@ from plasflow2.classify.marker_classifier import (
     aggregate_scores,
     extract_marker_features,
     marker_classifier_available,
+    resolve_marker_model_path,
 )
 from plasflow2.classify.predict import (
     DEFAULT_THRESHOLD,
@@ -1138,7 +1139,11 @@ def run_pipeline(
     # mobility class, ARG/MGE/ICE hit density, ORF coding density.
     # PLSDB match is used as a hard override RULE (not a model feature)
     # to avoid training-time data leakage.
-    _marker_model_path = Path(model_path).parent / "marker_xgb.pkl"
+    # Base name kept as .pkl for backward compat with existing deployments;
+    # resolve_marker_model_path() below prefers a marker_xgb.json/.ubj
+    # sibling (XGBoost native format) and only falls back to this literal
+    # .pkl for legacy checkpoints predating the pickle -> JSON migration.
+    _marker_model_path_base = Path(model_path).parent / "marker_xgb.pkl"
     _seq_by_id = dict(zip(seq_ids, sequences))
     # Pre-build ORF lookup dict — avoids O(n²) scan of 481k ORFs per contig
     _orfs_by_contig: dict[str, list] = {}
@@ -1147,7 +1152,8 @@ def run_pipeline(
         if _cid:
             _orfs_by_contig.setdefault(_cid, []).append(_orf)
 
-    if _marker_model_path.exists() and marker_classifier_available():
+    _marker_model_path = resolve_marker_model_path(_marker_model_path_base)
+    if _marker_model_path is not None and marker_classifier_available():
         try:
             _marker_clf = MarkerClassifier.load(_marker_model_path)
             _n_xgb_promoted = 0

@@ -36,8 +36,13 @@ import time
 from pathlib import Path
 
 # ── macOS ARM segfault fix ────────────────────────────────────────────────────
-for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+for _v in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
     os.environ.setdefault(_v, "1")
 
 ROOT = Path(__file__).parent.parent
@@ -72,35 +77,67 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run PlasFlow v2 prediction with marker XGBoost support"
     )
-    parser.add_argument("--input", "-i", type=Path, required=True,
-                        help="Input FASTA (can be gzipped)")
-    parser.add_argument("--model", type=Path,
-                        default=ROOT / "data/models/mlp_v2.pt",
-                        help="MLP model path (default: data/models/mlp_v2.pt)")
-    parser.add_argument("--marker-model", type=Path, default=None,
-                        help="Marker XGBoost model path (optional)")
-    parser.add_argument("--annotation-tsv", type=Path, default=None,
-                        help="Pre-computed biological annotation TSV (optional)")
-    parser.add_argument("--out", "-o", type=Path, required=True,
-                        help="Output predictions TSV path")
-    parser.add_argument("--min-length", type=int, default=1000,
-                        help="Skip contigs shorter than this (default: 1000 bp)")
-    parser.add_argument("--batch-size", type=int, default=512,
-                        help="Inference batch size (default: 512)")
-    parser.add_argument("--alpha-base", type=float, default=0.3,
-                        help="Base alpha for marker blending (default: 0.3)")
-    parser.add_argument("--no-marker-model", action="store_true",
-                        help="Skip marker XGBoost second stage even if marker_xgb.pkl exists")
-    parser.add_argument("--context", type=str, default="unspecified",
-                        choices=["unspecified", "wastewater", "clinical", "environmental"],
-                        help="Sample context for Bayesian prior correction (default: unspecified)")
+    parser.add_argument(
+        "--input", "-i", type=Path, required=True, help="Input FASTA (can be gzipped)"
+    )
+    parser.add_argument(
+        "--model",
+        type=Path,
+        default=ROOT / "data/models/mlp_v2.pt",
+        help="MLP model path (default: data/models/mlp_v2.pt)",
+    )
+    parser.add_argument(
+        "--marker-model", type=Path, default=None, help="Marker XGBoost model path (optional)"
+    )
+    parser.add_argument(
+        "--annotation-tsv",
+        type=Path,
+        default=None,
+        help="Pre-computed biological annotation TSV (optional)",
+    )
+    parser.add_argument("--out", "-o", type=Path, required=True, help="Output predictions TSV path")
+    parser.add_argument(
+        "--min-length",
+        type=int,
+        default=1000,
+        help="Skip contigs shorter than this (default: 1000 bp)",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=512, help="Inference batch size (default: 512)"
+    )
+    parser.add_argument(
+        "--alpha-base",
+        type=float,
+        default=0.3,
+        help="Base alpha for marker blending (default: 0.3)",
+    )
+    parser.add_argument(
+        "--no-marker-model",
+        action="store_true",
+        help="Skip marker XGBoost second stage even if marker_xgb.pkl exists",
+    )
+    parser.add_argument(
+        "--context",
+        type=str,
+        default="unspecified",
+        choices=["unspecified", "wastewater", "clinical", "environmental"],
+        help="Sample context for Bayesian prior correction (default: unspecified)",
+    )
     # Cascade mode
-    parser.add_argument("--stage1-model", type=Path, default=None,
-                        help="Cascade Stage 1 model (.pt, plasmid vs. rest). "
-                             "When given with --stage2-model, uses cascade_predict() "
-                             "instead of the 3-class predict(). Ignores --model.")
-    parser.add_argument("--stage2-model", type=Path, default=None,
-                        help="Cascade Stage 2 model (.pt, chromosome vs. phage).")
+    parser.add_argument(
+        "--stage1-model",
+        type=Path,
+        default=None,
+        help="Cascade Stage 1 model (.pt, plasmid vs. rest). "
+        "When given with --stage2-model, uses cascade_predict() "
+        "instead of the 3-class predict(). Ignores --model.",
+    )
+    parser.add_argument(
+        "--stage2-model",
+        type=Path,
+        default=None,
+        help="Cascade Stage 2 model (.pt, chromosome vs. phage).",
+    )
     args = parser.parse_args()
 
     # ── Cascade mode auto-detect ──────────────────────────────────────────────
@@ -128,8 +165,10 @@ def main() -> None:
         marker_model_path = None
         logger.info("  [--no-marker-model] Skipping marker XGBoost stage")
     elif marker_model_path is None:
-        default_mm = ROOT / "data/models/marker_xgb.pkl"
-        if default_mm.exists():
+        from plasflow2.classify.marker_classifier import resolve_marker_model_path
+
+        default_mm = resolve_marker_model_path(ROOT / "data/models/marker_xgb.pkl")
+        if default_mm is not None:
             marker_model_path = default_mm
             logger.info("  [auto] Marker XGBoost: %s", marker_model_path)
 
@@ -151,8 +190,7 @@ def main() -> None:
             continue
         seqs.append(seq.upper())
         ids.append(sid)
-    logger.info("  Loaded %d sequences (skipped %d < %d bp)",
-                len(seqs), skipped, args.min_length)
+    logger.info("  Loaded %d sequences (skipped %d < %d bp)", len(seqs), skipped, args.min_length)
 
     if not seqs:
         logger.error("No sequences to classify.")
@@ -164,6 +202,7 @@ def main() -> None:
 
     if use_cascade:
         from plasflow2.classify.predict import cascade_predict  # noqa: E402
+
         results = cascade_predict(
             sequences=seqs,
             sequence_ids=ids,
@@ -173,6 +212,7 @@ def main() -> None:
         )
     else:
         from plasflow2.classify.predict import predict  # noqa: E402
+
         results = predict(
             sequences=seqs,
             sequence_ids=ids,
@@ -195,13 +235,20 @@ def main() -> None:
         writer.writerow(["sequence_id", "label", "plasmid", "chromosome", "phage", "unclassified"])
         for r in results:
             # r is a Prediction dataclass: .sequence_id, .label, .scores (dict)
-            plas    = r.scores.get("plasmid", 0.0)
-            chrom   = r.scores.get("chromosome", 0.0)
-            phage   = r.scores.get("phage", 0.0)
+            plas = r.scores.get("plasmid", 0.0)
+            chrom = r.scores.get("chromosome", 0.0)
+            phage = r.scores.get("phage", 0.0)
             unclass = r.scores.get("unclassified", 0.0)
-            writer.writerow([r.sequence_id, r.label,
-                             f"{plas:.4f}", f"{chrom:.4f}",
-                             f"{phage:.4f}", f"{unclass:.4f}"])
+            writer.writerow(
+                [
+                    r.sequence_id,
+                    r.label,
+                    f"{plas:.4f}",
+                    f"{chrom:.4f}",
+                    f"{phage:.4f}",
+                    f"{unclass:.4f}",
+                ]
+            )
             counts[r.label] = counts.get(r.label, 0) + 1
 
     summary = "  ".join(f"{k}: {v:,}" for k, v in sorted(counts.items()))

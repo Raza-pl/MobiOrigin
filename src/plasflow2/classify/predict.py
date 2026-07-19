@@ -652,15 +652,20 @@ def predict(
     _bio_ev_by_idx: dict[int, dict[str, float]] = {}
     _ev_type_by_idx: dict[int, str] = {}
 
-    if marker_model_path and Path(marker_model_path).exists():
-        logger.info("Running marker XGBoost second stage from %s", marker_model_path)
+    from plasflow2.classify.marker_classifier import resolve_marker_model_path
+
+    _resolved_marker_model_path = (
+        resolve_marker_model_path(Path(marker_model_path)) if marker_model_path else None
+    )
+    if _resolved_marker_model_path is not None:
+        logger.info("Running marker XGBoost second stage from %s", _resolved_marker_model_path)
 
         from plasflow2.classify.marker_classifier import (
             ContigMarkerFeatures,
             MarkerClassifier,
         )
 
-        marker_clf = MarkerClassifier.load(marker_model_path)
+        marker_clf = MarkerClassifier.load(_resolved_marker_model_path)
 
         # Load pre-computed DIAMOND annotations (if provided).
         # pre_computed_annotations (in-memory dict) is merged first;
@@ -1141,12 +1146,15 @@ def predict(
             " [binary model override]" if is_binary_model else "",
         )
     elif marker_model_path:
-        logger.warning("Marker model not found at %s — using MLP only", marker_model_path)
+        logger.warning(
+            "Marker model not found at %s (also checked .json/.ubj siblings) — using MLP only",
+            marker_model_path,
+        )
 
     # ── Label assignment ──────────────────────────────────────────────────────
     # Check whether the marker stage populated evidence dicts (only when
-    # marker_model_path was provided and valid).
-    _marker_stage_ran = bool(marker_model_path and Path(marker_model_path).exists())
+    # marker_model_path was provided and resolved to a real file).
+    _marker_stage_ran = _resolved_marker_model_path is not None
 
     results: list[Prediction] = []
     for i, (sid, scores) in enumerate(zip(sequence_ids, all_scores)):

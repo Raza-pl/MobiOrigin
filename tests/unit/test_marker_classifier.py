@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from plasflow2.classify.marker_classifier import ContigMarkerFeatures, MarkerClassifier
+from plasflow2.classify.marker_classifier import (
+    ContigMarkerFeatures,
+    MarkerClassifier,
+    resolve_marker_model_path,
+)
 
 
 def test_predict_scores_supports_legacy_binary_marker_model() -> None:
@@ -36,16 +40,38 @@ def test_save_writes_model_card_and_load_reads_it_back(tmp_path) -> None:
     classifier._model = xgb.XGBClassifier(n_estimators=2, max_depth=2)
     classifier._model.fit(X, y)
 
+    # save() is called with a .pkl path (matching every real call site) but
+    # writes XGBoost's native JSON format instead -- no .pkl file is created.
     out_path = tmp_path / "marker_xgb.pkl"
     classifier.save(out_path, metadata={"training_data_path": "some/features.npz"})
 
-    meta_path = tmp_path / "marker_xgb.pkl.meta.json"
+    json_path = tmp_path / "marker_xgb.json"
+    meta_path = tmp_path / "marker_xgb.json.meta.json"
+    assert json_path.exists()
     assert meta_path.exists()
+    assert not out_path.exists()  # no .pkl written by save() anymore
 
+    # load() still accepts the original .pkl-suffixed path -- it resolves to
+    # the .json sibling via resolve_marker_model_path().
     loaded = MarkerClassifier.load(out_path)
     assert loaded.metadata["training_data_path"] == "some/features.npz"
+    assert loaded.metadata["format"] == "xgboost-json"
     assert "saved_at" in loaded.metadata
     assert loaded.metadata["n_features"] == 3
+    np.testing.assert_allclose(loaded.predict_proba(X), classifier.predict_proba(X))
+
+
+def test_resolve_marker_model_path_prefers_json_over_pkl(tmp_path) -> None:
+    pkl_path = tmp_path / "marker_xgb.pkl"
+    json_path = tmp_path / "marker_xgb.json"
+
+    assert resolve_marker_model_path(pkl_path) is None
+
+    pkl_path.write_bytes(b"legacy pickle bytes")
+    assert resolve_marker_model_path(pkl_path) == pkl_path
+
+    json_path.write_text("{}")
+    assert resolve_marker_model_path(pkl_path) == json_path
 
 
 def test_load_warns_when_model_card_missing(tmp_path, caplog) -> None:

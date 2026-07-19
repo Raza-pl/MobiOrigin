@@ -47,6 +47,7 @@ import click  # noqa: E402
 from plasflow2 import __version__  # noqa: E402
 from plasflow2.annotate.args import annotate_contigs  # noqa: E402
 from plasflow2.annotate.mobility import annotate_mobility  # noqa: E402
+from plasflow2.classify.marker_classifier import resolve_marker_model_path  # noqa: E402
 from plasflow2.classify.predict import DEFAULT_THRESHOLD, predict  # noqa: E402
 from plasflow2.output.genes_tsv import write_genes_tsv  # noqa: E402
 from plasflow2.pipeline import PipelineResult, run_pipeline  # noqa: E402
@@ -94,6 +95,10 @@ def _configure_logging(verbose: bool) -> None:
 
 _DB_ROOT = Path(__file__).parent.parent.parent / "data" / "databases"
 _DEFAULT_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_v2.pt"
+# Base path passed to resolve_marker_model_path(), which prefers a
+# marker_xgb.json/.ubj sibling (XGBoost native format) over this literal
+# .pkl path, falling back to the .pkl only for legacy checkpoints that
+# predate the pickle -> JSON migration.
 _DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "marker_xgb.pkl"
 
 # Docker convention: models are mounted at /data/models/
@@ -1497,10 +1502,10 @@ def classify(
     if not no_marker_model:
         if marker_model_path:
             resolved_marker = marker_model_path
-        elif _DEFAULT_MARKER_MODEL.exists():
-            resolved_marker = str(_DEFAULT_MARKER_MODEL)
-        elif _DOCKER_MARKER_MODEL.exists():
-            resolved_marker = str(_DOCKER_MARKER_MODEL)
+        elif resolve_marker_model_path(_DEFAULT_MARKER_MODEL) is not None:
+            resolved_marker = str(resolve_marker_model_path(_DEFAULT_MARKER_MODEL))
+        elif resolve_marker_model_path(_DOCKER_MARKER_MODEL) is not None:
+            resolved_marker = str(resolve_marker_model_path(_DOCKER_MARKER_MODEL))
 
     if resolved_marker:
         click.echo(f"Stage-2 marker XGBoost: {resolved_marker}")

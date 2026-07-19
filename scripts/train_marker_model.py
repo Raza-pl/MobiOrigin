@@ -18,7 +18,16 @@ Usage
 
 Output
 ------
-    data/models/marker_xgb.pkl   — trained MarkerClassifier (pickled XGBoost)
+    data/models/marker_xgb.json        — trained MarkerClassifier (XGBoost
+                                          native JSON format, not pickle)
+    data/models/marker_xgb.json.meta.json — model card (provenance)
+
+    (MarkerClassifier.save() writes the .json file even though this script
+    still names its output path with a .pkl extension below — see
+    marker_classifier.py's save()/load() docstrings. Existing tooling that
+    looks for marker_xgb.pkl will still find it via
+    resolve_marker_model_path(), which checks for a .json/.ubj sibling
+    first.)
 """
 
 from __future__ import annotations

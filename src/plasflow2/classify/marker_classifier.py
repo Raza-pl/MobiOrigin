@@ -398,6 +398,40 @@ def aggregate_scores(
 
 
 # ---------------------------------------------------------------------------
+# Model-file resolution helpers (JSON/UBJ preferred, legacy .pkl supported)
+# ---------------------------------------------------------------------------
+
+
+def resolve_marker_model_path(path: Path) -> Path | None:
+    """Return whichever of ``<stem>.json``, ``<stem>.ubj``, or *path* exists.
+
+    Callers throughout this project historically pass a ``.pkl`` path (e.g.
+    ``data/models/marker_xgb.pkl``); this lets `save()`'s output (a
+    ``.json`` file) be found by that same caller code without every
+    auto-detection site needing to know the extension changed.
+    """
+    candidates = [path.with_suffix(".json"), path.with_suffix(".ubj"), path]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_xgboost_native(path: Path):  # type: ignore[no-untyped-def]
+    """Load an XGBClassifier from its native JSON/UBJ serialization.
+
+    Raises whatever XGBoost/the JSON parser raises if *path* isn't actually
+    in that format (e.g. a legacy pickle) — callers use this to detect and
+    fall back, not to validate up front.
+    """
+    from xgboost import XGBClassifier  # type: ignore[import]
+
+    model = XGBClassifier()
+    model.load_model(str(path))
+    return model
+
+
+# ---------------------------------------------------------------------------
 # XGBoost model wrapper
 # ---------------------------------------------------------------------------
 
@@ -540,28 +574,42 @@ class MarkerClassifier:
         return scores
 
     def save(self, path: Path | str, metadata: dict | None = None) -> None:
-        """Pickle the fitted model, plus a ``<path>.meta.json`` model card.
+        """Save via XGBoost's native JSON serialization, plus a model card.
 
-        The pickle itself carries no provenance — there is no way to tell,
-        after the fact, what data or code produced a given ``marker_xgb.pkl``
-        (this bit the project once already: has_replicon and every geNomad
-        marker feature were silently 0 in the training set that produced the
-        deployed model, and it went unnoticed because nothing recorded what
-        that model was actually trained on). Write a sidecar JSON so future
-        retrains are auditable; callers should pass at least the training
+        Previously this pickled the fitted model. Pickle can execute
+        arbitrary code on load, which is an unnecessary supply-chain risk for
+        a file that isn't always built locally — this project's marker model
+        is distributed via a GitHub Release download, not committed to git.
+        XGBoost's own JSON/UBJ format has no such risk and loads just as
+        fast. If *path* has a ``.pkl`` extension (every existing call site
+        passes one, e.g. ``data/models/marker_xgb.pkl``), the artifact is
+        written to the ``.json`` sibling instead — no ``.pkl`` file is
+        created by this method anymore. ``load()`` below accepts either
+        extension and resolves to whichever file actually exists, preferring
+        ``.json``/``.ubj`` over a legacy ``.pkl``.
+
+        The model card (``<json_path>.meta.json``) carries the provenance a
+        raw model file never can — there was previously no way to tell, after
+        the fact, what data or code produced a given ``marker_xgb.pkl`` (this
+        bit the project once already: has_replicon and every geNomad marker
+        feature were silently 0 in the training set that produced a deployed
+        model, and it went unnoticed because nothing recorded what that model
+        was actually trained on). Callers should pass at least the training
         data path/hash and feature names via *metadata*.
         """
+        if self._model is None:
+            raise RuntimeError("Model not trained. Call train() first.")
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as fh:
-            pickle.dump(self._model, fh)
-        logger.info("MarkerClassifier saved → %s", path)
+        json_path = path if path.suffix in (".json", ".ubj") else path.with_suffix(".json")
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        self._model.save_model(str(json_path))
+        logger.info("MarkerClassifier saved (XGBoost native format) → %s", json_path)
 
         meta = dict(metadata or {})
         meta.setdefault("saved_at", datetime.now(timezone.utc).isoformat())
-        if self._model is not None:
-            meta.setdefault("n_features", int(self._model.n_features_in_))
-        meta_path = path.with_suffix(path.suffix + ".meta.json")
+        meta.setdefault("format", "xgboost-json")
+        meta.setdefault("n_features", int(self._model.n_features_in_))
+        meta_path = json_path.with_suffix(json_path.suffix + ".meta.json")
         with open(meta_path, "w") as fh:
             json.dump(meta, fh, indent=2, sort_keys=True)
         logger.info("Model card saved → %s", meta_path)
@@ -570,17 +618,53 @@ class MarkerClassifier:
     def load(cls, path: Path | str) -> MarkerClassifier:
         """Load a saved MarkerClassifier.
 
-        Logs a warning (does not fail) if no ``<path>.meta.json`` model card
-        is present, since older checkpoints predate this convention.
+        Resolves *path* to whichever of ``<stem>.json``, ``<stem>.ubj``, or
+        the literal *path* actually exists on disk, preferring the native
+        XGBoost format over a legacy pickle. If the resolved file turns out
+        to be a legacy pickle (predates the JSON migration — e.g. an
+        already-deployed ``marker_xgb.pkl`` downloaded before this fix), it
+        is unpickled as a fallback with a warning encouraging a re-save.
+
+        Logs a warning (does not fail) if no ``<resolved_path>.meta.json``
+        model card is present, since older checkpoints predate that
+        convention entirely.
         """
         path = Path(path)
-        with open(path, "rb") as fh:
-            model = pickle.load(fh)  # noqa: S301
+        resolved = resolve_marker_model_path(path)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"No marker model found at {path} (also checked "
+                f"{path.with_suffix('.json')} and {path.with_suffix('.ubj')})"
+            )
+
+        model: object
+        if resolved.suffix in (".json", ".ubj"):
+            model = _load_xgboost_native(resolved)
+        else:
+            # Legacy .pkl path that resolved to itself (no .json/.ubj sibling
+            # exists). Try the native loader first in case it was already
+            # re-saved under the old extension; only unpickle as a last
+            # resort, since that's the exact risk this migration removes.
+            try:
+                model = _load_xgboost_native(resolved)
+            except Exception:
+                logger.warning(
+                    "%s is not a native XGBoost JSON/UBJ file — falling back "
+                    "to pickle.load() for this legacy checkpoint. Re-save it "
+                    "(MarkerClassifier.load(%r).save(%r)) to drop the pickle "
+                    "dependency for this file.",
+                    resolved,
+                    str(resolved),
+                    str(resolved),
+                )
+                with open(resolved, "rb") as fh:
+                    model = pickle.load(fh)  # noqa: S301
+
         obj = cls()
         obj._model = model
-        logger.info("MarkerClassifier loaded from %s", path)
+        logger.info("MarkerClassifier loaded from %s", resolved)
 
-        meta_path = path.with_suffix(path.suffix + ".meta.json")
+        meta_path = resolved.with_suffix(resolved.suffix + ".meta.json")
         if meta_path.exists():
             try:
                 with open(meta_path) as fh:
