@@ -60,9 +60,11 @@ attention-weighted score aggregation.
 
 from __future__ import annotations
 
+import json
 import logging
 import pickle
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -415,6 +417,7 @@ class MarkerClassifier:
     def __init__(self) -> None:
         self._model = None
         self._classes = ["plasmid", "chromosome", "phage"]
+        self.metadata: dict = {}
 
     def train(
         self,
@@ -536,22 +539,61 @@ class MarkerClassifier:
             scores.setdefault(class_name, 0.0)
         return scores
 
-    def save(self, path: Path | str) -> None:
-        """Pickle the fitted model."""
+    def save(self, path: Path | str, metadata: dict | None = None) -> None:
+        """Pickle the fitted model, plus a ``<path>.meta.json`` model card.
+
+        The pickle itself carries no provenance — there is no way to tell,
+        after the fact, what data or code produced a given ``marker_xgb.pkl``
+        (this bit the project once already: has_replicon and every geNomad
+        marker feature were silently 0 in the training set that produced the
+        deployed model, and it went unnoticed because nothing recorded what
+        that model was actually trained on). Write a sidecar JSON so future
+        retrains are auditable; callers should pass at least the training
+        data path/hash and feature names via *metadata*.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as fh:
             pickle.dump(self._model, fh)
         logger.info("MarkerClassifier saved → %s", path)
 
+        meta = dict(metadata or {})
+        meta.setdefault("saved_at", datetime.now(timezone.utc).isoformat())
+        if self._model is not None:
+            meta.setdefault("n_features", int(self._model.n_features_in_))
+        meta_path = path.with_suffix(path.suffix + ".meta.json")
+        with open(meta_path, "w") as fh:
+            json.dump(meta, fh, indent=2, sort_keys=True)
+        logger.info("Model card saved → %s", meta_path)
+
     @classmethod
     def load(cls, path: Path | str) -> MarkerClassifier:
-        """Load a saved MarkerClassifier."""
+        """Load a saved MarkerClassifier.
+
+        Logs a warning (does not fail) if no ``<path>.meta.json`` model card
+        is present, since older checkpoints predate this convention.
+        """
+        path = Path(path)
         with open(path, "rb") as fh:
             model = pickle.load(fh)  # noqa: S301
         obj = cls()
         obj._model = model
         logger.info("MarkerClassifier loaded from %s", path)
+
+        meta_path = path.with_suffix(path.suffix + ".meta.json")
+        if meta_path.exists():
+            try:
+                with open(meta_path) as fh:
+                    obj.metadata = json.load(fh)
+                logger.info("Model card: %s", obj.metadata)
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Could not read model card %s: %s", meta_path, exc)
+        else:
+            logger.warning(
+                "No model card at %s — provenance (training data, feature schema, "
+                "hyperparameters) for this checkpoint is unknown.",
+                meta_path,
+            )
         return obj
 
 

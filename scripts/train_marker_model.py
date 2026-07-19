@@ -24,8 +24,11 @@ Output
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +36,6 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from plasflow2.classify.marker_classifier import (  # noqa: E402
-    MARKER_FEATURE_NAMES,
     MarkerClassifier,
     marker_classifier_available,
 )
@@ -43,15 +45,42 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
+def _sha256(path: Path, chunk_size: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent,
+            timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train XGBoost marker classifier")
-    parser.add_argument("--features", type=Path, required=True,
-                        help="Marker features .npz (from build_marker_dataset.py)")
-    parser.add_argument("--out", type=Path, default=Path("data/models"),
-                        help="Output directory for marker_xgb.pkl")
+    parser.add_argument(
+        "--features",
+        type=Path,
+        required=True,
+        help="Marker features .npz (from build_marker_dataset.py)",
+    )
+    parser.add_argument(
+        "--out", type=Path, default=Path("data/models"), help="Output directory for marker_xgb.pkl"
+    )
     parser.add_argument("--n-estimators", type=int, default=300)
-    parser.add_argument("--max-depth",    type=int, default=6)
-    parser.add_argument("--lr",           type=float, default=0.1)
+    parser.add_argument("--max-depth", type=int, default=6)
+    parser.add_argument("--lr", type=float, default=0.1)
     args = parser.parse_args()
 
     if not marker_classifier_available():
@@ -75,7 +104,8 @@ def main() -> None:
     # Train
     clf = MarkerClassifier()
     result = clf.train(
-        X, y,
+        X,
+        y,
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
         learning_rate=args.lr,
@@ -91,10 +121,26 @@ def main() -> None:
     for feat, imp in ranked:
         logger.info("  %-35s  %.4f", feat, imp)
 
-    # Save
+    # Save, with a model card recording exactly what produced this checkpoint.
     args.out.mkdir(parents=True, exist_ok=True)
     out_path = args.out / "marker_xgb.pkl"
-    clf.save(out_path)
+    metadata = {
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "git_commit": _git_commit(),
+        "training_data_path": str(args.features.resolve()),
+        "training_data_sha256": _sha256(args.features),
+        "n_rows": int(X.shape[0]),
+        "n_features": int(X.shape[1]),
+        "class_counts": {IDX_TO_CLASS[idx]: int((y == idx).sum()) for idx in sorted(IDX_TO_CLASS)},
+        "feature_names": feat_names,
+        "hyperparameters": {
+            "n_estimators": args.n_estimators,
+            "max_depth": args.max_depth,
+            "learning_rate": args.lr,
+        },
+        "val_accuracy": result["val_accuracy"],
+    }
+    clf.save(out_path, metadata=metadata)
     logger.info("Done — saved to %s", out_path)
 
 
