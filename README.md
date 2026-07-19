@@ -370,14 +370,29 @@ Expect **more plasmid calls** and **more false positives** compared to the defau
 ## Performance benchmark
 
 Benchmark: 60,394 contigs from GTDB r220 genomes + PLSDB/RefSeq plasmids (June 2026).
+Source: [`data/benchmark/results/plasflow2_metrics.json`](data/benchmark/results/plasflow2_metrics.json).
 
 | Tool | Plasmid Precision | Plasmid Recall | Plasmid F1 |
 |------|:-----------------:|:--------------:|:----------:|
 | PlasFlow v1 | 0.014 | 0.198 | 0.025 |
 | geNomad v1.12 | 0.060 | 0.876 | 0.112 |
-| **PlasFlow v2** | **0.871** | **0.783** | **0.825** |
+| **PlasFlow v2** | **0.827** | **0.645** | **0.725** |
 
-PLSDB-corrected F1 = **0.847**.
+Recall above counts every true plasmid, including the ~20% that PlasFlow v2
+abstains on (`unclassified`) when no biological hallmark backs the call (see
+[Lenient mode](#lenient-mode)). Restricted to contigs it actually classifies
+(excludes abstentions), recall is **0.791** and F1 is **0.809**
+(see [`plasflow2_classified_only_metrics.json`](data/benchmark/results/plasflow2_classified_only_metrics.json)).
+
+A manual audit of the raw benchmark's false-positive calls against PLSDB/COMPASS
+found that roughly a third are plasmid-derived sequences mislabeled as
+"chromosome" in the reference genomes, not genuine classifier errors. Correcting
+for those mislabels: precision **0.888**, recall **0.732**, F1 **0.803**
+(full methodology and per-genome breakdown in
+[`results/fp_validation/PLSDB_VALIDATION_SUMMARY.md`](results/fp_validation/PLSDB_VALIDATION_SUMMARY.md)).
+
+These figures come from the repository's own committed benchmark run and have
+not yet been independently reproduced on a separate machine or dataset version.
 
 ---
 
