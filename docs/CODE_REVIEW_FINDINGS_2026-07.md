@@ -1,6 +1,60 @@
 # Diagnostic review — verification log (July 2026)
 
-## Fixes applied (this session, after the verification pass below)
+## Round 2 (same session, after "do all"): pickle migration + double-counting investigation
+
+**Item 10 (pickle → JSON) — shipped.** `MarkerClassifier.save()` now writes
+XGBoost's native JSON format via `model.save_model()` instead of
+`pickle.dump()`. Every existing call site still passes a `.pkl` path;
+`save()` transparently redirects to the `.json` sibling. `load()` resolves
+to whichever of `<stem>.json`, `<stem>.ubj`, or the literal path exists
+(preferring native format), falling back to `pickle.load()` only for
+pre-migration checkpoints, with a warning. New `resolve_marker_model_path()`
+helper is used everywhere a `.pkl` path was previously checked with a raw
+`Path.exists()` (`cli.py` ×2, `pipeline.py`, `predict.py` ×2,
+`predict_sequences.py`) — those would have silently stopped finding the
+marker model once it was re-saved under a different extension. The locally
+deployed `data/models/marker_xgb.pkl` (git-ignored) was migrated in place to
+`marker_xgb.json`, preserving its provenance metadata; verified
+`predict_proba()` output is bit-identical before/after, and a full
+`predict()` smoke test through the `.pkl`-path auto-resolution works
+end-to-end. The GitHub Release still serves the old pickle — new installs
+use it via the legacy fallback (with a warning) until it's regenerated and
+re-uploaded, which needs the user's action. Committed `d763453`.
+
+**Item 6 (MLP double-counting in marker fusion) — investigated, NOT
+shipped.** The review's critique is architecturally correct: all three MLP
+scores are XGBoost input features, and `predict.py` then re-blends
+XGBoost's output with the same raw MLP scores again
+(`alpha * marker + (1-alpha) * mlp`). The natural "fix" — trust XGBoost's
+own output directly, since it already learned from the MLP scores as
+features — was implemented as a side experiment and benchmark-tested (not
+committed) using the same `predict()` cascade on
+`data/benchmark/benchmark.fna` + `annotations_with_replicons.tsv`, by
+capturing each contig's raw `xgb_scores` and `mlp_scores` (both already
+recorded on every `Prediction` object) alongside the current, blended,
+fully-boosted `scores`:
+
+| Aggregation | Precision | Recall | F1 |
+|---|---|---|---|
+| Current (blend + all post-hoc boosts) — shipped baseline | 0.777 | 0.538 | 0.636 |
+| XGBoost output alone (the "fix") | 0.249 | 0.564 | 0.346 |
+| MLP output alone (no XGBoost at all) | 0.772 | 0.569 | 0.655 |
+
+Trusting XGBoost's raw output collapses precision (0.777→0.249) — worse
+than doing nothing at all. Most contigs in this benchmark have zero
+biological (DIAMOND-derived) evidence, and the marker XGBoost model
+evidently does not generalize well on all-zero-evidence rows; the blend's
+`alpha_base` (which keeps some MLP weight even at zero evidence) is
+functioning as a necessary correction for that, not a redundant leftover.
+Removing it, as the review's suggested fix would do, is a real regression,
+not a cleanup. This mirrors the earlier `LENGTH_THRESHOLD_TIERS` incident
+in this same session: an architecturally well-reasoned change that failed
+its own benchmark and was correctly not shipped. **Left exactly as-is.** A
+real fix here would mean training a genuinely unified fusion model (per the
+review's own Section 7 recommendation) rather than removing the current
+blend outright — that's a retrain, out of scope for a no-retrain pass.
+
+## Fixes applied (round 1, this session, after the verification pass below)
 
 Four items were picked off the "suggested fix order" list and implemented,
 each validated (tests + a benchmark re-run where behavior could change):
