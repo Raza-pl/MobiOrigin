@@ -187,7 +187,7 @@ def _write_predictions_tsv(pipeline_result: PipelineResult, output_path: Path) -
         "has_ice",  # shown for users even though excluded from classification
         "has_rep_protein",
         "n_rep_per_kb",
-        "evidence_type",  # mlp_only | xgb_blend | conjugative_override | hallmark_boost
+        "evidence_type",  # mlp_only | xgb_blend | conjugative_override | replicon_boost
         "taxonomy",
         "taxonomy_rank",
         "taxonomy_lineage",

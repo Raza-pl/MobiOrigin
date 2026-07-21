@@ -1,5 +1,57 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 5: removed hallmark_boost / plsdb_prot_boost / marker_threshold_boost (dead code)
+
+Next backlog item: the manual probability-boost heuristics the review
+flagged as fragile hand-tuning. Investigating the review's stated concern
+(redundant with trained XGBoost features) led to a bigger finding: all
+three were functionally dead code under the pipeline's actual default
+thresholds, independent of the redundancy question.
+
+All three shared one mechanism: if a contig's argmax winner was NOT
+"plasmid" but some evidence signal was present, transfer 55% (or for
+`marker_threshold_boost`, the same 55%) of the non-plasmid probability
+mass onto plasmid and renormalize.
+
+`marker_threshold_boost` is **provably, unconditionally dead**: its own
+trigger requires `mlp_plas >= 0.90 AND best != "plasmid"`. Scores sum to
+1.0, so `mlp_plas >= 0.90` forces the combined mass of every other class to
+`<= 0.10`, which makes `best == "plasmid"` unconditionally. The two halves
+of its own trigger condition are mutually exclusive — the boost body could
+never execute under any annotation data, model, or threshold setting.
+
+`hallmark_boost` and `plsdb_prot_boost` are **near-dead under default
+thresholds**: the 55% transfer caps the post-boost plasmid score at
+`0.45*mlp_plas + 0.55`. Since `best != "plasmid"` bounds `mlp_plas` below
+~0.5 (it can't be the argmax by definition), the ceiling is ~0.775. Every
+non-lenient tier threshold is `>= 0.809`, so the boosted score can never
+cross it under default settings. Confirmed empirically on real annotation
+data (`data/benchmark/annotations_with_plsdb_prot.tsv`, sandbox `predict()`
+run with the real marker-XGBoost model, stratified sample covering ALL 394
+true plasmids + 16,000 random others): `plsdb_prot_boost` fired on
+441/16,394 contigs, `hallmark_boost` on 3 — **zero of either ever produced
+a final "plasmid" label**. (`--lenient` mode's lower ~0.70 threshold could
+theoretically let the ~0.775 ceiling clear the bar, but the observed firing
+rate is too low to matter in practice there either.)
+
+`plsdb_prot_boost` is notable: unlike the other two, it's genuinely NOT
+redundant with any trained feature (no XGBoost feature covers
+`plsdb_prot_hits_per_kb`) — but it's equally non-functional as currently
+wired. If that evidence signal is worth using, it needs a different
+mechanism (a trained feature, or a harder override like
+`conjugative_override`), not a bigger version of the same transfer.
+
+**Removed all three** from `predict.py`, with the derivation left in place
+as a code comment. Unlike every other fix this round, this one didn't need
+the multi-round real-hardware validation dance — a true no-op removal
+can't regress anything by construction, verified cheaply instead: reran
+the same stratified sandbox test before/after and got bit-identical results
+(TP=184 FP=5 FN=210 TN=15995, precision=0.9735, recall=0.4670 both times).
+`replicon_boost` was NOT removed — its stronger 65% transfer and lower
+0.15 floor give it a ceiling of ~0.8215, which does exceed the lowest tier
+threshold (0.809), so it isn't provably dead the same way. 208/208 unit
+tests pass.
+
 ## Round 4 decision: candidate-routing widening shipped as opt-in
 
 Given the choice of keeping the widening as default, making it opt-in,

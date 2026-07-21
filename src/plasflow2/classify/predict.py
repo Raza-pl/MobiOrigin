@@ -237,11 +237,12 @@ class Prediction:
                         "mlp_only"              — no XGBoost used.
                         "xgb_blend"             — MLP + XGBoost soft blend.
                         "conjugative_override"  — hard override (relaxase + MPF).
-                        "hallmark_boost"        — geNomad hallmark gene boost.
-                        "plsdb_prot_boost"      — PLSDB protein homology boost.
                         "plsdb_nt_override"     — PLSDB nucleotide hard override (minimap2 asm5).
-                        "marker_threshold_boost" — ≥1 geNomad marker + mlp≥0.90 soft boost.
                         "replicon_boost"         — rep.dna.fas replicon detected (minimap2/BLASTN).
+                        (hallmark_boost, plsdb_prot_boost, marker_threshold_boost
+                        removed 2026-07-21 — proved functionally dead under
+                        default thresholds; see docs/CODE_REVIEW_FINDINGS_2026-07.md,
+                        Round 5.)
     """
 
     sequence_id: str
@@ -557,8 +558,8 @@ def predict(
             Improves Tier 1 plasmid F1 from 0.534 → 0.733 at plasmid_threshold=0.80,
             compass_threshold=0.002 with per-length COMPASS tiers
             (Tier 1 benchmark, 299,589 sequences, Jul 2026).
-            Hard biological overrides (conjugative_override, hallmark_boost,
-            replicon_boost) are exempt — biological evidence supersedes containment.
+            Hard biological overrides (conjugative_override, replicon_boost)
+            are exempt — biological evidence supersedes containment.
         compass_threshold: Base containment score for COMPASS filtering (default 0.002).
             Per-length thresholds are applied automatically (see COMPASS_LENGTH_TIERS):
             longer sequences require higher containment because chromosomal HGT
@@ -782,31 +783,16 @@ def predict(
         # ── Post hoc rule map: trained-feature redundancy vs. genuinely new
         # evidence ─────────────────────────────────────────────────────────
         # Everything from here down is a hand-coded override/boost applied
-        # AFTER the marker XGBoost has already produced marker_s above. Some
-        # of these key off evidence the XGBoost was never trained on (so the
-        # boost is the only place that evidence has any effect); others key
-        # off evidence that IS already a trained XGBoost feature (see
-        # MARKER_FEATURE_NAMES in marker_classifier.py), which means the
-        # signal gets counted twice — once via the model's learned weight,
-        # once via the hard-coded transfer. Recorded here (rather than fixed
-        # outright) because removing the redundant ones requires a real
-        # tier1 benchmark run to confirm they're not silently compensating
-        # for something else the model underweights; that couldn't be done
-        # in this pass:
+        # AFTER the marker XGBoost has already produced marker_s above.
         #
-        #   conjugative_override   -- is_conjugative     -- TRAINED feature (redundant)
-        #   hallmark_boost         -- n_plasmid_markers   -- TRAINED feature (redundant)
-        #   marker_threshold_boost -- n_plasmid_markers   -- TRAINED feature (redundant)
+        #   conjugative_override   -- is_conjugative     -- TRAINED feature (redundant,
+        #                               but kept as a hard override deliberately --
+        #                               see comment below).
         #   replicon_boost         -- has_replicon        -- TRAINED as of the
         #                               fix in fix_has_replicon_feature.py, but the
         #                               *deployed* marker_xgb.pkl predates that fix
         #                               (see commit 6946b66) -- currently still the
         #                               only place this evidence has any effect.
-        #   plsdb_prot_boost       -- plsdb_prot_hits_per_kb / max_plsdb_prot_pct_id
-        #                               -- NEVER a trained feature; no training data
-        #                               for it exists anywhere in the repo. Not
-        #                               redundant -- this is the only source of
-        #                               this signal.
         #   plsdb_nt_override      -- direct PLSDB/COMPASS nucleotide match --
         #                               deliberately kept as a hard override rather
         #                               than a feature (see has_plsdb_match comment
@@ -815,6 +801,16 @@ def predict(
         #                               than a probabilistic signal, by design, not
         #                               an oversight.
         #   phage suppression      -- v_marker_freq       -- TRAINED feature (redundant)
+        #
+        #   hallmark_boost, plsdb_prot_boost, marker_threshold_boost -- REMOVED
+        #   2026-07-21. All three were flagged here as redundant with the
+        #   trained n_plasmid_markers feature; investigating that led to a
+        #   bigger finding -- they were functionally dead code regardless of
+        #   redundancy (see the removed-code comment a few lines down for the
+        #   full proof). Removing dead code doesn't require the benchmark
+        #   validation dance the rest of this session needed, since a no-op
+        #   removal can't regress anything by construction -- verified with a
+        #   bit-identical before/after run instead.
         #
         # Blend MLP + marker scores using attention weighting
         # Hard override ONLY for truly unambiguous conjugative plasmids
@@ -896,130 +892,49 @@ def predict(
         # To re-enable, raise thresholds to qcov≥0.90 AND identity≥0.99 and
         # verify precision on the benchmark before deploying.
 
-        # ── Plasmid hallmark hard boost ───────────────────────────────────────
-        # When geNomad identifies ≥ 2 plasmid-specific hallmark genes on a
-        # contig AND the MLP already leans plasmid (score ≥ 0.30), the
-        # geNomad evidence is strong enough to call it a plasmid regardless
-        # of whether the MLP score crosses the high threshold.
-        # Precision at n_plasmid_markers ≥ 2 (MLP-undetected) is ~32 %;
-        # this recovers ~16 extra TPs per benchmark run at an acceptable FP rate.
-        n_hallmark_boosts = 0
-        if annotations:
-            for i in range(n):
-                s = all_scores[i]
-                sid = sequence_ids[i]
-                ann = annotations.get(sid, {})
-                n_plas_hall = float(ann.get("n_plasmid_markers", 0.0))
-                mlp_plas = s.get("plasmid", 0.0)
-                # Only boost if already the best or second-best class and has
-                # strong hallmark evidence
-                if n_plas_hall >= 2 and mlp_plas >= 0.30:
-                    best = max(s, key=s.__getitem__)
-                    if best != "plasmid":
-                        # Boost plasmid score above the detection threshold
-                        # by transferring half the non-plasmid mass to plasmid
-                        s2 = dict(s)
-                        non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
-                        transfer = non_plas * 0.55
-                        s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
-                        s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
-                        s2["phage"] = s2.get("phage", 0.0) * 0.45
-                        total = sum(s2.values()) or 1.0
-                        all_scores[i] = {c: v / total for c, v in s2.items()}
-                        _ev_type_by_idx[i] = "hallmark_boost"
-                        n_hallmark_boosts += 1
-            if n_hallmark_boosts:
-                logger.info(
-                    "Plasmid hallmark boost: %d sequences boosted (n_plasmid_markers >= 2, mlp >= 0.30)",
-                    n_hallmark_boosts,
-                )
-
-        # ── PLSDB protein homology boost ──────────────────────────────────────
-        # When a sequence has strong protein-level similarity to PLSDB plasmids
-        # (many ORFs matching PLSDB proteins at moderate identity) AND the MLP
-        # already leans plasmid (score ≥ 0.30), this is strong evidence that
-        # the sequence is a true plasmid regardless of k-mer composition.
+        # ── REMOVED: hallmark_boost, plsdb_prot_boost, marker_threshold_boost ──
+        # (2026-07-21) All three used the same "transfer 55% of non-plasmid
+        # probability mass to plasmid, then renormalize" mechanism, gated on
+        # mlp_plas >= 0.30 (0.90 for marker_threshold_boost) and best != "plasmid".
+        # Removed after proving they were functionally dead code under the
+        # default (non-lenient) threshold regime:
         #
-        # This targets "composition-invisible" false negatives: sequences from
-        # unusual plasmid lineages where k-mer profiles don't distinguish them
-        # from chromosomes, but whose ORFs match known PLSDB proteins.
+        #   marker_threshold_boost: PROVABLY dead under any settings. Its own
+        #   trigger requires mlp_plas >= 0.90 AND best != "plasmid" -- but
+        #   scores sum to 1.0, so mlp_plas >= 0.90 forces the other class(es)
+        #   to <= 0.10 combined, which makes best == "plasmid" unconditionally.
+        #   The two conditions are mutually exclusive; the boost body could
+        #   never execute regardless of annotation data, model, or thresholds.
         #
-        # Thresholds calibrated on benchmark to maximise TP gain vs FP cost:
-        #   plsdb_prot_hits_per_kb >= 2.0  (≥2 PLSDB protein hits per kb)
-        #   max_plsdb_prot_pct_id  >= 40.0 (at least one hit ≥40% identity)
-        #   mlp_plasmid_score      >= 0.30 (MLP weakly leans plasmid)
+        #   hallmark_boost / plsdb_prot_boost: near-dead under default
+        #   thresholds. The 55% transfer caps the post-boost plasmid score at
+        #   0.45*mlp_plas + 0.55 -- and since best != "plasmid" bounds
+        #   mlp_plas below ~0.5 (it can't be the argmax by definition), the
+        #   ceiling is ~0.775. Every non-lenient tier threshold is >= 0.809,
+        #   so the boosted score can never cross it. Confirmed empirically on
+        #   real annotation data (data/benchmark/annotations_with_plsdb_prot.tsv,
+        #   full 394-true-plasmid coverage): plsdb_prot_boost fired on 441/16394
+        #   contigs, hallmark_boost on 3 -- zero of either ever produced a final
+        #   "plasmid" label. Only in --lenient mode (threshold ~0.70) could the
+        #   ~0.775 ceiling theoretically clear the bar, and even there the
+        #   observed firing rate is too low to matter in practice.
         #
-        # Only applies when annotation TSV was built with --plsdb-proteins.
-        n_prot_boosts = 0
-        if annotations:
-            for i in range(n):
-                s = all_scores[i]
-                sid = sequence_ids[i]
-                ann = annotations.get(sid, {})
-                prot_hits_per_kb = float(ann.get("plsdb_prot_hits_per_kb", 0.0))
-                max_pct_id = float(ann.get("max_plsdb_prot_pct_id", 0.0))
-                mlp_plas = s.get("plasmid", 0.0)
-                if prot_hits_per_kb >= 2.0 and max_pct_id >= 40.0 and mlp_plas >= 0.30:
-                    best = max(s, key=s.__getitem__)
-                    if best != "plasmid":
-                        # Transfer 55% of non-plasmid mass to plasmid
-                        s2 = dict(s)
-                        non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
-                        transfer = non_plas * 0.55
-                        s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
-                        s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
-                        s2["phage"] = s2.get("phage", 0.0) * 0.45
-                        total = sum(s2.values()) or 1.0
-                        all_scores[i] = {c: v / total for c, v in s2.items()}
-                        _ev_type_by_idx[i] = "plsdb_prot_boost"
-                        n_prot_boosts += 1
-            if n_prot_boosts:
-                logger.info(
-                    "PLSDB protein boost: %d sequences boosted "
-                    "(plsdb_prot_hits_per_kb >= 2.0, max_pct_id >= 40, mlp >= 0.30)",
-                    n_prot_boosts,
-                )
-
-        # ── Marker-aware soft threshold boost (Option B) ─────────────────────
-        # Sequences with ≥1 geNomad plasmid hallmark gene AND an MLP plasmid
-        # score ≥ 0.90 are very likely true plasmids that narrowly miss the
-        # strict 0.93–0.98 length-tier thresholds.  The single hallmark gene
-        # acts as a corroborating signal that justifies a 0.90 effective floor.
+        #   hallmark_boost and marker_threshold_boost were also flagged
+        #   redundant with n_plasmid_markers, a trained XGBoost feature --
+        #   double-counting concern from the original review, on top of being
+        #   inert. plsdb_prot_boost is NOT redundant (no trained feature
+        #   covers plsdb_prot_hits_per_kb) but was equally non-functional as
+        #   currently wired; if that evidence signal is worth using, it needs
+        #   a mechanism that can actually clear the threshold (e.g. a trained
+        #   feature or a harder override), not a bigger version of this one.
         #
-        # This is complementary to hallmark_boost (which requires n≥2, mlp≥0.30
-        # and is designed for low-MLP sequences with strong marker evidence).
-        # Option B targets high-MLP sequences with weaker marker evidence.
+        # See docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 5, for the full
+        # derivation and the (bit-identical) before/after verification.
         #
-        # Calibration: n_plasmid_markers ≥ 1 AND mlp ≥ 0.90 catches near-miss
-        # FNs with gn:1 scores like 0.92–0.94 that fall below the 0.95+ tier
-        # thresholds.  FP risk is low because mlp ≥ 0.90 is a strong filter.
-        n_marker_threshold_boosts = 0
-        if annotations:
-            for i in range(n):
-                s = all_scores[i]
-                sid = sequence_ids[i]
-                ann = annotations.get(sid, {})
-                n_plas_hall = float(ann.get("n_plasmid_markers", 0.0))
-                mlp_plas = s.get("plasmid", 0.0)
-                if n_plas_hall >= 1 and mlp_plas >= 0.90:
-                    best = max(s, key=s.__getitem__)
-                    if best != "plasmid":
-                        s2 = dict(s)
-                        non_plas = s2.get("chromosome", 0.0) + s2.get("phage", 0.0)
-                        transfer = non_plas * 0.55
-                        s2["plasmid"] = s2.get("plasmid", 0.0) + transfer
-                        s2["chromosome"] = s2.get("chromosome", 0.0) * 0.45
-                        s2["phage"] = s2.get("phage", 0.0) * 0.45
-                        total = sum(s2.values()) or 1.0
-                        all_scores[i] = {c: v / total for c, v in s2.items()}
-                        _ev_type_by_idx[i] = "marker_threshold_boost"
-                        n_marker_threshold_boosts += 1
-            if n_marker_threshold_boosts:
-                logger.info(
-                    "Marker-threshold boost: %d sequences boosted "
-                    "(n_plasmid_markers >= 1, mlp >= 0.90)",
-                    n_marker_threshold_boosts,
-                )
+        # replicon_boost below is NOT removed -- its stronger 65% transfer
+        # (vs. 55%) and lower floor (mlp_plas >= 0.15) give it a ceiling of
+        # ~0.35*0.5+0.65 = 0.8215, which DOES exceed the lowest tier
+        # threshold (0.809), so it is not provably dead the same way.
 
         # ── Replicon sequence boost ───────────────────────────────────────────
         # When a contig contains a recognisable plasmid replicon sequence
@@ -1186,7 +1101,7 @@ def predict(
     if compass_sketch_path is not None:
         from plasflow2.classify.containment import CompassFilter
 
-        _EXEMPT_EVIDENCE = {"conjugative_override", "hallmark_boost", "replicon_boost"}
+        _EXEMPT_EVIDENCE = {"conjugative_override", "replicon_boost"}
         try:
             _compass = CompassFilter.load(compass_sketch_path, threshold=compass_threshold)
             n_reclassified = 0
