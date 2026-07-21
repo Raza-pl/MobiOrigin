@@ -164,11 +164,49 @@ def _encode_seq(seq: str) -> NDArray[np.uint8]:
     """Encode an ASCII DNA string to a uint8 base-index array in one numpy call.
 
     The string must already be uppercase (caller's responsibility).
-    Non-ACGT bytes (including 'N') map to 0 (treated as A); this introduces
-    negligible noise for well-assembled sequences with sparse ambiguous bases.
+    Non-ACGT bytes (including 'N') map to 0 (treated as A).
+
+    NOTE: despite an earlier comment here claiming this is "equivalent to
+    skipping" ambiguous bases, it is NOT -- the original pre-vectorisation
+    implementation (git history, commit e94c220) only counted k-mers found
+    via exact string lookup in an ACGT-only vocabulary, so any window
+    touching an 'N' was silently excluded from the count entirely. Encoding
+    N as A instead fabricates a real count for a k-mer that was never
+    actually observed, systematically biasing frequencies wherever N runs
+    occur (assembly gaps, low-coverage regions). See kmer_vector() and
+    kmer_vector_k7_canonical()'s skip_ambiguous parameter for the corrected
+    behaviour, and docs/CODE_REVIEW_FINDINGS_2026-07.md (Round 7) for the
+    full history and why the default here is left unchanged.
+
+    One more wrinkle found while fixing this: the original implementation's
+    reverse-complement helper also *dropped* non-ACGT characters when
+    building the RC strand (`"".join(_COMPLEMENT.get(b, "") for b in ...)`),
+    shrinking the string rather than preserving N as a placeholder. That
+    shift makes bases on either side of a dropped N adjacent in the RC
+    strand, which can form a k-mer that never existed in the real sequence
+    -- a second, independent artifact, and inconsistent with how the
+    forward strand was handled (no dropping, just per-window skip).
+    skip_ambiguous=True does NOT reproduce this quirk: it treats both
+    strands identically (position-preserving, exclude any window touching
+    a non-ACGT base), which is more defensibly correct than bit-matching
+    an asymmetric legacy artifact.
     """
     raw = np.frombuffer(seq.encode("ascii"), dtype=np.uint8)
     return _ASCII_TO_BASE[raw]
+
+
+# Validity mask: 1 for real ACGT bytes, 0 for anything else (N, IUPAC codes,
+# gaps, garbage). Used by skip_ambiguous=True to exclude any k-mer window
+# that touches a non-ACGT position, matching the pre-vectorisation semantics.
+_ASCII_IS_ACGT: NDArray[np.uint8] = np.zeros(256, dtype=np.uint8)
+for _ch in "ACGTacgt":
+    _ASCII_IS_ACGT[ord(_ch)] = 1
+
+
+def _valid_mask(seq: str) -> NDArray[np.uint8]:
+    """Return a per-position mask: 1 where seq has a real A/C/G/T, 0 elsewhere."""
+    raw = np.frombuffer(seq.encode("ascii"), dtype=np.uint8)
+    return _ASCII_IS_ACGT[raw]
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +214,7 @@ def _encode_seq(seq: str) -> NDArray[np.uint8]:
 # ---------------------------------------------------------------------------
 
 
-def kmer_vector(seq: str, k: int) -> NDArray[np.float32]:
+def kmer_vector(seq: str, k: int, skip_ambiguous: bool = False) -> NDArray[np.float32]:
     """Compute normalised strand-invariant k-mer frequency vector.
 
     Uses vectorised numpy rather than Python string loops for ~100x speedup.
@@ -188,12 +226,22 @@ def kmer_vector(seq: str, k: int) -> NDArray[np.float32]:
 
     The resulting counts are identical to what the original pure-Python loop
     produced for pure-ACGT sequences (sequences containing only A, C, G, T).
-    Ambiguous bases (N) are treated as A, which is equivalent to the original
-    behaviour of skipping them (negligible effect for ≥1 kb assembled contigs).
 
     Args:
-        seq: DNA string (any case; non-ACGT treated as A).
+        seq: DNA string (any case; non-ACGT treated as A, or excluded --
+            see skip_ambiguous).
         k: k-mer size; must be in KMER_SIZES (4 or 5).
+        skip_ambiguous: If False (default), non-ACGT bytes (including 'N')
+            are encoded as A -- this is what every currently-deployed model
+            was trained on, so it stays the default to avoid a silent
+            train/inference mismatch. If True, any k-mer window touching a
+            non-ACGT position is excluded from the count entirely, matching
+            the original pre-vectorisation implementation (git history,
+            commit e94c220) and avoiding the systematic bias toward
+            A-containing k-mers that encoding N as A introduces around
+            assembly gaps / low-coverage regions. Intended for the NEXT
+            model retrain, not for inference against the currently deployed
+            checkpoint -- see docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 7.
 
     Returns:
         Float32 array of shape (4**k,), L2-normalised.
@@ -215,11 +263,26 @@ def kmer_vector(seq: str, k: int) -> NDArray[np.float32]:
     counts = np.zeros(vocab_size, dtype=np.float32)
     powers = _POWERS[k]
 
-    for strand in (encoded, rc_encoded):
+    if skip_ambiguous:
+        valid = _valid_mask(seq)
+        rc_valid = valid[::-1]
+        strand_valids = (valid, rc_valid)
+    else:
+        strand_valids = (None, None)  # type: ignore[assignment]
+
+    for strand, strand_valid in zip((encoded, rc_encoded), strand_valids):
         # sliding_window_view returns a (L-k+1, k) view — zero-copy
         windows = np.lib.stride_tricks.sliding_window_view(strand, k).astype(np.int64)
         # matrix multiply: each row (one k-mer) → scalar ID
         kmer_ids: NDArray[np.int64] = windows @ powers
+        if strand_valid is not None:
+            # A window is only countable if every position in it is a real
+            # ACGT base -- exactly matches the original "kmer in idx_map"
+            # skip behaviour, computed here as an all-valid check per window.
+            window_valid = (
+                np.lib.stride_tricks.sliding_window_view(strand_valid, k).astype(bool).all(axis=1)
+            )
+            kmer_ids = kmer_ids[window_valid]
         counts += np.bincount(kmer_ids, minlength=vocab_size).astype(np.float32)
 
     norm = float(np.linalg.norm(counts))
@@ -256,7 +319,7 @@ def k6_pca_vector(*args, **kwargs):  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
-def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
+def kmer_vector_k7_canonical(seq: str, skip_ambiguous: bool = False) -> NDArray[np.float32]:
     """Compute normalised k=7 canonical k-mer frequency vector (8192 dims).
 
     Each of the 16384 raw k=7 IDs is folded to its canonical representative
@@ -265,7 +328,11 @@ def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
     equivalent to counting canonical occurrences with multiplicity 1.
 
     Args:
-        seq: DNA string (any case; non-ACGT treated as A).
+        seq: DNA string (any case; non-ACGT treated as A, or excluded --
+            see skip_ambiguous).
+        skip_ambiguous: See kmer_vector()'s parameter of the same name --
+            same semantics, same "kept False for the currently-deployed
+            model, intended for the next retrain" reasoning.
 
     Returns:
         Float32 array of shape (8192,), L2-normalised.
@@ -298,6 +365,11 @@ def kmer_vector_k7_canonical(seq: str) -> NDArray[np.float32]:
 
     # Map raw IDs → canonical IDs
     canon_ids = _K7_CANON_MAP[raw_ids]  # shape (L-6,), dtype int16
+
+    if skip_ambiguous:
+        valid = _valid_mask(seq)
+        window_valid = np.lib.stride_tricks.sliding_window_view(valid, k).astype(bool).all(axis=1)
+        canon_ids = canon_ids[window_valid]
 
     counts = np.bincount(canon_ids.astype(np.int64), minlength=K7_CANON_SIZE).astype(np.float32)
 
@@ -387,6 +459,7 @@ def extract_features(
     seq_ids: list[str] | None = None,
     compass_sketch: NDArray[np.uint64] | None = None,
     chr_sketch: NDArray[np.uint64] | None = None,
+    skip_ambiguous: bool = False,
 ) -> NDArray[np.float32]:
     """Extract k=1–5 + k=7-canonical k-mer features + length feature.
 
@@ -423,6 +496,11 @@ def extract_features(
                         containment is appended as a feature.  Requires chr_sketch.
         chr_sketch:     Sorted uint64 numpy array — bottom-S MinHash hashes from
                         the chromosome database.  Required when compass_sketch is set.
+        skip_ambiguous: Passed through to kmer_vector() / kmer_vector_k7_canonical().
+                        False (default) matches every currently-deployed model's
+                        training data. Set True only when building data for a
+                        NEW model that will also be trained with this flag on —
+                        see docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 7.
 
     Returns:
         Float32 array of shape (N, 9557), (N, 9559), (N, 9563), or (N, 9565).
@@ -448,7 +526,7 @@ def extract_features(
     for k in KMER_SIZES:
         k_dim = 4**k
         for i, seq in enumerate(sequences):
-            X[i, offset : offset + k_dim] = kmer_vector(seq, k)
+            X[i, offset : offset + k_dim] = kmer_vector(seq, k, skip_ambiguous=skip_ambiguous)
         if n >= 10_000:
             logger.info("  k=%d done (%d sequences)", k, n)
         offset += k_dim
@@ -456,7 +534,9 @@ def extract_features(
     # k=7 canonical block (8192 dims)
     logger.info("  Computing k=7 canonical features (%d dims) …", K7_CANON_SIZE)
     for i, seq in enumerate(sequences):
-        X[i, offset : offset + K7_CANON_SIZE] = kmer_vector_k7_canonical(seq)
+        X[i, offset : offset + K7_CANON_SIZE] = kmer_vector_k7_canonical(
+            seq, skip_ambiguous=skip_ambiguous
+        )
         if (i + 1) % 10_000 == 0:
             logger.info("  k=7: %d / %d sequences", i + 1, n)
     offset += K7_CANON_SIZE
@@ -504,12 +584,20 @@ def extract_features_to_npy(
     path: Path | str,
     *,
     chunk_size: int = 1000,
+    skip_ambiguous: bool = False,
 ) -> tuple[int, int]:
     """Extract features in bounded-memory chunks into an atomic ``.npy`` file.
 
     The output is written to ``<path>.incomplete`` and renamed only after every
     chunk has been flushed. Interrupted builds therefore cannot masquerade as a
     complete training matrix.
+
+    Args:
+        skip_ambiguous: Passed through to extract_features(). False (default)
+            matches every currently-deployed model. Set True only when
+            building the dataset for a NEW model that will also be trained
+            with skip_ambiguous features throughout -- see
+            docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 7.
     """
 
     if chunk_size <= 0:
@@ -527,7 +615,9 @@ def extract_features_to_npy(
     try:
         for start in range(0, len(sequences), chunk_size):
             end = min(start + chunk_size, len(sequences))
-            matrix[start:end] = extract_features(sequences[start:end])
+            matrix[start:end] = extract_features(
+                sequences[start:end], skip_ambiguous=skip_ambiguous
+            )
             matrix.flush()
             logger.info("Feature rows written: %d / %d", end, len(sequences))
     finally:

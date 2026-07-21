@@ -1,5 +1,59 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 7: fixed N-to-A ambiguous-base encoding (opt-in, needs MLP retrain)
+
+Next backlog item: the review's claim that ambiguous bases (N and other
+IUPAC codes) are encoded as A during k-mer feature extraction, and that
+fixing it needs an MLP retrain. Confirmed, and found the existing code
+comment defending it was wrong.
+
+`features.py`'s `_encode_seq()` maps any non-ACGT byte to index 0 (A), and
+a docstring claimed this was "equivalent to the original behaviour of
+skipping them." Checked git history (commit e94c220, the pre-vectorisation
+implementation): it truly skipped -- `if kmer in idx_map: counts[...] += 1`
+where `idx_map` only contains pure-ACGT k-mers, so any k-mer string
+containing an N was never in the map and simply never counted. Encoding N
+as A is NOT equivalent to that: it fabricates a real count for a k-mer that
+was never observed, for every window touching an N, systematically biasing
+frequencies toward A wherever N runs occur (assembly gaps, low-coverage
+regions). Also found a second, independent quirk in the same old code: its
+`_reverse_complement` helper *dropped* N characters when building the RC
+strand rather than preserving their position, which could weld together
+bases that were never adjacent in the real sequence -- an inconsistency
+between how the two strands were handled, not obviously intentional.
+
+**Fix**: added an opt-in `skip_ambiguous: bool = False` parameter to
+`kmer_vector()`, `kmer_vector_k7_canonical()`, `extract_features()`, and
+`extract_features_to_npy()`. Default stays False (encode N as A) --
+matches every currently-deployed model's training data exactly, so
+inference behavior is completely unchanged unless a caller opts in. When
+True, uses a position-preserving validity mask (`sliding_window_view` over
+a per-position ACGT/not-ACGT array) to exclude any window touching a
+non-ACGT base on either strand, treated consistently -- deliberately not
+reproducing the RC-strand's character-dropping quirk from the legacy code,
+since that's a separate bug, not a spec worth preserving.
+
+Wired a `--skip-ambiguous-bases` flag into `scripts/dev/build_dataset.py`
+(the MLP training-data builder) for the next retrain, with an explicit
+warning that setting it produces features incompatible with the currently
+deployed checkpoint.
+
+**Verified three ways**: (1) default output is bit-identical to literally
+replacing every N with A before calling the old code, confirmed via direct
+comparison against a hand-written reference implementation. (2)
+`skip_ambiguous=True` output matches a brute-force windowed reference that
+excludes any window touching a non-ACGT position on both strands. (3) with
+no ambiguous bases present, `skip_ambiguous` changes nothing (as expected).
+Added as permanent regression tests in `tests/unit/test_features.py`.
+213/213 unit tests pass; black/ruff/mypy clean.
+
+**Not yet in effect for the deployed model**, same caveat as the marker
+grouped-split fix: this is a code fix, not a retrain. Taking effect
+requires rebuilding the MLP training dataset with `--skip-ambiguous-bases`
+(needs the real training genome collections, not available in the sandbox)
+and retraining `mlp_v2.pt`, then the usual benchmark validation before
+shipping -- flagged as a follow-up.
+
 ## Round 6: fixed marker-model train/val split to be grouped by source genome
 
 Next backlog item: the review's concern that the marker XGBoost's train/val

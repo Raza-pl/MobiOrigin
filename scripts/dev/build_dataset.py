@@ -883,6 +883,20 @@ def main() -> None:
         help="Free disk space that must remain after writing features (default: 10 GB).",
     )
     parser.add_argument(
+        "--skip-ambiguous-bases",
+        action="store_true",
+        default=False,
+        help=(
+            "Exclude any k-mer window touching a non-ACGT base (N, IUPAC codes) "
+            "from the count, instead of encoding it as A. False (default) matches "
+            "every currently-deployed model's training data -- flipping this "
+            "changes the feature distribution and REQUIRES a full retrain "
+            "(this dataset + train_mlp.py) to take effect safely; don't use this "
+            "flag to regenerate features for an already-deployed checkpoint. "
+            "See docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 7."
+        ),
+    )
+    parser.add_argument(
         "--min-length",
         type=int,
         default=1000,
@@ -1516,10 +1530,17 @@ def main() -> None:
             f"have {free_bytes / 1024**3:.1f} GB"
         )
 
+    if args.skip_ambiguous_bases:
+        logger.warning(
+            "--skip-ambiguous-bases is set: features will NOT match the "
+            "currently-deployed model. Only use this to build data for a full "
+            "retrain (this dataset + train_mlp.py on the resulting features)."
+        )
     feature_shape = extract_features_to_npy(
         all_seqs,
         feat_path,
         chunk_size=args.feature_chunk_size,
+        skip_ambiguous=args.skip_ambiguous_bases,
     )
 
     logger.info("Saved features → %s  shape=%s", feat_path, feature_shape)

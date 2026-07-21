@@ -11,6 +11,7 @@ from plasflow2.classify.features import (
     extract_features,
     extract_features_to_npy,
     kmer_vector,
+    kmer_vector_k7_canonical,
 )
 
 
@@ -37,6 +38,70 @@ def test_extract_features_shape() -> None:
     seqs = ["ACGT" * 100, "GGCC" * 100, "TTAA" * 100]
     X = extract_features(seqs)
     assert X.shape == (3, FEATURE_DIM), f"Expected (3, {FEATURE_DIM}), got {X.shape}"
+
+
+def test_kmer_vector_default_still_encodes_n_as_a() -> None:
+    """Default (skip_ambiguous=False) must stay bit-identical to the
+    currently-deployed model's training-time behaviour -- an N-containing
+    sequence must match one with every N literally replaced by A."""
+    seq_with_n = "ACGTACGTNNNACGTACGT"
+    seq_n_as_a = seq_with_n.replace("N", "A")
+    v_n = kmer_vector(seq_with_n, k=4)
+    v_a = kmer_vector(seq_n_as_a, k=4)
+    np.testing.assert_allclose(v_n, v_a)
+
+    v7_n = kmer_vector_k7_canonical(seq_with_n)
+    v7_a = kmer_vector_k7_canonical(seq_n_as_a)
+    np.testing.assert_allclose(v7_n, v7_a)
+
+
+def test_kmer_vector_skip_ambiguous_excludes_windows_touching_n() -> None:
+    """skip_ambiguous=True must never count a k-mer whose window touches a
+    non-ACGT position, on either strand, and must not fabricate spurious
+    k-mers by merely encoding N as A."""
+    k = 4
+    # A single N in the middle: every 4-mer window overlapping position 8
+    # (0-indexed) must be excluded -- i.e. windows starting at indices 5-8.
+    seq = "ACGTACGTNACGTACGT"  # len 17, N at index 8
+    v = kmer_vector(seq, k=k, skip_ambiguous=True)
+
+    # Brute-force expected count: only count clean ACGT windows (both strands).
+    comp = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    rc = "".join(comp.get(b, "N") for b in reversed(seq))
+    expected = np.zeros(4**k, dtype=np.float64)
+    bases = "ACGT"
+    for strand in (seq, rc):
+        for i in range(len(strand) - k + 1):
+            window = strand[i : i + k]
+            if all(c in bases for c in window):
+                idx = 0
+                for c in window:
+                    idx = idx * 4 + bases.index(c)
+                expected[idx] += 1
+    norm = np.linalg.norm(expected)
+    if norm > 0:
+        expected /= norm
+
+    np.testing.assert_allclose(v, expected.astype(np.float32), atol=1e-6)
+
+    # And it must differ from the encode-as-A default -- the whole point of
+    # the fix is that these two policies produce different feature vectors
+    # for any sequence containing an ambiguous base.
+    v_default = kmer_vector(seq, k=k, skip_ambiguous=False)
+    assert not np.allclose(v, v_default)
+
+
+def test_kmer_vector_skip_ambiguous_matches_default_when_no_ambiguous_bases() -> None:
+    """With a pure-ACGT sequence, skip_ambiguous shouldn't change anything --
+    there's nothing to skip."""
+    seq = "ACGTACGTACGTACGTACGTACGT"
+    v_default = kmer_vector(seq, k=4, skip_ambiguous=False)
+    v_skip = kmer_vector(seq, k=4, skip_ambiguous=True)
+    np.testing.assert_allclose(v_default, v_skip)
+
+    v7_default = kmer_vector_k7_canonical(seq, skip_ambiguous=False)
+    v7_skip = kmer_vector_k7_canonical(seq, skip_ambiguous=True)
+    np.testing.assert_allclose(v7_default, v7_skip)
 
 
 def test_extract_features_dtype() -> None:
