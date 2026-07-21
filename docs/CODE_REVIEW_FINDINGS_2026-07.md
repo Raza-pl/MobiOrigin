@@ -1,5 +1,42 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 3 confirmation: benchmark rerun after revert
+
+Reran the same benchmark on real hardware with the hallmark-gate revert
+applied (`--skip-genomad`, same input/ground truth as the regression run):
+
+| Run | precision | recall | F1 |
+|---|---|---|---|
+| Pre-fix baseline (before either change shipped) | 0.777 | 0.538 | 0.636 |
+| Broken gate (ICE/PLSDB excluded) — the regression | 0.861 | 0.251 | 0.389 |
+| **Reverted gate (this confirmation run)** | **0.835** | **0.449** | **0.584** |
+
+Recall recovered +0.198 (0.251 → 0.449) — matches the diagnostic script's
+prediction almost exactly (78/394 ≈ 0.198 points attributable to the gate
+fix). Strong internal-consistency check that the diagnosis and revert were
+correct. Log line confirms it directly: `Hallmark gate: demoted 78 plasmid
+calls (no evidence, <50000 bp)`, down from ~125 under the broken gate.
+
+Recall is still ~9 points under the 0.538 pre-fix/sandbox baseline. This
+is **not** the gate's doing — this run logged `Marker XGBoost: promoted 0
+→ plasmid, demoted 0 → other` (zero activity at that stage, consistent
+with `n_reached_xgboost_but_lost = 0` in the earlier diagnostic). The
+remaining gap traces to the largest bucket in the original diagnostic
+table: **170 of 394 true plasmids never became a Stage-1 MLP candidate at
+all**, so no amount of gate or XGBoost tuning can recover them under the
+current architecture. This is a live demonstration of the review's
+candidate-routing item (Stage 1 only routes evidence-gathering to contigs
+the MLP already scores as plasmid) — the single largest remaining
+architectural item on the backlog, not a new bug.
+
+Also observed, not yet investigated: total plasmid calls dropped to 212
+this run (vs. 290 in the original pre-revert runs), and the
+promoted-0/demoted-0 XGBoost anomaly above appeared in both this run and
+the prior one. Flagged as open questions, not blocking.
+
+**Verdict: hallmark-gate revert confirmed correct and sufficient to close
+the round-3 regression.** No further action needed on this item.
+
 ## Round 3: hallmark-gate ICE/PLSDB fix reverted (real-hardware regression)
 
 Items 4+5 (below, "Fixes applied — round 1") shipped in `cbf9a7e` without
