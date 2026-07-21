@@ -1041,7 +1041,23 @@ def run_pipeline(
         has_evidence = has_mobility or has_plsdb or has_replicon or has_ice or has_rep_protein
 
         if has_evidence:
-            continue  # good evidence — keep as plasmid
+            if cid not in _original_mlp_plasmid_ids:
+                # Near-miss widened candidate (section 3 above): its label
+                # is still "unclassified" -- unlike an original MLP plasmid
+                # call, there's no implicit "keep as plasmid" here, it has
+                # to be promoted explicitly, or it silently falls out of
+                # plasmid_records at the rebuild below and never reaches
+                # marker-XGBoost rescoring. (Caught by a validation run
+                # where widening added 66 candidates but changed zero final
+                # labels -- this promotion was missing entirely.)
+                old = pred_by_id[cid]
+                pred_by_id[cid] = Prediction(
+                    sequence_id=old.sequence_id,
+                    label="plasmid",
+                    confidence=old.confidence,
+                    scores=old.scores,
+                )
+            continue  # good evidence — keep/promote to plasmid
 
         contig_len = len(record.seq)
         old = pred_by_id[cid]

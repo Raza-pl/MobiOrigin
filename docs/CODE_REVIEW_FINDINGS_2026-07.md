@@ -1,5 +1,40 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 4 bug fix: widened candidates never actually got promoted
+
+First real-hardware run of the round-4 widening showed the bug clearly:
+log confirmed `Plasmid contigs: 356 / 60394` (widening applied, +66) and
+`Plasmid-DB: 78 / 356 contigs matched` (up from 57/290 — some widened
+candidates did get real evidence), but the final result was **bit-identical**
+to the pre-widening confirmation run: TP=177 FP=35 FN=217,
+precision=0.8349 recall=0.4492 f1=0.5842, `212 plasmid` total, and
+`Marker XGBoost: promoted 0 → plasmid, demoted 0 → other` again.
+
+Root cause: the hallmark gate's `if has_evidence: continue` was written
+assuming every record entering the loop already had `label == "plasmid"`
+(true for the original 290) — for those, `continue` correctly means "keep
+as plasmid" implicitly. But a widened near-miss candidate enters the loop
+still labeled `"unclassified"`; `continue` left it that way even when real
+evidence was found. It then silently dropped out of `plasmid_records` at
+the very next rebuild (`plasmid_records = [r for r in records if
+pred_by_id[r.id].label == "plasmid"]`), so it never reached marker-XGBoost
+rescoring at all. All 66 widened candidates were annotated (real DIAMOND/
+minimap2/mob-suite compute spent) but had zero chance of ever being
+promoted, hence zero effect on the final numbers.
+
+**Fix**: when `has_evidence` is true for a record not in
+`_original_mlp_plasmid_ids`, explicitly construct a new `Prediction` with
+`label="plasmid"` before continuing, so it survives the rebuild and reaches
+rescoring like a real candidate should. Unit tests pass unchanged (12/12).
+Caught entirely from the log's internal inconsistency (widened count went
+up, matched-evidence count went up, but every downstream number didn't
+move at all) — no diagnostic script needed this time, just reading the log
+closely against what the code was supposed to do.
+
+**Still NOT validated against real annotation data end-to-end** — this
+fixes a real bug but the actual recall gain from the (now working)
+promotion path still needs a fresh real-hardware run.
+
 ## Round 4: candidate-routing widening (near-miss margin)
 
 The confirmation run's remaining recall gap (0.449 vs. the 0.538 pre-fix
