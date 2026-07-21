@@ -1,5 +1,33 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 4 confirmation: candidate-routing widening validated on real hardware
+
+Rerun after the promotion-bug fix, same benchmark/`--skip-genomad`:
+
+| Run | precision | recall | F1 | plasmid calls |
+|---|---|---|---|---|
+| Post-revert baseline (no widening) | 0.8349 | 0.4492 | 0.5842 | 212 |
+| **Widened + fixed** | **0.7857** | **0.4746** | **0.5918** | **238** |
+
+Log-traced and internally consistent: of the 66 widened near-miss
+candidates, 34 picked up real biological evidence and were promoted by
+the hallmark gate; marker-XGBoost then demoted 8 of those back down on
+fused-score grounds, leaving 26 net new plasmid calls (212 → 238). Of
+those 26: 10 were correct (TP 177 → 187, FN 217 → 207 — the recall gain)
+and 16 were wrong (FP 35 → 51 — the precision cost).
+
+Net effect: recall +0.0254, precision −0.0492, F1 +0.0076. A real but
+modest win — the deliberately narrow margin (0.02) was designed to keep
+this trade small rather than chase the full 95-contig recoverable bucket,
+and that's what happened: about 15% of the widened slice converted to a
+genuine recall gain, at a ~1.6:1 FP:TP ratio for the added slice itself.
+Whether this specific precision/recall trade is worth keeping as default
+behavior, tuning (wider or narrower margin), or making opt-in is a product
+call, not something the diagnostics alone settle — flagged for the user.
+
+**Verdict: candidate-routing widening confirmed working as designed,
+bug-fixed, and now validated end-to-end on real annotation data.**
+
 ## Round 4 bug fix: widened candidates never actually got promoted
 
 First real-hardware run of the round-4 widening showed the bug clearly:
