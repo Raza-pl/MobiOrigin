@@ -339,7 +339,72 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # 3. Extract plasmid contigs
     # ------------------------------------------------------------------
+    # Candidate routing: every downstream evidence source (PLSDB match,
+    # mobility, geNomad, marker-XGBoost rescoring) only ever sees contigs in
+    # `plasmid_records`. A contig the Stage-1 MLP doesn't outright label
+    # "plasmid" gets zero evidence gathered, no matter how strong the real
+    # biology is — see docs/CODE_REVIEW_FINDINGS_2026-07.md, candidate-
+    # routing analysis (2026-07-21).
+    #
+    # That analysis found the missed true plasmids split roughly in half:
+    # ~56% are cases where the MLP's own top pick (argmax) WAS "plasmid" but
+    # its confidence fell just short of the calibrated per-length threshold
+    # (e.g. 0.850 vs. a 0.857 bar) — these get a second chance below via
+    # biological evidence + marker-XGBoost fusion (which already promotes
+    # purely from blended scores, regardless of the original MLP label — see
+    # the rescoring loop further down). The remaining ~44% are genuine
+    # argmax losses to chromosome and are NOT widened here; a naive "any
+    # argmax=plasmid, regardless of margin" widening was measured (sandbox,
+    # predict()-only) to sweep in 7,371 extra contigs for only 95 true
+    # plasmids — a 26x candidate-count increase for ~1% precision, far too
+    # expensive given geNomad already times out at the current ~290-contig
+    # scale. Restricting to a tight margin below threshold instead adds only
+    # ~66 contigs (23% increase) while still capturing 21 of the 95 — the
+    # sweet spot found by sweeping margins 0.005-0.10 (see analysis script
+    # scripts/analyze_missed_candidates.py's follow-up sweep, logged in the
+    # tracking doc). Most of the expensive annotation steps (ARG/VF/MGE/
+    # BacMet/ICE via DIAMOND, rep-protein DIAMOND) already run on ALL
+    # contigs regardless of candidacy, so this widening's real added cost is
+    # limited to PLSDB match, mobility, and geNomad.
+    #
+    # NOT yet validated against real DIAMOND/mob-suite/geNomad/PLSDB
+    # annotation data — that requires the full run_pipeline() path on real
+    # hardware. Validate before relying on the recall gain.
+    NEAR_MISS_CANDIDATE_MARGIN = 0.02
+
     plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
+    _original_mlp_plasmid_ids = {r.id for r in plasmid_records}
+
+    _near_miss_records = []
+    for r in records:
+        pred = pred_by_id[r.id]
+        if pred.label != "unclassified":
+            continue
+        best_class = max(pred.scores, key=pred.scores.get)
+        if best_class != "plasmid":
+            continue
+        # Use the same effective threshold predict() was actually called
+        # with (accounts for --lenient / explicit --plasmid-threshold), not
+        # the raw parameter -- otherwise a lenient-mode run would be
+        # measured against the wrong bar here.
+        _plas_t, _, _ = _get_length_thresholds(len(r.seq))
+        if _effective_plasmid_threshold is not None:
+            _plas_t = _effective_plasmid_threshold
+        elif len(r.seq) < 5_000:
+            _plas_t = max(_plas_t, 0.95)  # legacy floor, mirrors predict.py
+        deficit = _plas_t - pred.scores["plasmid"]
+        if 0 <= deficit <= NEAR_MISS_CANDIDATE_MARGIN:
+            _near_miss_records.append(r)
+
+    if _near_miss_records:
+        logger.info(
+            "Candidate routing: widening with %d near-miss contig(s) "
+            "(MLP argmax=plasmid, within %.3f of threshold) for evidence gathering.",
+            len(_near_miss_records),
+            NEAR_MISS_CANDIDATE_MARGIN,
+        )
+        plasmid_records = plasmid_records + _near_miss_records
+
     logger.info("Plasmid contigs: %d / %d", len(plasmid_records), len(records))
 
     if not plasmid_records:
@@ -981,7 +1046,10 @@ def run_pipeline(
         contig_len = len(record.seq)
         old = pred_by_id[cid]
         if contig_len < HALLMARK_HARD_THRESHOLD:
-            # Demote: k-mer signal alone is unreliable at this length
+            # Demote: k-mer signal alone is unreliable at this length. For a
+            # near-miss widened candidate (see section 3 above) this is a
+            # no-op — it was already "unclassified" and never becomes a
+            # plasmid without real evidence.
             pred_by_id[cid] = Prediction(
                 sequence_id=old.sequence_id,
                 label="unclassified",
@@ -989,6 +1057,14 @@ def run_pipeline(
                 scores=old.scores,
             )
             _hallmark_demoted += 1
+        elif cid not in _original_mlp_plasmid_ids:
+            # Near-miss widened candidate, >=50kb, no evidence: the ">=50kb,
+            # trust MLP" exception below is specifically about honoring an
+            # MLP call the model was actually confident enough to make
+            # outright. A widened candidate never cleared that bar in the
+            # first place, so extending the same trust here would promote a
+            # sub-threshold call on size alone — leave it unclassified.
+            continue
         else:
             # Keep but flag low_confidence — large contigs are plausible novel plasmids
             pred_by_id[cid] = Prediction(

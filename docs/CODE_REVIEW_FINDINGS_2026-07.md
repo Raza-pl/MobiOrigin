@@ -1,5 +1,77 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 4: candidate-routing widening (near-miss margin)
+
+The confirmation run's remaining recall gap (0.449 vs. the 0.538 pre-fix
+baseline) traced to the biggest architectural item on the backlog: every
+biological-evidence step (PLSDB, mobility, geNomad, marker-XGBoost
+rescoring) only ever runs on `plasmid_records = [r for r in records if
+pred_by_id[r.id].label == "plasmid"]` — a contig the Stage-1 MLP doesn't
+outright label plasmid gets zero evidence gathered, ever.
+
+`scripts/analyze_missed_candidates.py` (run against the confirmation run's
+`all_predictions.tsv`) characterized the 170 missed true plasmids:
+
+| Bucket | Count | % |
+|---|---|---|
+| MLP argmax winner WAS plasmid, just under threshold | 95 | 55.9% |
+| MLP argmax winner was chromosome (genuine miss) | 74 | 43.5% |
+| MLP argmax winner was phage | 1 | 0.6% |
+
+The first bucket is a cheap, well-justified fix: the marker-XGBoost
+rescoring loop already computes its `new_label` purely from blended scores
+(`agg`/`best_conf`/`thresh`), not from the contig's original MLP label — it
+was already capable of promoting these, it just never got the chance
+because they never entered `plasmid_records`.
+
+Sized the widening in the sandbox with `predict()` alone (no DIAMOND/
+geNomad needed) before touching pipeline code, since a bad guess here is
+expensive to walk back (unlike the ICE/PLSDB gate mistake, this one scales
+annotation runtime directly):
+
+| Widening rule | Contigs added | True plasmids captured | Precision of added slice |
+|---|---|---|---|
+| Any argmax=plasmid regardless of margin (naive) | 7,371 | 95 | 1.3% |
+| Margin ≤ 0.005 | 5 | 4 | 80.0% |
+| Margin ≤ 0.01 | 19 | 10 | 52.6% |
+| **Margin ≤ 0.02 (chosen)** | **66** | **21** | **31.8%** |
+| Margin ≤ 0.03 | 170 | 24 | 14.1% |
+| Margin ≤ 0.05 | 479 | 30 | 6.3% |
+| Margin ≤ 0.10 | 1,327 | 43 | 3.2% |
+
+The naive version was rejected outright — 26x the candidate count for ~1%
+of it being true plasmids, on top of a pipeline where geNomad already times
+out at ~290 candidates. Chose margin ≤ 0.02: adds only 66 contigs (+23%)
+while capturing 21/95 of the recoverable bucket; margin 0.03 was rejected
+for poor marginal return (+104 contigs for only +3 more true plasmids).
+
+Also confirmed most of the expensive annotation (ARG/VF/MGE/BacMet/ICE via
+DIAMOND, rep-protein DIAMOND) already runs on ALL contigs regardless of
+candidacy — only PLSDB match, mobility, and geNomad scale with the widened
+candidate count, so the real added cost of +66 contigs is small.
+
+**Implementation** (`pipeline.py`, section 3): added a
+`NEAR_MISS_CANDIDATE_MARGIN = 0.02` near-miss widening step right after the
+initial `plasmid_records` extraction — includes any contig where the MLP's
+own argmax winner was "plasmid" but fell within 0.02 of the (lenient-mode-
+aware) threshold. Also guarded the hallmark gate's "≥50kb, no evidence →
+keep as low_confidence plasmid" branch to only apply to contigs that were
+genuinely MLP-labeled plasmid to begin with (`_original_mlp_plasmid_ids`)
+— without this guard, a large widened near-miss contig with zero evidence
+would have been auto-promoted to plasmid on size alone, which was never
+the intent of that branch.
+
+Smoke-tested in the sandbox: `predict()`-only run against the real
+benchmark FASTA confirms exactly 290 → 356 candidates (+66), matching the
+standalone sizing analysis exactly. Unit tests (`tests/unit/test_pipeline.py`,
+12 tests) pass unchanged.
+
+**NOT yet validated against real DIAMOND/mob-suite/geNomad/PLSDB
+annotation data** — the actual recall gain depends on how many of those 66
+extra candidates have real biological evidence, which only the full
+`run_pipeline()` path on real hardware can determine. Needs a benchmark
+rerun before this is considered shippable.
+
 ## Round 3 confirmation: benchmark rerun after revert
 
 Reran the same benchmark on real hardware with the hallmark-gate revert
