@@ -191,6 +191,7 @@ def run_pipeline(
     genomad_db_path: Path | str | None = None,
     skip_genomad: bool = False,
     lenient: bool = False,
+    widen_candidates: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
 
@@ -253,6 +254,17 @@ def run_pipeline(
         mge_db: Optional path to a DIAMOND .dmnd database built from ISfinder
             transposase protein sequences.  When provided, MGE/IS element
             annotation runs on plasmid contigs.
+        widen_candidates: If True, also route "near-miss" contigs into
+            biological-evidence annotation and marker-XGBoost rescoring —
+            contigs where the Stage-1 MLP's own argmax winner was "plasmid"
+            but confidence fell within 0.02 of the calibrated threshold.
+            Gives them a chance at evidence-based promotion instead of
+            being silently dropped before any evidence is ever gathered.
+            Off by default: validated on the Tier 1 benchmark to trade
+            precision for recall (precision 0.835→0.786, recall
+            0.449→0.475, F1 0.584→0.592) — a real but modest gain, not
+            free, so it's opt-in rather than default behavior. See
+            docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 4.
 
     Returns:
         :class:`PipelineResult` with all predictions and per-plasmid
@@ -367,34 +379,39 @@ def run_pipeline(
     # contigs regardless of candidacy, so this widening's real added cost is
     # limited to PLSDB match, mobility, and geNomad.
     #
-    # NOT yet validated against real DIAMOND/mob-suite/geNomad/PLSDB
-    # annotation data — that requires the full run_pipeline() path on real
-    # hardware. Validate before relying on the recall gain.
+    # Validated on the Tier 1 benchmark (real DIAMOND/mob-suite/PLSDB data,
+    # --skip-genomad): precision 0.835→0.786, recall 0.449→0.475,
+    # F1 0.584→0.592. A real, modest, F1-positive trade -- but it IS a
+    # trade (~1.6 false positives added per true positive recovered in the
+    # widened slice), so it's opt-in (widen_candidates=True /
+    # --widen-candidates) rather than default behavior. See
+    # docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 4 confirmation.
     NEAR_MISS_CANDIDATE_MARGIN = 0.02
 
     plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
     _original_mlp_plasmid_ids = {r.id for r in plasmid_records}
 
     _near_miss_records = []
-    for r in records:
-        pred = pred_by_id[r.id]
-        if pred.label != "unclassified":
-            continue
-        best_class = max(pred.scores, key=pred.scores.get)
-        if best_class != "plasmid":
-            continue
-        # Use the same effective threshold predict() was actually called
-        # with (accounts for --lenient / explicit --plasmid-threshold), not
-        # the raw parameter -- otherwise a lenient-mode run would be
-        # measured against the wrong bar here.
-        _plas_t, _, _ = _get_length_thresholds(len(r.seq))
-        if _effective_plasmid_threshold is not None:
-            _plas_t = _effective_plasmid_threshold
-        elif len(r.seq) < 5_000:
-            _plas_t = max(_plas_t, 0.95)  # legacy floor, mirrors predict.py
-        deficit = _plas_t - pred.scores["plasmid"]
-        if 0 <= deficit <= NEAR_MISS_CANDIDATE_MARGIN:
-            _near_miss_records.append(r)
+    if widen_candidates:
+        for r in records:
+            pred = pred_by_id[r.id]
+            if pred.label != "unclassified":
+                continue
+            best_class = max(pred.scores, key=pred.scores.get)
+            if best_class != "plasmid":
+                continue
+            # Use the same effective threshold predict() was actually called
+            # with (accounts for --lenient / explicit --plasmid-threshold), not
+            # the raw parameter -- otherwise a lenient-mode run would be
+            # measured against the wrong bar here.
+            _plas_t, _, _ = _get_length_thresholds(len(r.seq))
+            if _effective_plasmid_threshold is not None:
+                _plas_t = _effective_plasmid_threshold
+            elif len(r.seq) < 5_000:
+                _plas_t = max(_plas_t, 0.95)  # legacy floor, mirrors predict.py
+            deficit = _plas_t - pred.scores["plasmid"]
+            if 0 <= deficit <= NEAR_MISS_CANDIDATE_MARGIN:
+                _near_miss_records.append(r)
 
     if _near_miss_records:
         logger.info(

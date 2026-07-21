@@ -1,5 +1,23 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 4 decision: candidate-routing widening shipped as opt-in
+
+Given the choice of keeping the widening as default, making it opt-in,
+widening the margin further, or reverting it — chose **opt-in**: a real
+~1.6:1 FP:TP ratio on the added slice is a legitimate trade for some users
+and a bad one for others (e.g. clinical/regulatory contexts where
+precision matters more than recall), so it shouldn't be silently forced on
+everyone by default.
+
+Added `widen_candidates: bool = False` to `run_pipeline()` and
+`--widen-candidates` (off by default) to the `run` CLI command, gating the
+entire near-miss widening block from Round 4. Default-run behavior is now
+provably unchanged (the widening loop simply doesn't execute when the flag
+is off, so `plasmid_records` and everything downstream is identical to
+pre-Round-4 behavior). Users who want the recall gain opt in explicitly and
+know what they're trading. 208/208 unit tests pass; `--help` output
+confirms the flag and its documented tradeoff numbers.
+
 ## Round 4 confirmation: candidate-routing widening validated on real hardware
 
 Rerun after the promotion-bug fix, same benchmark/`--skip-genomad`:

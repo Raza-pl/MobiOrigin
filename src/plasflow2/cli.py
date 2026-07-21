@@ -931,6 +931,20 @@ def main(ctx: click.Context, verbose: bool) -> None:
     ),
 )
 @click.option(
+    "--widen-candidates",
+    "widen_candidates",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also route 'near-miss' contigs into biological-evidence annotation and "
+        "marker-XGBoost rescoring -- contigs where the Stage-1 MLP's argmax winner "
+        "was 'plasmid' but confidence fell within 0.02 of the calibrated threshold. "
+        "Validated on the Tier 1 benchmark to trade precision for recall "
+        "(precision 0.835->0.786, recall 0.449->0.475, F1 0.584->0.592). "
+        "Off by default -- a real but modest trade, not free."
+    ),
+)
+@click.option(
     "--taxonomy-engine",
     "taxonomy_engine",
     default="auto",
@@ -1094,6 +1108,7 @@ def run(
     skip_plasmid_db: bool,
     plasmid_db_timeout: int,
     lenient: bool,
+    widen_candidates: bool,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
 
@@ -1266,6 +1281,7 @@ def run(
         genomad_db_path=genomad_db if genomad_db else None,
         skip_genomad=skip_genomad,
         lenient=lenient,
+        widen_candidates=widen_candidates,
     )
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
