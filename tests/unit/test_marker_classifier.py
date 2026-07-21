@@ -54,9 +54,9 @@ def test_train_grouped_split_never_splits_a_group_across_train_and_val() -> None
         tr_rel, va_rel = next(splitter.split(cls_idx, groups=groups[cls_idx]))
         tr_groups = set(groups[cls_idx][tr_rel])
         va_groups = set(groups[cls_idx][va_rel])
-        assert tr_groups.isdisjoint(va_groups), (
-            f"class {cls}: groups leaked across train/val: {tr_groups & va_groups}"
-        )
+        assert tr_groups.isdisjoint(
+            va_groups
+        ), f"class {cls}: groups leaked across train/val: {tr_groups & va_groups}"
 
 
 def test_train_without_groups_falls_back_to_random_split_with_warning(caplog) -> None:

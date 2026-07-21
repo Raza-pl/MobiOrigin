@@ -537,9 +537,7 @@ class MarkerClassifier:
                 train_idx_parts.append(cls_idx[tr_rel])
                 val_idx_parts.append(cls_idx[va_rel])
             train_idx = np.concatenate(train_idx_parts)
-            val_idx = (
-                np.concatenate(val_idx_parts) if val_idx_parts else np.array([], dtype=int)
-            )
+            val_idx = np.concatenate(val_idx_parts) if val_idx_parts else np.array([], dtype=int)
             X_tr, X_va, y_tr, y_va = X[train_idx], X[val_idx], y[train_idx], y[val_idx]
             n_shared_groups = len(
                 set(np.unique(groups[train_idx])) & set(np.unique(groups[val_idx]))
