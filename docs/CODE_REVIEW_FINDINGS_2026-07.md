@@ -1,5 +1,66 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 6: fixed marker-model train/val split to be grouped by source genome
+
+Next backlog item: the review's concern that the marker XGBoost's train/val
+split isn't grouped, risking leakage. Confirmed and root-caused:
+`MarkerClassifier.train()` used `train_test_split(X, y, stratify=y, ...)` —
+a plain random per-row split. `scripts/dev/build_marker_dataset.py` (the
+script that builds the training NPZ) slices every source genome into
+several overlapping windows (2kb/5kb/10kb, 50% step) as separate rows, e.g.
+`GCF_000009625.1_..._w10000_s25000` and `..._w10000_s70000` from the same
+plasmid — near-duplicates in feature space (GC content, coding density,
+etc. barely differ between overlapping windows). A random split routinely
+puts siblings of the same genome on both sides, so the model can validate
+on data it has effectively already seen.
+
+The deeper problem: even fixing the split function wouldn't have helped —
+the saved `.npz` only contains `X` and `y`, no per-row group/provenance
+array, so there was no way to know which rows came from the same genome
+after the fact.
+
+**Fix, two parts:**
+
+1. `scripts/dev/build_marker_dataset.py`: `sample_sequences()` now returns
+   `(fragment_id, fragment_seq, group_id)` triples (group_id = the source
+   record's ID before windowing); `main()` threads a `groups` array through
+   and saves it in the `.npz` alongside `X`/`y`.
+2. `MarkerClassifier.train()`: new optional `groups` parameter. When
+   provided, splits per-class with `sklearn.GroupShuffleSplit` (never
+   splits a group across train/val) and unions the per-class results —
+   exact-ish stratification since groups never span classes in this
+   dataset design (each genome belongs to one class only). When absent
+   (legacy NPZ files built before this fix), falls back to the old random
+   split with an explicit warning that val_accuracy may be optimistic.
+   `train_marker_model.py` loads `groups` from the NPZ if present and
+   records `split_type` (`grouped_by_source_genome` vs. `random_per_row`)
+   in the model card metadata for provenance.
+
+**Verified the leakage effect concretely**, not just argued it: built a
+synthetic dataset with weak true class signal but a strong idiosyncratic
+per-group offset (standing in for genome-specific composition quirks
+unrelated to real plasmid biology) shared by all of a group's windows.
+Grouped split: val_accuracy 0.29 (honest — close to chance, reflecting
+that the true signal is genuinely weak and the model can't fall back on
+memorizing group identity for unseen genomes). Ungrouped split: val_accuracy
+1.00 (the model just memorizes each group's quirk since siblings leak into
+validation). Same code path, same data, only the split changed — this is
+exactly the failure mode the fix targets. Added as a permanent regression
+test (`tests/unit/test_marker_classifier.py`,
+`test_train_grouped_split_never_splits_a_group_across_train_and_val` +
+a fallback-warning test). 210/210 unit tests pass.
+
+**Not yet in effect for the deployed model.** This is a code fix, not a
+retrain — `data/models/marker_xgb.json`'s reported `val_accuracy: 0.8988`
+was computed with the old leaky split and is likely optimistic to some
+degree (real magnitude unknown without rerunning). Taking effect requires
+rebuilding the training NPZ (`build_marker_dataset.py`, which needs the
+real GTDB/PLSDB/INPHARED genome collections and mob_suite DIAMOND DBs —
+not available in the sandbox) and retraining
+(`train_marker_model.py`) on real hardware, then benchmark-validating the
+new checkpoint the same way every other change this session was validated
+before shipping. Flagged as a follow-up, not done in this pass.
+
 ## Round 5: removed hallmark_boost / plsdb_prot_boost / marker_threshold_boost (dead code)
 
 Next backlog item: the manual probability-boost heuristics the review

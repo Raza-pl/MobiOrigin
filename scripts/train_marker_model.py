@@ -100,8 +100,23 @@ def main() -> None:
     data = np.load(args.features, allow_pickle=True)
     X = data["X"].astype(np.float32)
     y = data["y"].astype(np.int64)
+    groups = data["groups"] if "groups" in data else None
     feat_names = [str(f) for f in data["feature_names"]] if "feature_names" in data else None
     logger.info("Loaded features: X=%s  y=%s", X.shape, y.shape)
+    if groups is not None:
+        logger.info(
+            "Loaded groups: %d rows, %d distinct source genomes — using grouped split.",
+            len(groups),
+            len(set(groups.tolist())),
+        )
+    else:
+        logger.warning(
+            "No 'groups' array in %s (built before grouped-split support was added) — "
+            "falling back to a random per-row split. val_accuracy may be optimistic if "
+            "this dataset has multiple overlapping windows per source genome. "
+            "Rebuild with the current build_marker_dataset.py to get a grouped split.",
+            args.features,
+        )
     if feat_names:
         logger.info("Feature names (%d): %s", len(feat_names), feat_names)
 
@@ -118,6 +133,7 @@ def main() -> None:
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
         learning_rate=args.lr,
+        groups=groups,
     )
     logger.info("Validation accuracy: %.4f", result["val_accuracy"])
 
@@ -148,6 +164,8 @@ def main() -> None:
             "learning_rate": args.lr,
         },
         "val_accuracy": result["val_accuracy"],
+        "split_type": "grouped_by_source_genome" if groups is not None else "random_per_row",
+        "n_distinct_groups": len(set(groups.tolist())) if groups is not None else None,
     }
     clf.save(out_path, metadata=metadata)
     logger.info("Done — saved to %s", out_path)

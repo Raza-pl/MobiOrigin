@@ -464,6 +464,7 @@ class MarkerClassifier:
         colsample_bytree: float = 0.8,
         eval_fraction: float = 0.1,
         random_state: int = 42,
+        groups: NDArray | None = None,
     ) -> dict:
         """Train the XGBoost on marker features.
 
@@ -477,6 +478,24 @@ class MarkerClassifier:
             colsample_bytree: Column subsampling per tree.
             eval_fraction: Fraction of data held out for early stopping.
             random_state: RNG seed.
+            groups: Optional (N,) array of source-genome IDs, one per row.
+                The training set (build_marker_dataset.py) slices each source
+                genome into multiple overlapping windows (2kb/5kb/10kb, 50%
+                step) as separate rows -- adjacent windows of the same genome
+                share most of their sequence and are near-duplicates in
+                feature space (GC content, coding density, etc. barely
+                differ). A plain random split lets siblings of the same
+                genome land in both train and validation, so the model can
+                effectively validate on data it already trained on,
+                inflating val_accuracy. When *groups* is provided, every row
+                is assigned to train OR val by its group (never split across
+                both) -- done per-class so the held-out fraction still comes
+                out close to *eval_fraction* per class, since groups never
+                span classes (each genome belongs to exactly one class in
+                this dataset design). When *groups* is None (e.g. legacy
+                NPZ files built before this was tracked), falls back to the
+                old per-row random split, with a warning -- val_accuracy in
+                that case may be optimistic.
 
         Returns:
             Dict with 'val_accuracy' and 'feature_importances'.
@@ -490,11 +509,59 @@ class MarkerClassifier:
             ) from e
 
         from sklearn.metrics import accuracy_score  # type: ignore[import]
-        from sklearn.model_selection import train_test_split  # type: ignore[import]
 
-        X_tr, X_va, y_tr, y_va = train_test_split(
-            X, y, test_size=eval_fraction, stratify=y, random_state=random_state
-        )
+        if groups is not None:
+            from sklearn.model_selection import GroupShuffleSplit  # type: ignore[import]
+
+            groups = np.asarray(groups)
+            train_idx_parts: list[NDArray] = []
+            val_idx_parts: list[NDArray] = []
+            for cls in np.unique(y):
+                cls_idx = np.where(y == cls)[0]
+                n_cls_groups = len(np.unique(groups[cls_idx]))
+                if n_cls_groups < 2:
+                    # Can't hold out a whole group without losing the class
+                    # entirely from one side -- fall back to keeping all
+                    # rows of this (tiny/ungrouped) class in train.
+                    logger.warning(
+                        "Class %s has only %d distinct group(s) — all rows kept in train.",
+                        cls,
+                        n_cls_groups,
+                    )
+                    train_idx_parts.append(cls_idx)
+                    continue
+                splitter = GroupShuffleSplit(
+                    n_splits=1, test_size=eval_fraction, random_state=random_state
+                )
+                tr_rel, va_rel = next(splitter.split(cls_idx, groups=groups[cls_idx]))
+                train_idx_parts.append(cls_idx[tr_rel])
+                val_idx_parts.append(cls_idx[va_rel])
+            train_idx = np.concatenate(train_idx_parts)
+            val_idx = (
+                np.concatenate(val_idx_parts) if val_idx_parts else np.array([], dtype=int)
+            )
+            X_tr, X_va, y_tr, y_va = X[train_idx], X[val_idx], y[train_idx], y[val_idx]
+            n_shared_groups = len(
+                set(np.unique(groups[train_idx])) & set(np.unique(groups[val_idx]))
+            )
+            logger.info(
+                "Grouped split: %d train rows / %d val rows, %d groups shared "
+                "between train and val (should be 0).",
+                len(train_idx),
+                len(val_idx),
+                n_shared_groups,
+            )
+        else:
+            from sklearn.model_selection import train_test_split  # type: ignore[import]
+
+            logger.warning(
+                "No groups provided — falling back to a random per-row split. "
+                "If the training data has multiple overlapping windows per "
+                "source genome, val_accuracy may be inflated by leakage."
+            )
+            X_tr, X_va, y_tr, y_va = train_test_split(
+                X, y, test_size=eval_fraction, stratify=y, random_state=random_state
+            )
 
         # Always force 3-class multiclass — even when a class is absent from
         # this training batch (e.g. no phage in benchmark data).  Without

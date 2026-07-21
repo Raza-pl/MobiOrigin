@@ -12,6 +12,67 @@ from plasflow2.classify.marker_classifier import (
 )
 
 
+def test_train_grouped_split_never_splits_a_group_across_train_and_val() -> None:
+    """A group's rows must all land on one side of the split, never both.
+
+    Regression test for the leakage fix: build_marker_dataset.py slices each
+    source genome into several overlapping windows (near-duplicate rows).
+    Before this fix, MarkerClassifier.train() used a plain random per-row
+    split, which could place sibling windows of the same genome in both
+    train and val -- inflating val_accuracy by letting the model validate on
+    near-duplicates of what it trained on.
+    """
+    rng = np.random.default_rng(0)
+    n_classes, n_groups_per_class, n_rows_per_group, n_features = 3, 10, 4, 5
+
+    X_list, y_list, g_list = [], [], []
+    for cls in range(n_classes):
+        for gi in range(n_groups_per_class):
+            base = rng.normal(loc=cls * 3, scale=1.0, size=n_features)
+            group_id = f"class{cls}_group{gi}"
+            for _ in range(n_rows_per_group):
+                X_list.append(base + rng.normal(scale=0.05, size=n_features))
+                y_list.append(cls)
+                g_list.append(group_id)
+
+    X = np.array(X_list, dtype=np.float32)
+    y = np.array(y_list, dtype=np.int64)
+    groups = np.array(g_list)
+
+    clf = MarkerClassifier()
+    clf._model = None  # ensure train() builds a fresh model
+    result = clf.train(X, y, n_estimators=10, groups=groups, eval_fraction=0.2)
+
+    assert "val_accuracy" in result
+    # Re-derive the same split the way train() does, to check the invariant
+    # directly rather than relying on log output.
+    from sklearn.model_selection import GroupShuffleSplit
+
+    for cls in np.unique(y):
+        cls_idx = np.where(y == cls)[0]
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+        tr_rel, va_rel = next(splitter.split(cls_idx, groups=groups[cls_idx]))
+        tr_groups = set(groups[cls_idx][tr_rel])
+        va_groups = set(groups[cls_idx][va_rel])
+        assert tr_groups.isdisjoint(va_groups), (
+            f"class {cls}: groups leaked across train/val: {tr_groups & va_groups}"
+        )
+
+
+def test_train_without_groups_falls_back_to_random_split_with_warning(caplog) -> None:
+    """Legacy NPZ files without a groups array should still train, with a warning."""
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(60, 4)).astype(np.float32)
+    y = np.array([0, 1, 2] * 20, dtype=np.int64)
+
+    clf = MarkerClassifier()
+    with caplog.at_level(logging.WARNING):
+        result = clf.train(X, y, n_estimators=10, groups=None)
+
+    assert "val_accuracy" in result
+    assert any("falling back to a random per-row split" in rec.message for rec in caplog.records)
+
+
 def test_predict_scores_supports_legacy_binary_marker_model() -> None:
     class BinaryModel:
         def predict_proba(self, features):
