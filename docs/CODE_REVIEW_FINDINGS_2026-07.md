@@ -14,10 +14,12 @@ unflagged bugs and one mischaracterization:
   deliberately not defaulted on since it requires an MLP retrain to take
   effect. Not a new bug.
 - **PLSDB fallback score normalization** (`pipeline.py`): when the marker
-  XGBoost model isn't loaded, the PLSDB hard-override path force-sets
+  XGBoost model isn't loaded, the PLSDB hard-override path force-set
   `scores={**old.scores, "plasmid": 0.97}` without renormalizing the other
   classes, producing a non-probability distribution (can sum > 1.0).
-  Confirmed real. Fix pending (Task #1).
+  Confirmed real *as written* — but while writing a regression test,
+  tracing showed the branch was unreachable, not just buggy: fixed and
+  removed (see below).
 - **Duplicate FASTA IDs** (`utils/fasta.py`): `load_fasta()`/`iter_fasta()`
   have no uniqueness enforcement; downstream code keys everything by contig
   ID, so a duplicate silently overwrites an earlier record. Confirmed real.
@@ -77,6 +79,53 @@ Also updated two pre-existing tests (`test_basic_parsing`, `test_top_n_limit`)
 that had relied on the old per-row (not per-ORF) counting behavior, since
 they used the same literal `qseqid` for what were meant to represent
 distinct ORFs. 217/217 unit tests pass; black/ruff/mypy clean.
+
+### Fix: PLSDB fallback branch removed as dead code
+
+The review's diagnosis was correct as far as it went: `pipeline.py`'s
+"no marker model" fallback (`elif plasmid_db_hits: ... scores={**old.scores,
+"plasmid": 0.97}`) really did skip renormalization, and the fixed version
+was written and initially verified against a synthetic `Prediction` object.
+But writing a proper `run_pipeline()`-level regression test (rather than
+testing the snippet in isolation) surfaced a deeper problem: the branch is
+unreachable.
+
+Tracing why: `plasmid_db_hits` can only contain a contig ID if that contig
+was already in `plasmid_records` when the PLSDB search ran (step 4d;
+`plasmid_fasta` is written from `plasmid_records`, and PLSDB matching only
+runs `elif plasmid_db_dir is not None and plasmid_records:`). Every one of
+those contigs started out labeled "plasmid". The hallmark gate (step 6c)
+treats `has_plsdb = cid in plasmid_db_hits` as sufficient evidence on its
+own to keep — or, for a widened near-miss candidate, explicitly promote —
+that contig's label as "plasmid". Nothing else between step 4d and the
+fallback branch can move a plasmid_db_hits member off "plasmid" (the
+archaeal override only touches chromosome/unclassified contigs; the
+marker-XGBoost demotion path is mutually exclusive with this fallback,
+since the fallback only runs when there's no marker model at all). So by
+construction, every contig the fallback's loop visits is already labeled
+"plasmid", and its guard condition (`label != "plasmid"`) can never be
+true.
+
+Confirmed empirically, not just by reading: a `run_pipeline()` call with a
+mocked PLSDB hit, `predict()` returning "plasmid", and no marker model
+present left the label untouched throughout — the branch never fired.
+
+Raised to the user as a scope change (fix a working-but-buggy branch vs.
+remove genuinely dead code) rather than assumed; user chose removal, matching
+how `hallmark_boost` / `plsdb_prot_boost` / `marker_threshold_boost` were
+handled earlier this session (Round 5). Removed the branch, replaced it
+with an explanatory comment (`pipeline.py`, ~line 1394) documenting the
+reachability argument so a future refactor doesn't reintroduce it by
+accident without re-checking this invariant. Replaced the two tests that
+exercised the (now-removed) override logic with
+`test_no_marker_model_plsdb_hit_stays_plasmid_with_original_scores`, which
+confirms the simpler actual behavior: a plasmid_db_hits contig keeps its
+original MLP scores untouched when no marker model is available. Also
+fixed the test mock factory (`_mock_pipeline` in `tests/unit/test_pipeline.py`)
+to pass `plasmid_db_dir` through to `run_pipeline()` when `plasmid_db_hits`
+is supplied — previously the mocked `annotate_plasmid_db` return value was
+silently unreachable in tests too, for the same underlying reason.
+216/216 unit tests pass; black/ruff/mypy clean.
 
 ## Round 7: fixed N-to-A ambiguous-base encoding (opt-in, needs MLP retrain)
 

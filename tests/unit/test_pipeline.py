@@ -14,6 +14,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from plasflow2.annotate.args import ARGHit
 from plasflow2.annotate.mobility import MobilityResult
+from plasflow2.annotate.plasmid_db import PlasmidDBHit
 from plasflow2.classify.predict import Prediction
 from plasflow2.pipeline import ContigResult, PipelineResult, run_pipeline
 from plasflow2.risk.scorer import RiskScore
@@ -47,6 +48,17 @@ def _arg_hit(contig_id: str) -> ARGHit:
         identity=99.5,
         coverage=95.0,
         evalue=1e-120,
+    )
+
+
+def _plasmid_db_hit(contig_id: str) -> PlasmidDBHit:
+    return PlasmidDBHit(
+        contig_id=contig_id,
+        match_acc="PLSDB_NZ_CP012345.1",
+        source_db="PLSDB",
+        ani=99.2,
+        query_cov=98.5,
+        organism="Escherichia coli",
     )
 
 
@@ -91,6 +103,15 @@ def _mock_pipeline(
     aro_index = tmp_path / "aro_index.tsv"
     aro_index.write_text("mock")
 
+    # annotate_plasmid_db() is only invoked when plasmid_db_dir is set (see
+    # pipeline.py section 4d) -- provide one whenever the test wants
+    # plasmid_db_hits to actually be injected, so the mocked return value is
+    # reachable rather than silently ignored.
+    plasmid_db_dir = None
+    if plasmid_db_hits is not None:
+        plasmid_db_dir = tmp_path / "plasmid_db_src"
+        plasmid_db_dir.mkdir(exist_ok=True)
+
     with (
         patch("plasflow2.pipeline.load_fasta", return_value=fasta_records),
         patch("plasflow2.pipeline.predict", return_value=predictions),
@@ -114,6 +135,7 @@ def _mock_pipeline(
             aro_index=aro_index,
             work_dir=tmp_path / "work",
             skip_mobility=skip_mobility,
+            plasmid_db_dir=plasmid_db_dir,
         )
 
 
@@ -239,6 +261,50 @@ def test_run_pipeline_risk_score_present(tmp_path: Path) -> None:
         skip_mobility=True,
     )
     assert isinstance(result.plasmid_results[0].risk, RiskScore)
+
+
+# ---------------------------------------------------------------------------
+# run_pipeline — PLSDB hits + no marker XGBoost model available
+# ---------------------------------------------------------------------------
+#
+# A "no marker model" fallback override used to live in this code path
+# (force plasmid confidence to 0.97 for any plasmid_db_hits contig not
+# already labeled plasmid). It was removed as dead code: PLSDB matching
+# only runs on contigs already labeled plasmid (plasmid_fasta is built from
+# plasmid_records), and the hallmark gate treats any plasmid_db_hits
+# membership as sufficient evidence to keep -- or, for a widened near-miss
+# candidate, explicitly promote -- a contig's label as "plasmid". So by the
+# time that fallback ran, its own guard condition could never be true. See
+# docs/CODE_REVIEW_FINDINGS_2026-07.md, Round 8.
+
+
+def test_no_marker_model_plsdb_hit_stays_plasmid_with_original_scores(
+    tmp_path: Path,
+) -> None:
+    # No marker_xgb.pkl written alongside the mock model -- exercises the
+    # "no marker model" path. Confirms a plasmid_db_hits contig simply keeps
+    # its original MLP scores untouched (no override, no crash), since
+    # nothing between PLSDB matching and here can move it off "plasmid".
+    records = [_record("p1")]
+    original_scores = {"plasmid": 0.80, "chromosome": 0.15, "phage": 0.05, "archaea": 0.0}
+    preds = [
+        Prediction(
+            sequence_id="p1",
+            label="plasmid",
+            confidence=0.80,
+            scores=dict(original_scores),
+        )
+    ]
+    result = _mock_pipeline(
+        tmp_path,
+        fasta_records=records,
+        predictions=preds,
+        plasmid_db_hits={"p1": _plasmid_db_hit("p1")},
+        skip_mobility=True,
+    )
+    final = next(p for p in result.all_predictions if p.sequence_id == "p1")
+    assert final.label == "plasmid"
+    assert final.scores == original_scores
 
 
 # ---------------------------------------------------------------------------

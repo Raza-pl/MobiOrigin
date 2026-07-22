@@ -1391,18 +1391,27 @@ def run_pipeline(
             plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
         except Exception as _exc:
             logger.warning("Marker XGBoost failed: %s — using MLP + hallmark gate only.", _exc)
-    elif plasmid_db_hits:
-        # No XGBoost model: still apply PLSDB hard override for confirmed matches
-        for cid in plasmid_db_hits:
-            if cid in pred_by_id and pred_by_id[cid].label != "plasmid":
-                old = pred_by_id[cid]
-                pred_by_id[cid] = Prediction(
-                    sequence_id=cid,
-                    label="plasmid",
-                    confidence=0.97,
-                    scores={**old.scores, "plasmid": 0.97},
-                )
-        plasmid_records = [r for r in records if pred_by_id[r.id].label == "plasmid"]
+
+    # NOTE (2026-07-22): a "no marker model" fallback branch used to live
+    # here (`elif plasmid_db_hits: ...`), force-setting plasmid confidence
+    # to 0.97 for any contig in plasmid_db_hits still labeled non-plasmid.
+    # Removed after tracing showed it was dead code, not just buggy: every
+    # cid that reaches plasmid_db_hits was, by construction, already in
+    # plasmid_records at step 4d (PLSDB matching only runs on already
+    # plasmid-labeled contigs — plasmid_fasta is built from plasmid_records).
+    # The hallmark gate (6c, above) treats `has_plsdb = cid in
+    # plasmid_db_hits` as sufficient evidence on its own to keep (or, for a
+    # widened near-miss candidate, explicitly promote) a contig's label as
+    # "plasmid" — so by the time execution reaches this point, every
+    # plasmid_db_hits member is unconditionally already labeled "plasmid".
+    # The branch's own guard condition (`label != "plasmid"`) could
+    # therefore never be true. Confirmed via a real run_pipeline() call with
+    # a mocked PLSDB hit and no marker model present: the label stayed
+    # "plasmid" throughout, never touching this branch. (This is separate
+    # from the review's original claim, which only flagged the branch's
+    # score-renormalization as buggy — tracing reachability while writing a
+    # regression test surfaced the deeper issue that the code was
+    # unreachable altogether.)
 
     # ------------------------------------------------------------------
     # 7. Risk scoring + assemble ContigResult list
