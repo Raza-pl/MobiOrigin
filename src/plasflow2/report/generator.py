@@ -30,6 +30,23 @@ logger = logging.getLogger(__name__)
 
 MAX_TABLE_ROWS = 2_000
 
+
+def _json_for_script(obj: object) -> str:
+    """json.dumps(), but safe to embed directly inside an HTML <script> tag.
+
+    json.dumps() doesn't escape "/", so any string value containing a
+    literal "</script>" (a FASTA header, gene name, organism string, etc. --
+    all of which land in report data) would prematurely close the
+    surrounding <script> tag: the HTML parser looks for that byte sequence
+    before any JS parsing happens, regardless of it being "inside a string
+    literal" from JS's point of view. Escaping "</" as "<\\/" is the
+    standard mitigation (same fix used by Django's json_script, Rails, etc.)
+    -- valid inside any JS string/regex context and doesn't change the
+    parsed value once loaded, since "\\/" is just "/".
+    """
+    return json.dumps(obj).replace("</", "<\\/")
+
+
 # ---------------------------------------------------------------------------
 # Shared CSS
 # ---------------------------------------------------------------------------
@@ -1034,8 +1051,8 @@ def _render_plasmid_page(data: dict) -> str:
             f"plasmid contigs. Full data in all_predictions.tsv.</p>"
         )
 
-    row_data_json = json.dumps([_p_row(r) for r in display])
-    headers_json = json.dumps(_PLASMID_DOWNLOAD_HEADERS)
+    row_data_json = _json_for_script([_p_row(r) for r in display])
+    headers_json = _json_for_script(_PLASMID_DOWNLOAD_HEADERS)
 
     th_row = (
         '<th class="no-sort"><input type="checkbox" id="chk-all" title="Select all on page"></th>'
@@ -1121,13 +1138,13 @@ def _render_plasmid_page(data: dict) -> str:
     js = f"""
 (function(){{
 var P=window.Plotly,dm={{responsive:true,displayModeBar:false}};
-P.newPlot('cpie', {json.dumps(data['pie_data']['data'])},{json.dumps(data['pie_data']['layout'])},dm);
-P.newPlot('carg', {json.dumps(data['arg_data']['data'])},{json.dumps(data['arg_data']['layout'])},dm);
-P.newPlot('crisk',{json.dumps(data['risk_data']['data'])},{json.dumps(data['risk_data']['layout'])},dm);
-P.newPlot('cvf',  {json.dumps(data['vf_data']['data'])}, {json.dumps(data['vf_data']['layout'])}, dm);
-P.newPlot('cmge', {json.dumps(data['mge_data']['data'])},{json.dumps(data['mge_data']['layout'])},dm);
-P.newPlot('cmob', {json.dumps(data['mobility_data']['data'])},{json.dumps(data['mobility_data']['layout'])},dm);
-P.newPlot('cesk', {json.dumps(data['eskape_data']['data'])},{json.dumps(data['eskape_data']['layout'])},dm);
+P.newPlot('cpie', {_json_for_script(data['pie_data']['data'])},{_json_for_script(data['pie_data']['layout'])},dm);
+P.newPlot('carg', {_json_for_script(data['arg_data']['data'])},{_json_for_script(data['arg_data']['layout'])},dm);
+P.newPlot('crisk',{_json_for_script(data['risk_data']['data'])},{_json_for_script(data['risk_data']['layout'])},dm);
+P.newPlot('cvf',  {_json_for_script(data['vf_data']['data'])}, {_json_for_script(data['vf_data']['layout'])}, dm);
+P.newPlot('cmge', {_json_for_script(data['mge_data']['data'])},{_json_for_script(data['mge_data']['layout'])},dm);
+P.newPlot('cmob', {_json_for_script(data['mobility_data']['data'])},{_json_for_script(data['mobility_data']['layout'])},dm);
+P.newPlot('cesk', {_json_for_script(data['eskape_data']['data'])},{_json_for_script(data['eskape_data']['layout'])},dm);
 
 var ALL={row_data_json};
 var HEADERS={headers_json};
@@ -1508,22 +1525,22 @@ def _render_nonplasmid_page(
 ]"""
         )
 
-    row_json = json.dumps([_np_row(r, show_best) for r in display])
+    row_json = _json_for_script([_np_row(r, show_best) for r in display])
 
     pathogen_js = ""
     if show_pathogen and pathogen_data:
         pathogen_js = (
             f"P.newPlot('{table_id}_cpat',"
-            f"{json.dumps(pathogen_data['data'])},"
-            f"{json.dumps(pathogen_data['layout'])},dm);"
+            f"{_json_for_script(pathogen_data['data'])},"
+            f"{_json_for_script(pathogen_data['layout'])},dm);"
         )
 
     js = f"""
 (function(){{
 var P=window.Plotly,dm={{responsive:true,displayModeBar:false}};
-P.newPlot('{table_id}_c1',{json.dumps(ch['c1']['data'])},{json.dumps(ch['c1']['layout'])},dm);
-P.newPlot('{table_id}_c2',{json.dumps(ch['c2']['data'])},{json.dumps(ch['c2']['layout'])},dm);
-P.newPlot('{table_id}_c3',{json.dumps(ch['c3']['data'])},{json.dumps(ch['c3']['layout'])},dm);
+P.newPlot('{table_id}_c1',{_json_for_script(ch['c1']['data'])},{_json_for_script(ch['c1']['layout'])},dm);
+P.newPlot('{table_id}_c2',{_json_for_script(ch['c2']['data'])},{_json_for_script(ch['c2']['layout'])},dm);
+P.newPlot('{table_id}_c3',{_json_for_script(ch['c3']['data'])},{_json_for_script(ch['c3']['layout'])},dm);
 {pathogen_js}
 var DATA={row_json};
 new LightTable({{tableId:'{table_id}',data:DATA,cols:{col_js},pageSize:50,

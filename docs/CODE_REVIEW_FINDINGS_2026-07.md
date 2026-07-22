@@ -27,7 +27,7 @@ unflagged bugs and one mischaracterization:
 - **HTML report JSON-injection** (`report/generator.py`): `json.dumps(...)`
   output embedded raw inside `<script>` tags; `json.dumps` doesn't escape
   `/`, so a FASTA header containing literal `</script>` could break out of
-  the script context. Confirmed real. Fix pending (Task #3).
+  the script context. Confirmed real. Fixed (see below).
 - **Thread pass-through gap** (`cli.py`): the `classify` command calls
   `_run_pyrodigal(_seqs, _ids)` without `n_threads=threads`, silently using
   the hardcoded default of 16 regardless of `--threads`. Confirmed real.
@@ -160,6 +160,41 @@ against real fixture FASTA files (`tests/integration`) to confirm no
 existing test data has undetected duplicate IDs that would now break under
 the new check. 225/225 unit tests + 22/22 integration tests pass;
 black/ruff/mypy clean.
+
+### Fix: HTML report JSON-in-`<script>` injection
+
+`report/generator.py` builds 5 self-contained HTML report pages, embedding
+chart and table data via `json.dumps(...)` directly inside f-string
+`<script>` blocks (14 call sites: the plasmid page's row/header/chart data,
+and the shared non-plasmid page renderer's row/chart/pathogen data used by
+the chromosome/phage/archaea/unclassified pages). `json.dumps()` doesn't
+escape `/`, so any report data containing a literal `</script>` — a FASTA
+header, an organism string embedded in a PLSDB match, a gene name — would
+prematurely close the surrounding `<script>` tag. The HTML parser looks for
+that exact byte sequence before any JS parsing happens, so it doesn't
+matter that the text is "inside a JS string literal" from JS's point of
+view; whatever HTML/script followed in the injected payload would then run
+or render as part of the page.
+
+**Fix**: added `_json_for_script(obj)`, a thin wrapper around `json.dumps()`
+that additionally replaces `</` with `<\/` — the standard mitigation for
+this exact class of bug (same approach as Django's `json_script` template
+filter). `<\/` is valid inside any JS string/regex literal and evaluates
+back to `</` at runtime, so it doesn't change the parsed value once loaded
+in the browser; it just can't be misread by the HTML parser as a tag
+boundary. Replaced all 14 `json.dumps(...)` call sites in the file with
+`_json_for_script(...)`; confirmed via grep that none were missed.
+
+**Verified**: new `tests/unit/test_report_generator.py` — direct unit tests
+on `_json_for_script()` (escapes `</script>`, round-trips to the same
+value once un-escaped, no-ops when there's nothing to escape) plus an
+end-to-end test rendering the real plasmid report page
+(`_render_plasmid_page()`) with a contig ID crafted as
+`"c1</script><script>alert(document.cookie)</script>"`: confirms the
+rendered HTML has no more literal `</script>` occurrences than a page
+built from a clean contig ID (i.e. the payload didn't add a break-out),
+and that the escaped form (`<\/script>`) is present in its place. 252/252
+unit + integration tests pass; black/ruff/mypy clean.
 
 ## Round 7: fixed N-to-A ambiguous-base encoding (opt-in, needs MLP retrain)
 
