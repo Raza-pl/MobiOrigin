@@ -21,9 +21,9 @@ unflagged bugs and one mischaracterization:
   tracing showed the branch was unreachable, not just buggy: fixed and
   removed (see below).
 - **Duplicate FASTA IDs** (`utils/fasta.py`): `load_fasta()`/`iter_fasta()`
-  have no uniqueness enforcement; downstream code keys everything by contig
-  ID, so a duplicate silently overwrites an earlier record. Confirmed real.
-  Fix pending (Task #2).
+  had no uniqueness enforcement; downstream code keys everything by contig
+  ID, so a duplicate silently overwrote an earlier record. Confirmed real.
+  Fixed (see below).
 - **HTML report JSON-injection** (`report/generator.py`): `json.dumps(...)`
   output embedded raw inside `<script>` tags; `json.dumps` doesn't escape
   `/`, so a FASTA header containing literal `</script>` could break out of
@@ -126,6 +126,40 @@ to pass `plasmid_db_dir` through to `run_pipeline()` when `plasmid_db_hits`
 is supplied — previously the mocked `annotate_plasmid_db` return value was
 silently unreachable in tests too, for the same underlying reason.
 216/216 unit tests pass; black/ruff/mypy clean.
+
+### Fix: duplicate FASTA contig IDs now raise instead of silently overwriting
+
+`load_fasta()` and `iter_fasta()` (`utils/fasta.py`) had no uniqueness
+check on record IDs. Every downstream consumer keys data by contig ID in
+plain dicts (`pred_by_id`, `args_by_contig`, `mobility_by_contig`, taxonomy,
+risk scores, …), so a duplicate ID in the input FASTA silently overwrote
+whichever record was seen first — one contig's results would quietly
+vanish from the output with no error, warning, or count mismatch a user
+could notice.
+
+**Fix**: added `DuplicateContigIDError(ValueError)`. Both `load_fasta()`
+and `iter_fasta()` now track seen IDs and raise as soon as a repeat is
+found, naming the offending ID and source file. `load_fasta()` checks
+across *all* records in the file (including ones the `min_length` filter
+would otherwise drop — a duplicate below the length threshold still means
+the input file is malformed and should be rejected). `iter_fasta()` raises
+lazily, mid-generator, so it doesn't have to buffer the whole file just to
+run the check — preserves the point of using a generator for large inputs.
+Left unhandled at the call sites (`pipeline.py`, `cli.py`) rather than
+adding a new try/except wrapper, consistent with how the existing
+`FileNotFoundError` from the same function is already handled (i.e., not
+specially — it propagates as a clear Python exception).
+
+**Verified**: added `TestLoadFasta`/`TestIterFasta` classes to
+`tests/unit/test_fasta.py` covering: duplicate raises (both functions),
+duplicate below `min_length` still raises, no false positive on distinct
+IDs, and — for `iter_fasta()` specifically — that earlier unique records
+are yielded successfully before the generator raises on the later
+duplicate (confirms no whole-file buffering). Also ran the full test suite
+against real fixture FASTA files (`tests/integration`) to confirm no
+existing test data has undetected duplicate IDs that would now break under
+the new check. 225/225 unit tests + 22/22 integration tests pass;
+black/ruff/mypy clean.
 
 ## Round 7: fixed N-to-A ambiguous-base encoding (opt-in, needs MLP retrain)
 

@@ -17,6 +17,20 @@ from Bio.SeqRecord import SeqRecord  # type: ignore[import]
 logger = logging.getLogger(__name__)
 
 
+class DuplicateContigIDError(ValueError):
+    """Raised when a FASTA file contains more than one record with the same ID.
+
+    Every downstream consumer of parsed FASTA records keys data by contig ID
+    in plain dicts (predictions, annotation hits, mobility results, risk
+    scores, …). A duplicate ID doesn't raise anywhere in that chain — it
+    silently overwrites whichever record was seen first, so one contig's
+    results quietly vanish from the output with no error or warning. Raising
+    here, at the single point where every FASTA file enters the pipeline,
+    catches the problem at the source instead of producing a shorter,
+    silently-wrong result several stages later.
+    """
+
+
 def _open_fasta(path: Path):
     """Open a FASTA file transparently, supporting .gz and .bz2 compression."""
     suffix = path.suffix.lower()
@@ -38,13 +52,28 @@ def load_fasta(path: Path | str, min_length: int = 1000) -> list[SeqRecord]:
 
     Returns:
         List of SeqRecord objects passing the length filter.
+
+    Raises:
+        DuplicateContigIDError: If the file contains two or more records
+            with the same ID (checked across *all* records in the file,
+            including ones dropped by the length filter -- a duplicate
+            below min_length still indicates a malformed input file).
     """
     path = Path(path)
     records: list[SeqRecord] = []
+    seen_ids: set[str] = set()
     total = 0
     with _open_fasta(path) as fh:
         for record in SeqIO.parse(fh, "fasta"):
             total += 1
+            if record.id in seen_ids:
+                raise DuplicateContigIDError(
+                    f"Duplicate contig ID {record.id!r} found in {path} — "
+                    "every contig ID must be unique, since downstream steps "
+                    "key predictions and annotations by ID. Rename or "
+                    "deduplicate the offending records before re-running."
+                )
+            seen_ids.add(record.id)
             if len(record.seq) >= min_length:
                 records.append(record)
     logger.info(
@@ -81,10 +110,25 @@ def iter_fasta(path: Path | str) -> Generator[SeqRecord, None, None]:
     """Lazily iterate over sequences in a FASTA file (memory-efficient).
 
     Supports uncompressed, .gz, and .bz2 files.
+
+    Raises:
+        DuplicateContigIDError: If two records with the same ID are yielded
+            (raised as soon as the second one is reached, without buffering
+            the whole file -- preserves the point of using a generator).
     """
     path = Path(path)
+    seen_ids: set[str] = set()
     with _open_fasta(path) as fh:
-        yield from SeqIO.parse(fh, "fasta")
+        for record in SeqIO.parse(fh, "fasta"):
+            if record.id in seen_ids:
+                raise DuplicateContigIDError(
+                    f"Duplicate contig ID {record.id!r} found in {path} — "
+                    "every contig ID must be unique, since downstream steps "
+                    "key predictions and annotations by ID. Rename or "
+                    "deduplicate the offending records before re-running."
+                )
+            seen_ids.add(record.id)
+            yield record
 
 
 def split_by_label(
