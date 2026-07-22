@@ -31,7 +31,7 @@ unflagged bugs and one mischaracterization:
 - **Thread pass-through gap** (`cli.py`): the `classify` command calls
   `_run_pyrodigal(_seqs, _ids)` without `n_threads=threads`, silently using
   the hardcoded default of 16 regardless of `--threads`. Confirmed real.
-  Fix pending (Task #4).
+  Fixed (see below).
 - **Taxonomy ORF double-counting** (`annotate/taxonomy.py`): confirmed and
   fixed in this round — see below. Also found the review's own framing was
   narrower than the actual bug: it discussed this only in terms of
@@ -195,6 +195,39 @@ rendered HTML has no more literal `</script>` occurrences than a page
 built from a clean contig ID (i.e. the payload didn't add a break-out),
 and that the escaped form (`<\/script>`) is present in its place. 252/252
 unit + integration tests pass; black/ruff/mypy clean.
+
+### Fix: `--threads` now reaches the shared pyrodigal call in `classify`
+
+`cli.py`'s `classify` command has a "shared pyrodigal" optimization: when a
+marker model is resolved and mob DIAMOND databases are found, it runs
+pyrodigal once and reuses the ORF data for both mob DIAMOND and `predict()`
+internally, instead of running it twice (saves ~14 min on 200k contigs).
+That call — `_run_pyrodigal(_seqs, _ids)` — omitted `n_threads=threads`,
+so it silently used `_run_pyrodigal`'s hardcoded default of 16 regardless
+of what the user passed via `--threads`. On a machine with fewer than 16
+cores this over-subscribes; on one with many more, it under-uses them —
+either way, `--threads` quietly didn't apply to this step.
+
+**Fix**: one-line change, `_run_pyrodigal(_seqs, _ids)` →
+`_run_pyrodigal(_seqs, _ids, n_threads=threads)`. Grepped the whole repo
+for other `_run_pyrodigal(...)` call sites to check for the same gap
+elsewhere — found one more, in `classify/predict.py`'s internal `predict()`
+function, but that one is a different, larger issue: `predict()` has no
+`threads`/`n_threads` parameter in its signature at all, so no caller
+(including `pipeline.py`) can currently override its pyrodigal thread count
+regardless of this fix. Out of scope for this round (would mean threading
+a new parameter through `predict()`'s public signature and every caller,
+not a one-line fix) — noted here as a follow-up, not fixed.
+
+**Verified**: added `test_classify_passes_threads_to_shared_pyrodigal` to
+`tests/unit/test_cli.py`, invoking the real `classify` Click command via
+`CliRunner` with `--threads 4` and a mocked `_run_pyrodigal`, asserting it
+was called with `n_threads=4`. `find_mob_diamond_dbs` /
+`annotate_mobility_diamond` / `_run_pyrodigal` are all imported locally
+inside `classify()`'s body at call time, so the test patches them at their
+origin modules (`plasflow2.annotate.mobility_diamond.*`,
+`plasflow2.classify.predict._run_pyrodigal`) rather than on `plasflow2.cli`.
+253/253 unit + 22/22 integration tests pass; black/ruff/mypy clean.
 
 ## Round 7: fixed N-to-A ambiguous-base encoding (opt-in, needs MLP retrain)
 

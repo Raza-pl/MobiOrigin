@@ -1560,7 +1560,7 @@ def classify(
             _seqs = [str(r.seq) for r in records]
             _ids = [r.id for r in records]
             try:
-                _shared_orf_data = _run_pyrodigal(_seqs, _ids)
+                _shared_orf_data = _run_pyrodigal(_seqs, _ids, n_threads=threads)
                 click.echo(f"[info] ORFs predicted for {len(_shared_orf_data)} sequences")
             except Exception as _exc:
                 click.echo(

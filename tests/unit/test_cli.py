@@ -244,6 +244,65 @@ def test_classify_writes_tsv(tmp_path: Path) -> None:
     assert rows[0]["label"] == "plasmid"
 
 
+def test_classify_passes_threads_to_shared_pyrodigal(tmp_path: Path) -> None:
+    """Regression test for the thread pass-through gap: the shared-pyrodigal
+    branch (marker model resolved + mob DIAMOND DBs available) used to call
+    _run_pyrodigal(_seqs, _ids) without n_threads=threads, silently using
+    the hardcoded default of 16 regardless of --threads. Confirms the fix
+    (plasflow2/cli.py) passes n_threads=threads through.
+    """
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+    model = tmp_path / "model.pt"
+    model.write_text("mock")
+    marker_model = tmp_path / "marker_xgb.json"
+    marker_model.write_text("mock")
+    out_tsv = tmp_path / "preds.tsv"
+
+    from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
+
+    preds = [_prediction("p1", "plasmid")]
+    runner = CliRunner()
+    # find_mob_diamond_dbs / annotate_mobility_diamond / _run_pyrodigal are
+    # all imported locally inside classify()'s body at call time, so they
+    # must be patched at their origin modules for the patch to take effect.
+    with (
+        patch(
+            "plasflow2.cli.load_fasta",
+            return_value=[SeqRecord(Seq(_SEQ), id="p1", description="")],
+        ),
+        patch("plasflow2.cli.predict", return_value=preds),
+        patch(
+            "plasflow2.annotate.mobility_diamond.find_mob_diamond_dbs",
+            return_value=("mob.dmnd", "mpf.dmnd", None, None),
+        ),
+        patch("plasflow2.classify.predict._run_pyrodigal", return_value={}) as mock_pyrodigal,
+        patch("plasflow2.annotate.mobility_diamond.annotate_mobility_diamond", return_value=[]),
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "classify",
+                "--input",
+                str(fasta),
+                "--output",
+                str(out_tsv),
+                "--model",
+                str(model),
+                "--marker-model",
+                str(marker_model),
+                "--threads",
+                "4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    mock_pyrodigal.assert_called_once()
+    _, kwargs = mock_pyrodigal.call_args
+    assert kwargs.get("n_threads") == 4
+
+
 def test_classify_tsv_has_correct_columns(tmp_path: Path) -> None:
     fasta = tmp_path / "contigs.fasta"
     fasta.write_text(f">s1\n{_SEQ}\n")
