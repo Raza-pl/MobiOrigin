@@ -1,5 +1,83 @@
 # Diagnostic review — verification log (July 2026)
 
+## Round 8: verified second external review (commit e80d716); fixed taxonomy ORF double-counting
+
+A second, larger (34-section) external review was submitted against commit
+e80d716 (post Round 7). Verified every claim against source before acting,
+per the established discipline this session. Several sections correctly
+described issues already fixed in Rounds 1-7 (acknowledged as such, no
+action needed). Of the remaining new claims, confirmed 6 real, previously
+unflagged bugs and one mischaracterization:
+
+- **N-to-A encoding (review claimed "unaddressed")**: mischaracterized —
+  this was fixed in Round 7 as an opt-in `skip_ambiguous` parameter,
+  deliberately not defaulted on since it requires an MLP retrain to take
+  effect. Not a new bug.
+- **PLSDB fallback score normalization** (`pipeline.py`): when the marker
+  XGBoost model isn't loaded, the PLSDB hard-override path force-sets
+  `scores={**old.scores, "plasmid": 0.97}` without renormalizing the other
+  classes, producing a non-probability distribution (can sum > 1.0).
+  Confirmed real. Fix pending (Task #1).
+- **Duplicate FASTA IDs** (`utils/fasta.py`): `load_fasta()`/`iter_fasta()`
+  have no uniqueness enforcement; downstream code keys everything by contig
+  ID, so a duplicate silently overwrites an earlier record. Confirmed real.
+  Fix pending (Task #2).
+- **HTML report JSON-injection** (`report/generator.py`): `json.dumps(...)`
+  output embedded raw inside `<script>` tags; `json.dumps` doesn't escape
+  `/`, so a FASTA header containing literal `</script>` could break out of
+  the script context. Confirmed real. Fix pending (Task #3).
+- **Thread pass-through gap** (`cli.py`): the `classify` command calls
+  `_run_pyrodigal(_seqs, _ids)` without `n_threads=threads`, silently using
+  the hardcoded default of 16 regardless of `--threads`. Confirmed real.
+  Fix pending (Task #4).
+- **Taxonomy ORF double-counting** (`annotate/taxonomy.py`): confirmed and
+  fixed in this round — see below. Also found the review's own framing was
+  narrower than the actual bug: it discussed this only in terms of
+  `detect_archaeal_contigs()`, but tracing downstream consumers showed it
+  equally affects `lca_for_contig()`, the main taxonomy majority-vote
+  algorithm, since both consume the same `hits_by_contig` output.
+- **Cache fingerprinting** (existence-only invalidation in `_cached()`):
+  confirmed accurate, but lower priority — not one of the 5 items approved
+  for immediate fixing, tracked as a follow-up.
+
+The review's remaining sections were architectural/design recommendations
+(cache overhaul, broader refactors) presented as suggestions rather than
+confirmed bugs — not actioned as part of this round.
+
+### Fix: taxonomy ORF double-counting
+
+`parse_diamond_taxonomy_output()` stripped the ORF suffix from `qseqid`
+immediately (`contig_id = re.sub(r"_\d+$", "", qseqid)`), discarding ORF
+identity before grouping, then pooled *all* hits per contig and truncated
+to `top_n` globally. Since DIAMOND (run with `--max-target-seqs` on
+translated ORFs) returns multiple hits per query — paralogs, close
+relatives in the DB — a single well-conserved ORF could contribute several
+entries to a contig's hit list, each counted as an independent taxonomic
+vote. This let one ORF's matches dominate a contig's taxonomy call or
+inflate `detect_archaeal_contigs()`'s `archaea_count` on its own (e.g. one
+ORF with 5 archaeal-lineage hits could singlehandedly satisfy the default
+`min_archaeal_hits=5` threshold and wrongly flag a bacterial contig as
+archaeal).
+
+**Fix**: rewrote `parse_diamond_taxonomy_output()` to dedupe to the single
+highest-bitscore hit per distinct *full* `qseqid` (before ORF-suffix
+stripping) first, then group by contig and truncate to `top_n`. Now
+`top_n` means top_n distinct informative ORFs, not up to top_n raw rows
+that could all trace back to the same ORF. Also corrected a previously
+misleading inline comment in `detect_archaeal_contigs()` that already
+claimed "one hit per ORF" without the upstream code actually guaranteeing
+it — the guarantee is now real, enforced at the source.
+
+**Verified**: added `test_multiple_hits_for_same_query_deduped_to_best`
+and `test_orf_dedup_prevents_false_archaeal_call` to
+`tests/unit/test_taxonomy.py`, reproducing the exact failure mode (one ORF,
+5 archaeal hits vs. one ORF, 1 bacterial hit) and confirming
+`detect_archaeal_contigs(..., min_archaeal_hits=5)` no longer misfires.
+Also updated two pre-existing tests (`test_basic_parsing`, `test_top_n_limit`)
+that had relied on the old per-row (not per-ORF) counting behavior, since
+they used the same literal `qseqid` for what were meant to represent
+distinct ORFs. 217/217 unit tests pass; black/ruff/mypy clean.
+
 ## Round 7: fixed N-to-A ambiguous-base encoding (opt-in, needs MLP retrain)
 
 Next backlog item: the review's claim that ambiguous bases (N and other

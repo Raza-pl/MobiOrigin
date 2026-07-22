@@ -348,17 +348,36 @@ def parse_diamond_taxonomy_output(
     2. Lineage embedded in the ``stitle`` field (GTDB FASTA headers contain it).
     3. Empty string if neither source has lineage info.
 
+    One hit per ORF, not per raw DIAMOND row: when run against translated
+    ORFs (the default -- see run_diamond_taxonomy()'s blastp-on-proteins.faa
+    path), a single well-conserved ORF can receive several hits from
+    different database entries (paralogs, close relatives). Every downstream
+    consumer (lca_for_contig(), detect_archaeal_contigs()) treats each TaxHit
+    as one independent vote, so keeping all of those raw hits lets one ORF's
+    matches dominate a contig's taxonomy or archaea call, crowding out
+    genuinely independent evidence from the contig's other genes -- e.g. a
+    single ORF with 5 archaeal-lineage hits could singlehandedly satisfy
+    detect_archaeal_contigs()'s min_archaeal_hits=5 threshold. Fixed here,
+    at the source, rather than in each downstream consumer: for each
+    distinct query ID (full qseqid, before ORF-suffix stripping -- an ORF ID
+    when run per-ORF, or the contig ID itself when run directly on whole
+    contigs, in which case this is a no-op), keep only the single best
+    (highest-bitscore) hit. The remaining per-ORF-best hits are then grouped
+    by contig and truncated to top_n -- now top_n distinct informative ORFs
+    rather than up to top_n raw hits that could all be the same ORF.
+
     Args:
         tsv_path: Path to DIAMOND output (format 6 columns:
                   qseqid sseqid pident qcovhsp evalue bitscore stitle).
         taxon_map: Optional dict from :func:`load_taxon_map`.
-        top_n: Maximum hits to keep per contig (highest bitscore first).
+        top_n: Maximum ORFs' best hits to keep per contig (highest bitscore first).
 
     Returns:
-        Dict mapping contig_id → list of TaxHit (sorted by bitscore desc).
+        Dict mapping contig_id → list of TaxHit (sorted by bitscore desc,
+        at most one hit per source ORF/query).
     """
     tsv_path = Path(tsv_path)
-    hits_by_contig: dict[str, list[TaxHit]] = {}
+    best_hit_by_query: dict[str, tuple[str, TaxHit]] = {}  # qseqid -> (contig_id, best hit)
 
     with open(tsv_path) as fh:
         for line in fh:
@@ -400,16 +419,24 @@ def parse_diamond_taxonomy_output(
                 evalue=evalue,
                 bit_score=bitscore,
             )
-            hits_by_contig.setdefault(contig_id, []).append(hit)
 
-    # Sort by bitscore descending and keep top_n per contig
+            # Keep only the best hit per query (ORF or whole-contig query).
+            existing = best_hit_by_query.get(qseqid)
+            if existing is None or hit.bit_score > existing[1].bit_score:
+                best_hit_by_query[qseqid] = (contig_id, hit)
+
+    hits_by_contig: dict[str, list[TaxHit]] = {}
+    for contig_id, hit in best_hit_by_query.values():
+        hits_by_contig.setdefault(contig_id, []).append(hit)
+
+    # Sort by bitscore descending and keep top_n distinct-ORF hits per contig
     for cid in hits_by_contig:
         hits_by_contig[cid].sort(key=lambda h: h.bit_score, reverse=True)
         hits_by_contig[cid] = hits_by_contig[cid][:top_n]
 
     total_hits = sum(len(v) for v in hits_by_contig.values())
     logger.info(
-        "Parsed %d taxonomy hits for %d contigs from %s",
+        "Parsed %d taxonomy hits (one per ORF) for %d contigs from %s",
         total_hits,
         len(hits_by_contig),
         tsv_path,
@@ -701,7 +728,13 @@ def detect_archaeal_contigs(
             lin = hit.lineage
             if not lin:
                 continue
-            # Use only the best (first) hit per ORF — hits are bitscore-sorted
+            # `hits` has at most one TaxHit per source ORF -- enforced by
+            # parse_diamond_taxonomy_output(), which dedupes to the single
+            # best hit per query before this function ever sees the data.
+            # (Previously this comment claimed the same thing without the
+            # upstream code actually guaranteeing it -- multiple hits from
+            # one well-conserved ORF could inflate archaea_count on their
+            # own. Fixed at the source, not patched here.)
             first_part = lin.split(";")[0].strip()
             if first_part.startswith("d__Archaea") or "d__Archaea" in lin[:20]:
                 archaea_count += 1

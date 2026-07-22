@@ -22,6 +22,7 @@ from plasflow2.annotate.taxonomy import (
     _extract_lineage_from_stitle,
     assign_taxonomy,
     build_gtdb_taxon_map,
+    detect_archaeal_contigs,
     lca_for_contig,
     load_taxon_map,
     parse_diamond_taxonomy_output,
@@ -197,10 +198,12 @@ class TestParseDiamondTaxonomyOutput:
         return tsv
 
     def test_basic_parsing(self, tmp_path):
+        # Two distinct ORFs on contig1 (qseqid suffix _1 / _2), one hit each,
+        # plus one ORF on contig2.
         rows = [
-            ["contig1", "ACC001", "95.0", "90.0", "1e-80", "500.0", LIN_ECOLI],
-            ["contig1", "ACC002", "92.0", "88.0", "1e-75", "480.0", LIN_ECOLI],
-            ["contig2", "ACC003", "90.0", "85.0", "1e-70", "460.0", LIN_BSUB],
+            ["contig1_1", "ACC001", "95.0", "90.0", "1e-80", "500.0", LIN_ECOLI],
+            ["contig1_2", "ACC002", "92.0", "88.0", "1e-75", "480.0", LIN_ECOLI],
+            ["contig2_1", "ACC003", "90.0", "85.0", "1e-70", "460.0", LIN_BSUB],
         ]
         tsv = self._write_tsv(tmp_path, rows)
         result = parse_diamond_taxonomy_output(tsv)
@@ -208,6 +211,42 @@ class TestParseDiamondTaxonomyOutput:
         assert "contig2" in result
         assert len(result["contig1"]) == 2
         assert result["contig1"][0].bit_score >= result["contig1"][1].bit_score
+
+    def test_multiple_hits_for_same_query_deduped_to_best(self, tmp_path):
+        # Same ORF (qseqid "contig1_1") gets 3 hits from different DB entries
+        # (paralogs/close relatives) -- only the highest-bitscore one should
+        # survive, since these all represent one ORF's vote, not three.
+        rows = [
+            ["contig1_1", "ACC001", "90.0", "85.0", "1e-70", "400.0", LIN_ECOLI],
+            ["contig1_1", "ACC002", "95.0", "90.0", "1e-80", "500.0", LIN_ECOLI],
+            ["contig1_1", "ACC003", "88.0", "80.0", "1e-60", "350.0", LIN_ECOLI],
+        ]
+        tsv = self._write_tsv(tmp_path, rows)
+        result = parse_diamond_taxonomy_output(tsv)
+        assert len(result["contig1"]) == 1
+        assert result["contig1"][0].accession == "ACC002"
+        assert result["contig1"][0].bit_score == 500.0
+
+    def test_orf_dedup_prevents_false_archaeal_call(self, tmp_path):
+        # Regression test for the bug where one well-conserved ORF with
+        # several archaeal-lineage hits could singlehandedly satisfy
+        # detect_archaeal_contigs()'s min_archaeal_hits threshold.
+        # contig1: ORF 1 has 5 hits, all Archaea (same underlying ORF).
+        #          ORF 2 has 1 hit, Bacteria.
+        # Post-dedup, contig1 should have exactly 1 archaeal vote (not 5),
+        # which is below min_archaeal_hits=5, so it must NOT be flagged.
+        rows = [
+            ["contig1_1", f"ACC{i:03d}", "90.0", "85.0", f"1e-{60 + i}", str(300 + i), LIN_ARCH]
+            for i in range(5)
+        ] + [
+            ["contig1_2", "ACC100", "90.0", "85.0", "1e-70", "400.0", LIN_ECOLI],
+        ]
+        tsv = self._write_tsv(tmp_path, rows)
+        result = parse_diamond_taxonomy_output(tsv)
+        assert len(result["contig1"]) == 2
+
+        archaeal = detect_archaeal_contigs(result, min_archaeal_hits=5)
+        assert archaeal == set()
 
     def test_lineage_from_stitle(self, tmp_path):
         rows = [["c1", "ACC001", "95.0", "90.0", "1e-80", "500.0", LIN_ECOLI]]
@@ -223,8 +262,10 @@ class TestParseDiamondTaxonomyOutput:
         assert result["c1"][0].lineage == LIN_ECOLI
 
     def test_top_n_limit(self, tmp_path):
+        # 20 distinct ORFs (c1_0 .. c1_19), one hit each -- top_n should cap
+        # the number of ORFs kept per contig, not just raw rows.
         rows = [
-            ["c1", f"ACC{i:03d}", "90.0", "85.0", f"1e-{60+i}", str(600 - i * 10), LIN_ECOLI]
+            [f"c1_{i}", f"ACC{i:03d}", "90.0", "85.0", f"1e-{60+i}", str(600 - i * 10), LIN_ECOLI]
             for i in range(20)
         ]
         tsv = self._write_tsv(tmp_path, rows)
