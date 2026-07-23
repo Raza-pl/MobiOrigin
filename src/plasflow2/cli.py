@@ -48,7 +48,11 @@ from plasflow2 import __version__  # noqa: E402
 from plasflow2.annotate.args import annotate_contigs  # noqa: E402
 from plasflow2.annotate.mobility import annotate_mobility  # noqa: E402
 from plasflow2.classify.marker_classifier import resolve_marker_model_path  # noqa: E402
-from plasflow2.classify.predict import DEFAULT_THRESHOLD, predict  # noqa: E402
+from plasflow2.classify.predict import (  # noqa: E402
+    DEFAULT_PLASMID_THRESHOLD,
+    DEFAULT_THRESHOLD,
+    predict,
+)
 from plasflow2.output.genes_tsv import write_genes_tsv  # noqa: E402
 from plasflow2.pipeline import PipelineResult, run_pipeline  # noqa: E402
 from plasflow2.report.generator import (  # noqa: E402  # noqa: E402
@@ -100,11 +104,13 @@ _DEFAULT_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "mlp_
 # .pkl path, falling back to the .pkl only for legacy checkpoints that
 # predate the pickle -> JSON migration.
 _DEFAULT_MARKER_MODEL = Path(__file__).parent.parent.parent / "data" / "models" / "marker_xgb.pkl"
+_DEFAULT_COMPASS_SKETCH = _DB_ROOT / "sketch_compass_k21_s5m.npy"
 
 # Docker convention: models are mounted at /data/models/
 # _resolve_model() falls back to these when repo-relative paths don't exist.
 _DOCKER_MODEL = Path("/data/models/mlp_v2.pt")
 _DOCKER_MARKER_MODEL = Path("/data/models/marker_xgb.pkl")
+_DOCKER_COMPASS_SKETCH = Path("/data/databases/sketch_compass_k21_s5m.npy")
 
 
 _DEFAULT_CARD_DB = _DB_ROOT / "card" / "card.dmnd"
@@ -118,6 +124,39 @@ _DEFAULT_TAXON_MAP = _DB_ROOT / "taxonomy" / "taxon_map.tsv"
 _DEFAULT_KAIJU_DIR = _DB_ROOT / "kaiju"
 _DEFAULT_KAIJU_NODES = _DEFAULT_KAIJU_DIR / "nodes.dmp"
 _DEFAULT_KAIJU_NAMES = _DEFAULT_KAIJU_DIR / "names.dmp"
+
+
+def _resolve_classification_profile(
+    profile: str,
+    compass_sketch: str | None,
+    plasmid_threshold: float | None,
+) -> tuple[str | None, float | None]:
+    """Resolve explicit sequence-only or evidence-assisted classifier settings."""
+    if profile == "sequence-only":
+        return compass_sketch, plasmid_threshold
+
+    if profile != "evidence-assisted":
+        raise click.BadParameter(f"Unknown classification profile: {profile}")
+
+    resolved_sketch = Path(compass_sketch) if compass_sketch else None
+    if resolved_sketch is None:
+        resolved_sketch = next(
+            (
+                candidate
+                for candidate in (_DEFAULT_COMPASS_SKETCH, _DOCKER_COMPASS_SKETCH)
+                if candidate.exists()
+            ),
+            None,
+        )
+
+    if resolved_sketch is None or not resolved_sketch.exists():
+        raise click.ClickException(
+            "The evidence-assisted profile requires the COMPASS sketch. "
+            "Provide --compass-sketch or install sketch_compass_k21_s5m.npy."
+        )
+
+    threshold = DEFAULT_PLASMID_THRESHOLD if plasmid_threshold is None else plasmid_threshold
+    return str(resolved_sketch), threshold
 
 
 def _resolve_model(model_path: str | None) -> Path:
@@ -1459,6 +1498,16 @@ def run(
     help="Force MLP-only mode — disable XGBoost stage-2 even if marker_xgb.pkl is present.",
 )
 @click.option(
+    "--profile",
+    type=click.Choice(["sequence-only", "evidence-assisted"], case_sensitive=False),
+    default="sequence-only",
+    show_default=True,
+    help=(
+        "Classifier operating profile. evidence-assisted enables the calibrated "
+        "COMPASS filter and plasmid threshold 0.80."
+    ),
+)
+@click.option(
     "--compass-sketch",
     "compass_sketch",
     default=None,
@@ -1493,6 +1542,7 @@ def classify(
     marker_model_path: str | None,
     threads: int,
     no_marker_model: bool,
+    profile: str,
     compass_sketch: str | None,
     compass_threshold: float,
 ) -> None:
@@ -1512,6 +1562,18 @@ def classify(
     For the full pipeline (annotation + reports), use 'plasflow2 run' instead.
     """
     resolved_model = _resolve_model(model_path)
+
+    compass_sketch, plasmid_threshold = _resolve_classification_profile(
+        profile,
+        compass_sketch,
+        plasmid_threshold,
+    )
+    click.echo(f"Classifier profile: {profile}")
+    if profile == "evidence-assisted":
+        click.echo(
+            f"COMPASS: {compass_sketch} "
+            f"(plasmid_threshold={plasmid_threshold:.2f}, base containment=0.002)"
+        )
 
     # Resolve marker model (auto-detect unless explicitly disabled)
     resolved_marker: str | None = None
