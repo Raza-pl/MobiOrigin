@@ -30,3 +30,32 @@ The benchmark contains no sequences from 2,001-4,999 bp because its fixed window
 
 The balanced profile remains recommended for general and novel-plasmid discovery. COMPASS and geNomad evidence should be treated as supporting evidence rather than a hard veto on sequence-model predictions.
 
+## v2.1.1 evidence and annotation hardening
+
+The full pipeline now preserves an explicitly supplied plasmid threshold when
+`--lenient` is enabled. Lenient mode disables the biological hallmark gate but
+no longer silently replaces a user-provided `--plasmid-threshold`.
+
+ICE evidence is now conservative. A confirmed ICE call requires at least two
+distinct proteins assigned to the same ICEberg element, including both an
+integration function and a conjugative-transfer function. Individual proteins
+that merely occur in ICEberg, including generic ARGs, remain available in the
+raw DIAMOND output but do not become positive ICE evidence.
+
+Placeholder replicon values such as `-`, `unknown`, `none`, `NA`, and `N/A` no
+longer contribute to AMR risk scores.
+
+The setup workflow now installs the calibrated v2.1 MLP, the production
+`marker_xgb.json` model and its provenance card. The legacy PCA artifact remains
+available from the v2.0 release for backward-compatible feature paths.
+
+A pUC19 full-pipeline regression run confirmed:
+
+- explicit plasmid threshold remained 0.80 under `--lenient`;
+- the raw TEM beta-lactamase ICEberg match remained auditable;
+- confirmed ICE count was zero;
+- placeholder replicon score was zero;
+- the legitimate TEM ARG annotation and ARG risk point were retained.
+
+Validation: Black, Ruff, Mypy and shell syntax checks passed; 275 tests passed.
+

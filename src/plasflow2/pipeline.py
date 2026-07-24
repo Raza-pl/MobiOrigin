@@ -160,6 +160,19 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_pipeline_plasmid_threshold(
+    lenient: bool,
+    plasmid_threshold: float | None,
+    confidence_threshold: float | None,
+) -> float | None:
+    """Resolve the Stage-1 threshold without discarding user intent."""
+    if plasmid_threshold is not None:
+        return plasmid_threshold
+    if lenient:
+        return confidence_threshold if confidence_threshold is not None else DEFAULT_THRESHOLD
+    return None
+
+
 def run_pipeline(
     fasta_path: Path | str,
     model_path: Path | str,
@@ -317,25 +330,13 @@ def run_pipeline(
     # 2. Classify
     # ------------------------------------------------------------------
     logger.info("Classifying %d contigs …", len(sequences))
-    if lenient:
-        # Lenient mode intentionally lowers the plasmid bar to the general
-        # (chromosome/phage) threshold so moderate-confidence plasmid calls
-        # reach the hallmark gate — except the hallmark gate is also disabled
-        # in lenient mode, so this is what actually admits weaker plasmid
-        # calls. Applies uniformly at every length: previously this override
-        # only took effect below 5kb, and even there was combined with the
-        # tier default via max(), which silently discarded the lower value
-        # entirely (tier defaults are ~0.81-0.86, always higher than any
-        # value meant to loosen the classifier). See predict.py docstring.
-        _effective_plasmid_threshold = (
-            confidence_threshold if confidence_threshold is not None else DEFAULT_THRESHOLD
-        )
-    else:
-        # None => predict() reproduces the historical default (0.95 below
-        # 5kb, tier profile at/above 5kb) rather than a clean tier-profile
-        # default — see predict.py's _assign_label docstring for why.
-        # An explicit --plasmid-threshold overrides it at every length.
-        _effective_plasmid_threshold = plasmid_threshold
+    # An explicit --plasmid-threshold always wins. Lenient mode only
+    # supplies a lower Stage-1 threshold when none was requested.
+    _effective_plasmid_threshold = _resolve_pipeline_plasmid_threshold(
+        lenient=lenient,
+        plasmid_threshold=plasmid_threshold,
+        confidence_threshold=confidence_threshold,
+    )
     predictions = predict(
         sequences,
         seq_ids,

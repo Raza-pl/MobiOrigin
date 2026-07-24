@@ -32,6 +32,15 @@ ICE_MIN_COVERAGE = 70.0
 # sseqid from DIAMOND: first token of FASTA header
 # Header: >ICEberg|1010 gi|...|ref|ATB17827.1| Integrase [Organism]
 _ICE_ID_RE = re.compile(r"ICEberg\|(\d+)")
+_INTEGRATION_FUNCTION_RE = re.compile(
+    r"\b(integrase|excisionase|recombinase)\b",
+    re.IGNORECASE,
+)
+_TRANSFER_FUNCTION_RE = re.compile(
+    r"\b(conjugative|conjugation|conjugal|relaxase|coupling protein|"
+    r"type iv secretion|type 4 secretion|t4ss|mating pair formation)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -45,6 +54,36 @@ class ICEHit:
     coverage: float
     evalue: float
     _orf_id: str = field(default="", repr=False, compare=False)
+
+
+def filter_coherent_ice_hits(hits: list[ICEHit]) -> list[ICEHit]:
+    """Retain hits that jointly support a coherent ICE call.
+
+    Each ICEberg element must contribute at least two distinct query proteins,
+    including both an integration function and a conjugative-transfer function.
+    Generic ARG matches remain in the raw DIAMOND TSV but are not positive ICE
+    evidence.
+    """
+    by_ice: dict[str, list[ICEHit]] = {}
+    for hit in hits:
+        by_ice.setdefault(hit.ice_id, []).append(hit)
+
+    confirmed: list[ICEHit] = []
+    for group in by_ice.values():
+        functions = " ".join(hit.gene_function for hit in group)
+        orf_ids = {hit._orf_id for hit in group if hit._orf_id}
+        distinct_proteins = len(orf_ids) if orf_ids else len(group)
+
+        if distinct_proteins < 2:
+            continue
+        if not _INTEGRATION_FUNCTION_RE.search(functions):
+            continue
+        if not _TRANSFER_FUNCTION_RE.search(functions):
+            continue
+
+        confirmed.extend(group)
+
+    return confirmed
 
 
 def load_ice_metadata(tsv_path: Path | str) -> dict[str, str]:
@@ -207,4 +246,16 @@ def annotate_ice(
             logger.error("ICE DIAMOND failed: %s", result.stderr[:300])
             return []
 
-    return parse_ice_hits(out_tsv, ice_meta, min_identity, min_coverage)
+    raw_hits = parse_ice_hits(
+        out_tsv,
+        ice_meta,
+        min_identity,
+        min_coverage,
+    )
+    confirmed_hits = filter_coherent_ice_hits(raw_hits)
+    logger.info(
+        "Retained %d/%d ICE protein hits as coherent ICE evidence",
+        len(confirmed_hits),
+        len(raw_hits),
+    )
+    return confirmed_hits

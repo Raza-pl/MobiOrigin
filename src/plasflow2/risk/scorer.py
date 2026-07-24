@@ -276,12 +276,13 @@ def score_plasmid(
         arg_score = 0
 
     # --- Replicon breadth score ---
-    rep_type = mobility.replicon_type if mobility else "unknown"
+    rep_type = (mobility.replicon_type if mobility else None) or "unknown"
     rep_base = rep_type.split("/")[0].split(",")[0].strip()  # handle multi-replicon
+    rep_key = rep_base.lower()
     if rep_base in BROAD_HOST_RANGE_REPLICONS:
         rep_score = 2
         evidence.append(f"Broad-host-range replicon {rep_base} (+2)")
-    elif rep_base not in {"unknown", "none", ""}:
+    elif rep_key not in {"unknown", "none", "", "-", "na", "n/a"}:
         rep_score = 1
         evidence.append(f"Known replicon {rep_base} (+1)")
     else:
