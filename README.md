@@ -564,6 +564,12 @@ bash scripts/setup_databases.sh --skip-plsdb --skip-vfdb --skip-bacmet
 
 ---
 
+## Classifier profiles
+
+Use `--profile balanced` for general classification and `--profile evidence-assisted` when plasmid precision matters more than recall. See [classifier validation](docs/CLASSIFIER_VALIDATION_2026-07.md).
+
+---
+
 ## Testing
 
 ```bash

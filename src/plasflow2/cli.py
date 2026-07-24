@@ -131,9 +131,17 @@ def _resolve_classification_profile(
     compass_sketch: str | None,
     plasmid_threshold: float | None,
 ) -> tuple[str | None, float | None]:
-    """Resolve explicit sequence-only or evidence-assisted classifier settings."""
+    """Resolve sequence-only, balanced, or evidence-assisted settings."""
     if profile == "sequence-only":
         return compass_sketch, plasmid_threshold
+
+    if profile == "balanced":
+        threshold = (
+            DEFAULT_PLASMID_THRESHOLD
+            if plasmid_threshold is None
+            else plasmid_threshold
+        )
+        return compass_sketch, threshold
 
     if profile != "evidence-assisted":
         raise click.BadParameter(f"Unknown classification profile: {profile}")
@@ -1499,12 +1507,16 @@ def run(
 )
 @click.option(
     "--profile",
-    type=click.Choice(["sequence-only", "evidence-assisted"], case_sensitive=False),
+    type=click.Choice(
+        ["sequence-only", "balanced", "evidence-assisted"],
+        case_sensitive=False,
+    ),
     default="sequence-only",
     show_default=True,
     help=(
-        "Classifier operating profile. evidence-assisted enables the calibrated "
-        "COMPASS filter and plasmid threshold 0.80."
+        "Classifier operating profile. balanced uses plasmid threshold 0.80 "
+        "without requiring COMPASS; evidence-assisted adds the calibrated "
+        "COMPASS filter for high-precision calls."
     ),
 )
 @click.option(

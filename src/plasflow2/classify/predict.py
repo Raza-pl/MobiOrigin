@@ -84,9 +84,13 @@ LENGTH_THRESHOLD_TIERS = [
     # Previous thresholds (0.93–0.99) were over-strict, suppressing recall to ~0.46.
     # New thresholds (~0.86) recover recall to ~0.73 at comparable precision (0.42).
     #
-    # Phage thresholds raised (0.90+) to suppress chromosome→phage FPs on isolates;
-    # real phage in metagenomes score >>0.95, so recall is preserved on W1.
-    # Chromosome thresholds kept at 0.60–0.70 (no change from prior calibration).
+    # Phage thresholds recalibrated Jul 2026 on 4,898 locked phage-development
+    # positives and 299,589 Tier-1 plasmid/chromosome negatives. The previous
+    # 0.90–0.95 thresholds suppressed locked-final phage recall to 0.146.
+    # Per-tier max-F1 thresholds are used below. The 2–5kb tier had no positive
+    # development examples, so 0.850 is interpolated between adjacent tiers.
+    # Frozen final validation: precision=0.728, recall=0.807, F1=0.765.
+    # Chromosome thresholds remain at 0.60–0.70.
     #
     #   <2kb:    F1=0.432  P=0.337  R=0.602 at t=0.862
     #   2-5kb:   F1=0.542  P=0.424  R=0.752 at t=0.864
@@ -110,12 +114,12 @@ LENGTH_THRESHOLD_TIERS = [
     # model fix alone (no threshold changes) moves full-cascade plasmid recall
     # 0.284->0.538, precision 0.806->0.777, F1 0.420->0.636. Re-attempting
     # this recalibration is a distinct follow-up, not done in this pass.
-    (2_000, 0.862, 0.95, 0.75),  # <2kb
-    (4_999, 0.864, 0.92, 0.68),  # 2-5kb
-    (9_999, 0.859, 0.90, 0.65),  # 5-10kb
+    (2_000, 0.862, 0.855, 0.75),  # <=2kb
+    (4_999, 0.864, 0.850, 0.68),  # 2-5kb
+    (9_999, 0.859, 0.845, 0.65),  # 5-10kb
     # NOTE: boundary 9999 so exact 10000bp seqs use 10-20kb tier
-    (19_999, 0.857, 0.90, 0.63),  # 10-20kb
-    (float("inf"), 0.809, 0.90, 0.62),  # >20kb
+    (19_999, 0.857, 0.835, 0.63),  # 10-20kb
+    (float("inf"), 0.809, 0.750, 0.62),  # >20kb
 ]
 
 # Per-length COMPASS containment thresholds.
