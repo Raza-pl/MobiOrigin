@@ -79,11 +79,11 @@ else
     exit 1
 fi
 
-XGB_MODEL="$REPO_ROOT/data/models/marker_xgb.pkl"
+XGB_MODEL="$REPO_ROOT/data/models/marker_xgb.json"
 if [[ -f "$XGB_MODEL" ]]; then
     ok "XGBoost model found: $XGB_MODEL"
 else
-    warn "XGBoost model not found at data/models/marker_xgb.pkl — stage-2 will be skipped"
+    warn "XGBoost model not found at data/models/marker_xgb.json — stage-2 will be skipped"
 fi
 
 # ── 3. Check/download example sequences ──────────────────────────────────────

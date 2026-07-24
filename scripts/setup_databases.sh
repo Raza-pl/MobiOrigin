@@ -164,26 +164,29 @@ if $SKIP_MODELS; then
     warn "Skipping model download (--skip-models)"
 else
     MLP_PT="$MODEL_DIR/mlp_v2.pt"
-    XGB_PKL="$MODEL_DIR/marker_xgb.pkl"
+    XGB_JSON="$MODEL_DIR/marker_xgb.json"
+    XGB_META="$MODEL_DIR/marker_xgb.json.meta.json"
     PCA_PKL="$MODEL_DIR/k6_pca.pkl"
 
     ALL_MODELS_OK=true
-    for f in "$MLP_PT" "$XGB_PKL" "$PCA_PKL"; do
+    for f in "$MLP_PT" "$XGB_JSON" "$XGB_META" "$PCA_PKL"; do
         [[ -f "$f" ]] || { ALL_MODELS_OK=false; break; }
     done
 
     if $ALL_MODELS_OK; then
         ok "mlp_v2.pt        ($(du -sh "$MLP_PT" | cut -f1))"
-        ok "marker_xgb.pkl   ($(du -sh "$XGB_PKL" | cut -f1))"
+        ok "marker_xgb.json  ($(du -sh "$XGB_JSON" | cut -f1))"
+        ok "marker metadata  ($(du -sh "$XGB_META" | cut -f1))"
         ok "k6_pca.pkl       ($(du -sh "$PCA_PKL" | cut -f1))"
     else
         # ── Download from GitHub Releases ─────────────────────────────────────
-        # Release v2.0.0 hosts all three model files (~85 MB total).
-        # URL format: https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0/<file>
-        RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+        # The calibrated MLP and native marker model are distributed
+        # with v2.1.0. The legacy PCA file remains available from v2.0.0.
+        RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.1.0"
+        LEGACY_RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
 
         model_ok=true
-        for fname in mlp_v2.pt marker_xgb.pkl k6_pca.pkl; do
+        for fname in mlp_v2.pt marker_xgb.json marker_xgb.json.meta.json; do
             dest="$MODEL_DIR/$fname"
             if [[ ! -f "$dest" ]]; then
                 if ! download "$RELEASE_BASE/$fname" "$dest" "$fname"; then
@@ -195,6 +198,15 @@ else
             fi
         done
 
+        if [[ ! -f "$PCA_PKL" ]]; then
+            if ! download "$LEGACY_RELEASE_BASE/k6_pca.pkl" "$PCA_PKL" "k6_pca.pkl"; then
+                err "Could not download k6_pca.pkl"
+                model_ok=false
+            fi
+        else
+            ok "k6_pca.pkl  ($(du -sh "$PCA_PKL" | cut -f1))"
+        fi
+
         if ! $model_ok; then
             echo ""
             warn "Automatic model download failed."
@@ -203,7 +215,7 @@ else
             info "Options:"
             info "  1. Ask the developer for the model files and copy them to:"
             info "       $MODEL_DIR/"
-            info "     Required files: mlp_v2.pt  marker_xgb.pkl  k6_pca.pkl"
+            info "     Required files: mlp_v2.pt  marker_xgb.json  marker_xgb.json.meta.json  k6_pca.pkl"
             info ""
             info "  2. Train from scratch (requires training data):"
             info "       python scripts/train_model.py --help"
@@ -723,7 +735,8 @@ check_file() {
 echo ""
 echo "  Models:"
 check_file "mlp_v2.pt"          "$MODEL_DIR/mlp_v2.pt"
-check_file "marker_xgb.pkl"     "$MODEL_DIR/marker_xgb.pkl"
+check_file "marker_xgb.json"    "$MODEL_DIR/marker_xgb.json"
+check_file "marker model metadata" "$MODEL_DIR/marker_xgb.json.meta.json"
 check_file "k6_pca.pkl"         "$MODEL_DIR/k6_pca.pkl"
 echo ""
 echo "  Databases:"

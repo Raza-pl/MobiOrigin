@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "plasflow2"
-version = "2.1.0"
+version = "2.1.1"
 description = "PlasFlow v2: plasmid/chromosome/phage classifier with ARG annotation and AMR risk scoring"
 authors = ["Raza <shahbaz.invincible3182@gmail.com>"]
 license = "GPL-3.0"
