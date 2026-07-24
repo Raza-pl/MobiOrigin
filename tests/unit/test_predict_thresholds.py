@@ -1,5 +1,4 @@
 import pytest
-
 from plasflow2.classify.predict import _get_length_thresholds
 
 

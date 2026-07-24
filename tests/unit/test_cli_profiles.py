@@ -1,9 +1,6 @@
-from pathlib import Path
-
 import click
-import pytest
-
 import plasflow2.cli as cli
+import pytest
 
 
 def test_sequence_only_profile_preserves_settings():
@@ -18,9 +15,10 @@ def test_balanced_profile_sets_threshold_without_compass():
 
 
 def test_balanced_profile_respects_explicit_settings():
-    assert cli._resolve_classification_profile(
-        "balanced", "custom.npy", 0.85
-    ) == ("custom.npy", 0.85)
+    assert cli._resolve_classification_profile("balanced", "custom.npy", 0.85) == (
+        "custom.npy",
+        0.85,
+    )
 
 
 def test_evidence_assisted_profile_autodetects_sketch(tmp_path, monkeypatch):

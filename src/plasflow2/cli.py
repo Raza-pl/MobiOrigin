@@ -136,11 +136,7 @@ def _resolve_classification_profile(
         return compass_sketch, plasmid_threshold
 
     if profile == "balanced":
-        threshold = (
-            DEFAULT_PLASMID_THRESHOLD
-            if plasmid_threshold is None
-            else plasmid_threshold
-        )
+        threshold = DEFAULT_PLASMID_THRESHOLD if plasmid_threshold is None else plasmid_threshold
         return compass_sketch, threshold
 
     if profile != "evidence-assisted":
