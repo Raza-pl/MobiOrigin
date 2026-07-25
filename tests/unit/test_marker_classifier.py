@@ -5,11 +5,64 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import pytest
 from plasflow2.classify.marker_classifier import (
+    MARKER_FEATURE_NAMES,
     ContigMarkerFeatures,
     MarkerClassifier,
+    aggregate_scores,
+    marker_model_safety_issues,
     resolve_marker_model_path,
 )
+
+
+def _safe_model_card() -> dict:
+    return {
+        "class_counts": {"plasmid": 100, "chromosome": 100, "phage": 100},
+        "split_type": "grouped_by_source_genome",
+        "n_distinct_groups": 30,
+        "feature_names": list(MARKER_FEATURE_NAMES),
+        "training_data_sha256": "a" * 64,
+    }
+
+
+def test_marker_model_safety_accepts_complete_grouped_model() -> None:
+    assert marker_model_safety_issues(_safe_model_card()) == []
+
+
+def test_marker_model_safety_rejects_deployed_binary_collapsed_semantics() -> None:
+    metadata = _safe_model_card()
+    metadata["class_counts"] = {
+        "plasmid": 30_000,
+        "chromosome": 60_000,
+        "phage": 0,
+    }
+    metadata["split_type"] = "random_per_row"
+    metadata["n_distinct_groups"] = None
+
+    issues = marker_model_safety_issues(metadata)
+
+    assert any("phage" in issue for issue in issues)
+    assert any("not grouped" in issue for issue in issues)
+    assert any("source-group count" in issue for issue in issues)
+
+
+def test_train_rejects_missing_biological_class() -> None:
+    X = np.random.default_rng(2).normal(size=(30, 4)).astype(np.float32)
+    y = np.array([0, 1] * 15, dtype=np.int64)
+
+    with pytest.raises(ValueError, match="plasmid, chromosome, and phage"):
+        MarkerClassifier().train(X, y, n_estimators=2)
+
+
+def test_aggregate_scores_uses_marker_fraction_as_attention_weight() -> None:
+    combined = aggregate_scores(
+        {"plasmid": 0.8, "chromosome": 0.1, "phage": 0.1},
+        {"plasmid": 0.2, "chromosome": 0.7, "phage": 0.1},
+        marker_gene_fraction=0.5,
+    )
+
+    assert combined == pytest.approx({"plasmid": 0.5, "chromosome": 0.4, "phage": 0.1})
 
 
 def test_train_grouped_split_never_splits_a_group_across_train_and_val() -> None:

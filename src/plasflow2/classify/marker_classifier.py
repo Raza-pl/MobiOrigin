@@ -431,6 +431,46 @@ def _load_xgboost_native(path: Path):  # type: ignore[no-untyped-def]
     return model
 
 
+def marker_model_safety_issues(metadata: dict) -> list[str]:
+    """Return reasons a marker model is unsafe for production fusion.
+
+    A production marker model must be a genuine three-class model trained
+    with a leakage-resistant source-group split and the exact runtime feature
+    schema. Returning a list makes pipeline warnings actionable and keeps
+    validation independently testable.
+    """
+    issues: list[str] = []
+
+    class_counts = metadata.get("class_counts")
+    if not isinstance(class_counts, dict):
+        issues.append("model card has no class_counts mapping")
+    else:
+        for class_name in ("plasmid", "chromosome", "phage"):
+            count = class_counts.get(class_name)
+            if not isinstance(count, (int, float)) or count <= 0:
+                issues.append(f"class {class_name!r} has no positive training rows")
+
+    if metadata.get("split_type") != "grouped_by_source_genome":
+        issues.append("training split was not grouped by source genome")
+
+    n_groups = metadata.get("n_distinct_groups")
+    if not isinstance(n_groups, int) or n_groups < 3:
+        issues.append("model card has no valid distinct source-group count")
+
+    if metadata.get("feature_names") != MARKER_FEATURE_NAMES:
+        issues.append("model feature schema does not match the runtime schema")
+
+    training_hash = metadata.get("training_data_sha256")
+    if not (
+        isinstance(training_hash, str)
+        and len(training_hash) == 64
+        and all(char in "0123456789abcdefABCDEF" for char in training_hash)
+    ):
+        issues.append("model card has no valid training-data SHA-256")
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # XGBoost model wrapper
 # ---------------------------------------------------------------------------
@@ -500,6 +540,15 @@ class MarkerClassifier:
         Returns:
             Dict with 'val_accuracy' and 'feature_importances'.
         """
+        expected_classes = {0, 1, 2}
+        observed_classes = {int(value) for value in np.unique(y)}
+        if observed_classes != expected_classes:
+            raise ValueError(
+                "MarkerClassifier requires plasmid, chromosome, and phage "
+                f"training rows with labels {sorted(expected_classes)}; "
+                f"observed {sorted(observed_classes)}"
+            )
+
         try:
             from xgboost import XGBClassifier  # type: ignore[import]
         except ImportError as e:
@@ -561,11 +610,9 @@ class MarkerClassifier:
                 X, y, test_size=eval_fraction, stratify=y, random_state=random_state
             )
 
-        # Always force 3-class multiclass — even when a class is absent from
-        # this training batch (e.g. no phage in benchmark data).  Without
-        # explicit num_class XGBoost auto-detects binary mode when only two
-        # label values are present, then throws "num_class=1 but found 1".
-        n_classes = 3
+        # Class completeness is validated above; never manufacture a nominal
+        # three-class model from a dataset with an absent biological class.
+        n_classes = len(expected_classes)
         self._model = XGBClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,

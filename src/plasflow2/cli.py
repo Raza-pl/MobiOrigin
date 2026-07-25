@@ -967,10 +967,20 @@ def main(ctx: click.Context, verbose: bool) -> None:
     is_flag=True,
     default=False,
     help=(
-        "Disable the hallmark gate. Accept all MLP plasmid predictions directly, "
-        "without requiring biological evidence (PLSDB match, relaxase, replicon, ICE, or rep protein). "
-        "Useful when databases are not available or for exploratory runs. "
-        "Increases sensitivity but also false positives."
+        "Legacy high-sensitivity mode. Preserve classifier plasmid calls and, "
+        "when --plasmid-threshold is unset, use --threshold (or 0.70) as the "
+        "plasmid threshold. Prefer the default calibrated policy for general use."
+    ),
+)
+@click.option(
+    "--require-hallmarks",
+    is_flag=True,
+    default=False,
+    help=(
+        "Enable the high-precision biological hallmark gate. Plasmid calls below "
+        "50 kb without supporting PLSDB, mobility, replicon, ICE, or rep-protein "
+        "evidence are reclassified as unclassified. Off by default because it "
+        "substantially reduces novel-plasmid recall."
     ),
 )
 @click.option(
@@ -1151,6 +1161,7 @@ def run(
     skip_plasmid_db: bool,
     plasmid_db_timeout: int,
     lenient: bool,
+    require_hallmarks: bool,
     widen_candidates: bool,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
@@ -1188,6 +1199,12 @@ def run(
         # Skip taxonomy annotation to save 20-40 min on large datasets
         plasflow2 run --input assembly.fasta --output results/ --skip-taxonomy --threads 16
     """
+    if lenient and require_hallmarks:
+        raise click.UsageError(
+            "--lenient and --require-hallmarks cannot be used together. "
+            "Choose legacy high-sensitivity behavior or the strict biological-evidence gate."
+        )
+
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -1324,6 +1341,7 @@ def run(
         genomad_db_path=genomad_db if genomad_db else None,
         skip_genomad=skip_genomad,
         lenient=lenient,
+        require_hallmarks=require_hallmarks,
         widen_candidates=widen_candidates,
     )
 

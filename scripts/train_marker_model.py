@@ -90,6 +90,14 @@ def main() -> None:
     parser.add_argument("--n-estimators", type=int, default=300)
     parser.add_argument("--max-depth", type=int, default=6)
     parser.add_argument("--lr", type=float, default=0.1)
+    parser.add_argument(
+        "--allow-ungrouped",
+        action="store_true",
+        help=(
+            "Allow an unsafe random per-row split for development only. "
+            "Models trained this way are rejected by the production pipeline."
+        ),
+    )
     args = parser.parse_args()
 
     if not marker_classifier_available():
@@ -110,6 +118,12 @@ def main() -> None:
             len(set(groups.tolist())),
         )
     else:
+        if not args.allow_ungrouped:
+            parser.error(
+                "the feature dataset has no 'groups' array; rebuild it with "
+                "scripts/dev/build_marker_dataset.py, or use --allow-ungrouped "
+                "for a non-production experiment"
+            )
         logger.warning(
             "No 'groups' array in %s (built before grouped-split support was added) — "
             "falling back to a random per-row split. val_accuracy may be optimistic if "

@@ -65,6 +65,7 @@ from plasflow2.classify.marker_classifier import (
     aggregate_scores,
     extract_marker_features,
     marker_classifier_available,
+    marker_model_safety_issues,
     resolve_marker_model_path,
 )
 from plasflow2.classify.predict import (
@@ -204,6 +205,7 @@ def run_pipeline(
     genomad_db_path: Path | str | None = None,
     skip_genomad: bool = False,
     lenient: bool = False,
+    require_hallmarks: bool = False,
     widen_candidates: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
@@ -267,6 +269,12 @@ def run_pipeline(
         mge_db: Optional path to a DIAMOND .dmnd database built from ISfinder
             transposase protein sequences.  When provided, MGE/IS element
             annotation runs on plasmid contigs.
+        lenient: Preserve the legacy high-sensitivity threshold policy.
+            This does not control whether biological evidence is required.
+        require_hallmarks: If True, apply the high-precision biological-evidence
+            gate. Plasmid calls shorter than 50 kb without PLSDB, mobility,
+            replicon, ICE, or rep-protein evidence become unclassified. False
+            by default so annotations support rather than veto classifier calls.
         widen_candidates: If True, also route "near-miss" contigs into
             biological-evidence annotation and marker-XGBoost rescoring —
             contigs where the Stage-1 MLP's own argmax winner was "plasmid"
@@ -1045,9 +1053,17 @@ def run_pipeline(
     HALLMARK_HARD_THRESHOLD = 50_000  # bp — above this: trust MLP, flag low_confidence
     _hallmark_demoted = 0
     _hallmark_flagged = 0
-    if lenient:
-        logger.info("Hallmark gate disabled (--lenient): accepting all MLP plasmid predictions.")
-    for record in list(plasmid_records) if not lenient else []:
+    if require_hallmarks:
+        logger.info(
+            "Biological hallmark gate enabled (--require-hallmarks): "
+            "short plasmid calls without supporting evidence may be reclassified."
+        )
+    else:
+        logger.info(
+            "Biological evidence policy: advisory; calibrated classifier labels remain authoritative."
+        )
+
+    for record in list(plasmid_records):
         cid = record.id
         mob = mobility_by_contig.get(cid)
         has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
@@ -1076,6 +1092,13 @@ def run_pipeline(
                     scores=old.scores,
                 )
             continue  # good evidence — keep/promote to plasmid
+
+        if not require_hallmarks:
+            # Default policy: evidence is advisory. Preserve original
+            # calibrated classifier calls when no database hallmark is found.
+            # Near-miss candidates remain unclassified unless evidence or the
+            # marker model promotes them.
+            continue
 
         contig_len = len(record.seq)
         old = pred_by_id[cid]
@@ -1271,6 +1294,11 @@ def run_pipeline(
     if _marker_model_path is not None and marker_classifier_available():
         try:
             _marker_clf = MarkerClassifier.load(_marker_model_path)
+            _marker_safety_issues = marker_model_safety_issues(_marker_clf.metadata)
+            if _marker_safety_issues:
+                raise RuntimeError(
+                    "unsafe marker model disabled: " + "; ".join(_marker_safety_issues)
+                )
             _n_xgb_promoted = 0
             _n_xgb_demoted = 0
 
