@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 from plasflow2.classify.marker_classifier import (
     MARKER_FEATURE_NAMES,
+    MARKER_PROFILE_FULL,
+    MARKER_PROFILE_QUICK,
     ContigMarkerFeatures,
     MarkerClassifier,
     aggregate_scores,
@@ -23,6 +25,8 @@ def _safe_model_card() -> dict:
         "n_distinct_groups": 30,
         "feature_names": list(MARKER_FEATURE_NAMES),
         "feature_schema_version": "marker-v2",
+        "feature_profile": MARKER_PROFILE_FULL,
+        "training_prediction_parity_verified": True,
         "training_data_sha256": "a" * 64,
         "benchmark_lockout_verified": True,
         "benchmark_lockout_sha256": "b" * 64,
@@ -31,6 +35,34 @@ def _safe_model_card() -> dict:
 
 def test_marker_model_safety_accepts_complete_grouped_model() -> None:
     assert marker_model_safety_issues(_safe_model_card()) == []
+
+
+def test_marker_model_safety_enforces_consumer_profile() -> None:
+    metadata = _safe_model_card()
+
+    assert (
+        marker_model_safety_issues(
+            metadata,
+            required_feature_profile=MARKER_PROFILE_FULL,
+        )
+        == []
+    )
+
+    issues = marker_model_safety_issues(
+        metadata,
+        required_feature_profile=MARKER_PROFILE_QUICK,
+    )
+
+    assert any("incompatible with required consumer profile" in issue for issue in issues)
+
+
+def test_marker_model_safety_requires_verified_feature_parity() -> None:
+    metadata = _safe_model_card()
+    metadata["training_prediction_parity_verified"] = False
+
+    issues = marker_model_safety_issues(metadata)
+
+    assert "training/prediction feature parity was not verified" in issues
 
 
 def test_marker_model_safety_rejects_deployed_binary_collapsed_semantics() -> None:

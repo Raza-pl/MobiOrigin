@@ -111,6 +111,15 @@ MARKER_FEATURE_NAMES = [
 ]
 
 N_MARKER_FEATURES = len(MARKER_FEATURE_NAMES)
+
+MARKER_PROFILE_QUICK = "quick-classify-v1"
+MARKER_PROFILE_FULL = "full-annotation-v1"
+SUPPORTED_MARKER_FEATURE_PROFILES = frozenset(
+    {
+        MARKER_PROFILE_QUICK,
+        MARKER_PROFILE_FULL,
+    }
+)
 # Mobility feature indices — used to compute marker_gene_fraction
 _MOBILITY_FEATURE_INDICES = [
     3,
@@ -437,7 +446,11 @@ def _load_xgboost_native(path: Path):  # type: ignore[no-untyped-def]
     return model
 
 
-def marker_model_safety_issues(metadata: dict) -> list[str]:
+def marker_model_safety_issues(
+    metadata: dict,
+    *,
+    required_feature_profile: str | None = None,
+) -> list[str]:
     """Return reasons a marker model is unsafe for production fusion.
 
     A production marker model must be a genuine three-class model trained
@@ -468,6 +481,18 @@ def marker_model_safety_issues(metadata: dict) -> list[str]:
 
     if metadata.get("feature_schema_version") != "marker-v2":
         issues.append("model card has no supported marker feature-schema version")
+
+    feature_profile = metadata.get("feature_profile")
+    if feature_profile not in SUPPORTED_MARKER_FEATURE_PROFILES:
+        issues.append("model card has no supported marker feature profile")
+    elif required_feature_profile is not None and feature_profile != required_feature_profile:
+        issues.append(
+            f"marker feature profile {feature_profile!r} is incompatible with "
+            f"required consumer profile {required_feature_profile!r}"
+        )
+
+    if metadata.get("training_prediction_parity_verified") is not True:
+        issues.append("training/prediction feature parity was not verified")
 
     training_hash = metadata.get("training_data_sha256")
     if not (

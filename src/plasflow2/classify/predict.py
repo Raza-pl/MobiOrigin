@@ -673,12 +673,16 @@ def predict(
     )
     if _resolved_marker_model_path is not None:
         from plasflow2.classify.marker_classifier import (
+            MARKER_PROFILE_QUICK,
             MarkerClassifier,
             marker_model_safety_issues,
         )
 
         _candidate_marker_clf = MarkerClassifier.load(_resolved_marker_model_path)
-        _marker_safety_issues = marker_model_safety_issues(_candidate_marker_clf.metadata)
+        _marker_safety_issues = marker_model_safety_issues(
+            _candidate_marker_clf.metadata,
+            required_feature_profile=MARKER_PROFILE_QUICK,
+        )
         if _marker_safety_issues:
             logger.warning(
                 "Unsafe marker model disabled: %s — using MLP scores only.",

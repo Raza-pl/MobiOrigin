@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from plasflow2.classify.marker_classifier import (  # noqa: E402
     MARKER_FEATURE_NAMES,
+    MARKER_PROFILE_FULL,
     MarkerClassifier,
     marker_classifier_available,
 )
@@ -106,6 +107,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--allow-incomplete-features",
+        action="store_true",
+        help=(
+            "Development only: allow a dataset without the verified "
+            "full-annotation feature profile. Such a model remains blocked "
+            "from production fusion."
+        ),
+    )
+    parser.add_argument(
         "--exclude-groups",
         type=Path,
         default=None,
@@ -132,9 +142,29 @@ def main() -> None:
     feature_schema_version = (
         str(data["feature_schema_version"].item()) if "feature_schema_version" in data else None
     )
+    dataset_feature_profile = (
+        str(data["feature_profile"].item()) if "feature_profile" in data else None
+    )
+    dataset_parity_verified = (
+        bool(data["training_prediction_parity_verified"].item())
+        if "training_prediction_parity_verified" in data
+        else False
+    )
     dataset_lockout_sha256 = (
         str(data["lockout_sha256"].item()) if "lockout_sha256" in data else None
     )
+    if not args.allow_incomplete_features:
+        if dataset_feature_profile != MARKER_PROFILE_FULL:
+            parser.error(
+                "production marker training requires feature_profile="
+                f"{MARKER_PROFILE_FULL!r}; dataset declares "
+                f"{dataset_feature_profile!r}"
+            )
+        if dataset_parity_verified is not True:
+            parser.error(
+                "production marker training requires verified " "training/prediction feature parity"
+            )
+
     logger.info("Loaded features: X=%s  y=%s", X.shape, y.shape)
     if groups is not None:
         logger.info(
@@ -232,6 +262,8 @@ def main() -> None:
         "split_type": ("grouped_by_source_genome" if groups is not None else "random_per_row"),
         "n_distinct_groups": len(set(groups.tolist())) if groups is not None else None,
         "feature_schema_version": feature_schema_version,
+        "feature_profile": dataset_feature_profile,
+        "training_prediction_parity_verified": dataset_parity_verified,
         "benchmark_lockout_verified": not args.allow_ungrouped,
         "benchmark_lockout_sha256": actual_lockout_sha256,
         "zero_variance_features": (

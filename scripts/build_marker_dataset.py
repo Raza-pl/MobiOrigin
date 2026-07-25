@@ -695,6 +695,8 @@ def main() -> None:
         feature_names=np.asarray(MARKER_FEATURE_NAMES, dtype=str),
         lockout_sha256=np.asarray(lockout_sha256),
         feature_schema_version=np.asarray("marker-v2"),
+        feature_profile=np.asarray("incomplete-builder-v1"),
+        training_prediction_parity_verified=np.asarray(False),
     )
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -724,6 +726,8 @@ def main() -> None:
         "lockout_sha256": lockout_sha256,
         "lockout_overlap": 0,
         "feature_schema_version": "marker-v2",
+        "feature_profile": "incomplete-builder-v1",
+        "training_prediction_parity_verified": False,
         "cleaning": cleaning_summary,
         "manifest": str(manifest_path),
     }

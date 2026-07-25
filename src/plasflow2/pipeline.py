@@ -61,6 +61,7 @@ from plasflow2.annotate.taxonomy_kaiju import (
 from plasflow2.annotate.topology import Topology, detect_topologies
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.marker_classifier import (
+    MARKER_PROFILE_FULL,
     MarkerClassifier,
     aggregate_scores,
     extract_marker_features,
@@ -1294,7 +1295,10 @@ def run_pipeline(
     if _marker_model_path is not None and marker_classifier_available():
         try:
             _marker_clf = MarkerClassifier.load(_marker_model_path)
-            _marker_safety_issues = marker_model_safety_issues(_marker_clf.metadata)
+            _marker_safety_issues = marker_model_safety_issues(
+                _marker_clf.metadata,
+                required_feature_profile=MARKER_PROFILE_FULL,
+            )
             if _marker_safety_issues:
                 raise RuntimeError(
                     "unsafe marker model disabled: " + "; ".join(_marker_safety_issues)
