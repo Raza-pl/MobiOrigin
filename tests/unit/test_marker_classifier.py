@@ -22,7 +22,10 @@ def _safe_model_card() -> dict:
         "split_type": "grouped_by_source_genome",
         "n_distinct_groups": 30,
         "feature_names": list(MARKER_FEATURE_NAMES),
+        "feature_schema_version": "marker-v2",
         "training_data_sha256": "a" * 64,
+        "benchmark_lockout_verified": True,
+        "benchmark_lockout_sha256": "b" * 64,
     }
 
 

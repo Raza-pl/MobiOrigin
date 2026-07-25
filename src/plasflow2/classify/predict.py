@@ -366,7 +366,11 @@ def _run_pyrodigal(
             genes = gene_pred.find_genes(seq.encode())
             gene_list = list(genes)
             covered = sum(abs(g.end - g.begin) for g in gene_list)
-            return sid, {"n_orfs": len(gene_list), "covered_bp": covered, "genes": gene_list}
+            return sid, {
+                "n_orfs": len(gene_list),
+                "covered_bp": covered,
+                "genes": gene_list,
+            }
         except Exception:
             return sid, {"n_orfs": 0, "covered_bp": 0, "genes": []}
 
@@ -591,11 +595,13 @@ def predict(
     _model_wants_gene_features: bool = _model_input_dim == FEATURE_DIM_FULL
     if _model_wants_gene_features:
         logger.info(
-            "Model expects %d-dim input — gene content features will be included", _model_input_dim
+            "Model expects %d-dim input — gene content features will be included",
+            _model_input_dim,
         )
     else:
         logger.info(
-            "Model expects %d-dim input — k=7 only (no gene content features)", _model_input_dim
+            "Model expects %d-dim input — k=7 only (no gene content features)",
+            _model_input_dim,
         )
 
     # Multi-GPU: wrap in DataParallel when multiple CUDA devices are available.
@@ -619,7 +625,10 @@ def predict(
     orf_data_global: dict[str, dict] = {}
     if precomputed_orf_data:
         orf_data_global = precomputed_orf_data
-        logger.info("Reusing pre-computed pyrodigal ORF data (%d sequences)", len(orf_data_global))
+        logger.info(
+            "Reusing pre-computed pyrodigal ORF data (%d sequences)",
+            len(orf_data_global),
+        )
     elif use_pyrodigal and (_model_wants_gene_features or marker_model_path):
         logger.info("Running pyrodigal for gene/ORF features …")
         orf_data_global = _run_pyrodigal(sequences, sequence_ids)
@@ -662,6 +671,21 @@ def predict(
     _resolved_marker_model_path = (
         resolve_marker_model_path(Path(marker_model_path)) if marker_model_path else None
     )
+    if _resolved_marker_model_path is not None:
+        from plasflow2.classify.marker_classifier import (
+            MarkerClassifier,
+            marker_model_safety_issues,
+        )
+
+        _candidate_marker_clf = MarkerClassifier.load(_resolved_marker_model_path)
+        _marker_safety_issues = marker_model_safety_issues(_candidate_marker_clf.metadata)
+        if _marker_safety_issues:
+            logger.warning(
+                "Unsafe marker model disabled: %s — using MLP scores only.",
+                "; ".join(_marker_safety_issues),
+            )
+            _resolved_marker_model_path = None
+
     if _resolved_marker_model_path is not None:
         logger.info("Running marker XGBoost second stage from %s", _resolved_marker_model_path)
 
@@ -845,7 +869,11 @@ def predict(
             # Hard override: BOTH relaxase AND MPF present → conjugative plasmid
             # (FP rate for chromosomes carrying both is negligible)
             if ann.get("is_conjugative", 0.0) > 0:
-                all_scores[i] = {"plasmid": 0.999, "chromosome": 0.0005, "phage": 0.0005}
+                all_scores[i] = {
+                    "plasmid": 0.999,
+                    "chromosome": 0.0005,
+                    "phage": 0.0005,
+                }
                 _ev_type_by_idx[i] = "conjugative_override"
                 n_hard_overrides += 1
                 continue
@@ -1154,7 +1182,7 @@ def predict(
         _chr_t_desc,
         argmax_fallback,
         n_unclassified,
-        marker_model_path is not None,
+        _marker_stage_ran,
     )
     return results
 

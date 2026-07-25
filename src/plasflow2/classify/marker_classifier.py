@@ -20,26 +20,23 @@ Aggregation (attention-weighted):
     where α = marker_gene_fraction  (increases as more genes get marker hits)
     When no genes match markers → α=0, MLP score is used unchanged.
 
-Features (15 total)
+Features (28 total)
 -------------------
-From the MLP (3):
-    mlp_plasmid_score, mlp_chromosome_score, mlp_phage_score
+MLP scores (3):
+    plasmid, chromosome, and phage probabilities
 
-Biological markers (8):
-    is_conjugative     — MOB DIAMOND: relaxase + MPF hit
-    is_mobilizable     — MOB DIAMOND: relaxase hit only
-    has_replicon       — replicon type assigned (IncF, IncP, …)
-    has_plsdb_match    — PLSDB / RefSeq plasmid DB match
-    has_phage_marker   — ICE / MGE hit of phage origin
-    n_arg_normalized   — ARG hits per kb
-    n_mge_normalized   — MGE hits per kb
-    n_ice_normalized   — ICE hits per kb
+Mobility and replication evidence (5):
+    conjugative, mobilizable, replicon, ICE, and replication-protein evidence
 
-Sequence features (4):
-    log10_length       — log10(contig_length)
-    gc_content         — fraction G+C
-    coding_density     — fraction of contig covered by ORFs
-    n_orfs_per_kb      — ORF density
+Evidence densities (4):
+    ARG, MGE, ICE, and replication-protein hits per kb
+
+Sequence properties (4):
+    length, GC content, coding density, and ORF density
+
+geNomad-derived gene features (12):
+    plasmid/chromosome/virus marker frequencies, SPM summaries,
+    strand-switch and RBS statistics, and plasmid-marker counts
 
 Training
 --------
@@ -116,7 +113,13 @@ MARKER_FEATURE_NAMES = [
 
 N_MARKER_FEATURES = len(MARKER_FEATURE_NAMES)
 # Mobility feature indices — used to compute marker_gene_fraction
-_MOBILITY_FEATURE_INDICES = [3, 4, 5, 6, 7]  # conjugative, mobilizable, replicon, ice, rep_protein
+_MOBILITY_FEATURE_INDICES = [
+    3,
+    4,
+    5,
+    6,
+    7,
+]  # conjugative, mobilizable, replicon, ice, rep_protein
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +463,9 @@ def marker_model_safety_issues(metadata: dict) -> list[str]:
     if metadata.get("feature_names") != MARKER_FEATURE_NAMES:
         issues.append("model feature schema does not match the runtime schema")
 
+    if metadata.get("feature_schema_version") != "marker-v2":
+        issues.append("model card has no supported marker feature-schema version")
+
     training_hash = metadata.get("training_data_sha256")
     if not (
         isinstance(training_hash, str)
@@ -467,6 +473,17 @@ def marker_model_safety_issues(metadata: dict) -> list[str]:
         and all(char in "0123456789abcdefABCDEF" for char in training_hash)
     ):
         issues.append("model card has no valid training-data SHA-256")
+
+    if metadata.get("benchmark_lockout_verified") is not True:
+        issues.append("benchmark lockout was not verified during training")
+
+    lockout_hash = metadata.get("benchmark_lockout_sha256")
+    if not (
+        isinstance(lockout_hash, str)
+        and len(lockout_hash) == 64
+        and all(char in "0123456789abcdefABCDEF" for char in lockout_hash)
+    ):
+        issues.append("model card has no valid benchmark-lockout SHA-256")
 
     return issues
 

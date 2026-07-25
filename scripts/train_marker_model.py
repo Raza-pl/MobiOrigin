@@ -7,6 +7,7 @@ Usage
         --plasmid-dir  data/databases/plasmids/ \\
         --chrom-dir    data/gtdb_genomes/bacteria/ \\
         --model        data/models/mlp_v2.pt \\
+        --exclude-groups data/benchmark/locked_all_training_groups.txt \\
         --mob-db       data/databases/mob_suite/mob_proteins.dmnd \\
         --max-per-class 30000 \\
         --out          data/marker_features.npz
@@ -14,6 +15,7 @@ Usage
     # 2. Train XGBoost (~2 min)
     python scripts/train_marker_model.py \\
         --features data/marker_features.npz \\
+        --exclude-groups data/benchmark/locked_all_training_groups.txt \\
         --out      data/models/
 
 Output
@@ -45,9 +47,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from plasflow2.classify.marker_classifier import (  # noqa: E402
+    MARKER_FEATURE_NAMES,
     MarkerClassifier,
     marker_classifier_available,
 )
+from plasflow2.classify.splits import validate_group_labels  # noqa: E402
 from plasflow2.utils.device import IDX_TO_CLASS  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -85,7 +89,10 @@ def main() -> None:
         help="Marker features .npz (from build_marker_dataset.py)",
     )
     parser.add_argument(
-        "--out", type=Path, default=Path("data/models"), help="Output directory for marker_xgb.pkl"
+        "--out",
+        type=Path,
+        default=Path("data/models"),
+        help="Output directory for marker_xgb.pkl",
     )
     parser.add_argument("--n-estimators", type=int, default=300)
     parser.add_argument("--max-depth", type=int, default=6)
@@ -96,6 +103,15 @@ def main() -> None:
         help=(
             "Allow an unsafe random per-row split for development only. "
             "Models trained this way are rejected by the production pipeline."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-groups",
+        type=Path,
+        default=None,
+        help=(
+            "Locked benchmark source groups used by the dataset builder. "
+            "Required for production training."
         ),
     )
     args = parser.parse_args()
@@ -109,7 +125,16 @@ def main() -> None:
     X = data["X"].astype(np.float32)
     y = data["y"].astype(np.int64)
     groups = data["groups"] if "groups" in data else None
+    sequence_ids = (
+        [str(value) for value in data["sequence_ids"]] if "sequence_ids" in data else None
+    )
     feat_names = [str(f) for f in data["feature_names"]] if "feature_names" in data else None
+    feature_schema_version = (
+        str(data["feature_schema_version"].item()) if "feature_schema_version" in data else None
+    )
+    dataset_lockout_sha256 = (
+        str(data["lockout_sha256"].item()) if "lockout_sha256" in data else None
+    )
     logger.info("Loaded features: X=%s  y=%s", X.shape, y.shape)
     if groups is not None:
         logger.info(
@@ -121,7 +146,7 @@ def main() -> None:
         if not args.allow_ungrouped:
             parser.error(
                 "the feature dataset has no 'groups' array; rebuild it with "
-                "scripts/dev/build_marker_dataset.py, or use --allow-ungrouped "
+                "scripts/build_marker_dataset.py, or use --allow-ungrouped "
                 "for a non-production experiment"
             )
         logger.warning(
@@ -131,6 +156,32 @@ def main() -> None:
             "Rebuild with the current build_marker_dataset.py to get a grouped split.",
             args.features,
         )
+    if not args.allow_ungrouped:
+        if args.exclude_groups is None or not args.exclude_groups.is_file():
+            parser.error("--exclude-groups is required for production marker training")
+        if sequence_ids is None:
+            parser.error("production marker features must contain sequence_ids")
+        if len(sequence_ids) != len(y) or len(set(sequence_ids)) != len(sequence_ids):
+            parser.error("sequence_ids must be unique and aligned with feature rows")
+        if feat_names != MARKER_FEATURE_NAMES:
+            parser.error("feature_names do not exactly match the runtime schema")
+        if feature_schema_version != "marker-v2":
+            parser.error("feature_schema_version must be 'marker-v2'")
+        if not np.isfinite(X).all():
+            parser.error("feature matrix contains non-finite values")
+        validate_group_labels(y, [str(value) for value in groups])
+
+        excluded_groups = {
+            line.strip() for line in args.exclude_groups.read_text().splitlines() if line.strip()
+        }
+        overlap = {str(value) for value in groups} & excluded_groups
+        if overlap:
+            parser.error(f"benchmark lockout failed: {len(overlap)} excluded groups remain")
+        actual_lockout_sha256 = _sha256(args.exclude_groups)
+        if dataset_lockout_sha256 != actual_lockout_sha256:
+            parser.error("dataset lockout SHA-256 does not match --exclude-groups")
+    else:
+        actual_lockout_sha256 = None
     if feat_names:
         logger.info("Feature names (%d): %s", len(feat_names), feat_names)
 
@@ -178,8 +229,20 @@ def main() -> None:
             "learning_rate": args.lr,
         },
         "val_accuracy": result["val_accuracy"],
-        "split_type": "grouped_by_source_genome" if groups is not None else "random_per_row",
+        "split_type": ("grouped_by_source_genome" if groups is not None else "random_per_row"),
         "n_distinct_groups": len(set(groups.tolist())) if groups is not None else None,
+        "feature_schema_version": feature_schema_version,
+        "benchmark_lockout_verified": not args.allow_ungrouped,
+        "benchmark_lockout_sha256": actual_lockout_sha256,
+        "zero_variance_features": (
+            [
+                feat_names[index]
+                for index in range(X.shape[1])
+                if float(np.min(X[:, index])) == float(np.max(X[:, index]))
+            ]
+            if feat_names
+            else []
+        ),
     }
     clf.save(out_path, metadata=metadata)
     logger.info("Done — saved to %s", out_path)
