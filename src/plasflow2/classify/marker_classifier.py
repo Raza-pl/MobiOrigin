@@ -59,7 +59,6 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -406,26 +405,30 @@ def aggregate_scores(
 
 
 def resolve_marker_model_path(path: Path) -> Path | None:
-    """Return whichever of ``<stem>.json``, ``<stem>.ubj``, or *path* exists.
+    """Resolve a marker model to native XGBoost JSON or UBJ only.
 
-    Callers throughout this project historically pass a ``.pkl`` path (e.g.
-    ``data/models/marker_xgb.pkl``); this lets `save()`'s output (a
-    ``.json`` file) be found by that same caller code without every
-    auto-detection site needing to know the extension changed.
+    Historical callers may still pass ``marker_xgb.pkl`` as the base name.
+    In that case a JSON or UBJ sibling is accepted, but the pickle itself is
+    never returned or deserialized.
     """
-    candidates = [path.with_suffix(".json"), path.with_suffix(".ubj"), path]
+    path = Path(path)
+    candidates = [path.with_suffix(".json"), path.with_suffix(".ubj")]
+
+    if path.suffix in {".json", ".ubj"}:
+        candidates.insert(0, path)
+
     for candidate in candidates:
         if candidate.exists():
             return candidate
+
     return None
 
 
 def _load_xgboost_native(path: Path):  # type: ignore[no-untyped-def]
     """Load an XGBClassifier from its native JSON/UBJ serialization.
 
-    Raises whatever XGBoost/the JSON parser raises if *path* isn't actually
-    in that format (e.g. a legacy pickle) — callers use this to detect and
-    fall back, not to validate up front.
+    Raises the native XGBoost parser error if the artifact is malformed.
+    Pickle deserialization is deliberately unsupported.
     """
     from xgboost import XGBClassifier  # type: ignore[import]
 
@@ -745,49 +748,35 @@ class MarkerClassifier:
 
     @classmethod
     def load(cls, path: Path | str) -> MarkerClassifier:
-        """Load a saved MarkerClassifier.
+        """Load a native XGBoost JSON or UBJ marker model.
 
-        Resolves *path* to whichever of ``<stem>.json``, ``<stem>.ubj``, or
-        the literal *path* actually exists on disk, preferring the native
-        XGBoost format over a legacy pickle. If the resolved file turns out
-        to be a legacy pickle (predates the JSON migration — e.g. an
-        already-deployed ``marker_xgb.pkl`` downloaded before this fix), it
-        is unpickled as a fallback with a warning encouraging a re-save.
-
-        Logs a warning (does not fail) if no ``<resolved_path>.meta.json``
-        model card is present, since older checkpoints predate that
-        convention entirely.
+        ``.pkl`` may be supplied as a historical base name only when a native
+        ``.json`` or ``.ubj`` sibling exists. Pickle artifacts are rejected
+        before their contents are opened because deserialization can execute
+        arbitrary code.
         """
         path = Path(path)
         resolved = resolve_marker_model_path(path)
+
         if resolved is None:
+            if path.suffix == ".pkl" and path.exists():
+                raise ValueError(
+                    f"Refusing legacy pickle marker model: {path}. "
+                    "Only native XGBoost JSON/UBJ artifacts are supported."
+                )
             raise FileNotFoundError(
-                f"No marker model found at {path} (also checked "
-                f"{path.with_suffix('.json')} and {path.with_suffix('.ubj')})"
+                f"No native marker model found at {path} "
+                f"(checked {path.with_suffix('.json')} and "
+                f"{path.with_suffix('.ubj')})"
             )
 
-        model: object
-        if resolved.suffix in (".json", ".ubj"):
-            model = _load_xgboost_native(resolved)
-        else:
-            # Legacy .pkl path that resolved to itself (no .json/.ubj sibling
-            # exists). Try the native loader first in case it was already
-            # re-saved under the old extension; only unpickle as a last
-            # resort, since that's the exact risk this migration removes.
-            try:
-                model = _load_xgboost_native(resolved)
-            except Exception:
-                logger.warning(
-                    "%s is not a native XGBoost JSON/UBJ file — falling back "
-                    "to pickle.load() for this legacy checkpoint. Re-save it "
-                    "(MarkerClassifier.load(%r).save(%r)) to drop the pickle "
-                    "dependency for this file.",
-                    resolved,
-                    str(resolved),
-                    str(resolved),
-                )
-                with open(resolved, "rb") as fh:
-                    model = pickle.load(fh)  # noqa: S301
+        if resolved.suffix not in {".json", ".ubj"}:
+            raise ValueError(
+                f"Unsupported marker model format: {resolved.suffix}. "
+                "Only native XGBoost JSON/UBJ artifacts are supported."
+            )
+
+        model = _load_xgboost_native(resolved)
 
         obj = cls()
         obj._model = model
@@ -807,6 +796,7 @@ class MarkerClassifier:
                 "hyperparameters) for this checkpoint is unknown.",
                 meta_path,
             )
+
         return obj
 
 

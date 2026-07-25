@@ -178,35 +178,35 @@ def test_save_writes_model_card_and_load_reads_it_back(tmp_path) -> None:
     np.testing.assert_allclose(loaded.predict_proba(X), classifier.predict_proba(X))
 
 
-def test_resolve_marker_model_path_prefers_json_over_pkl(tmp_path) -> None:
+def test_resolve_marker_model_path_ignores_pickle_and_prefers_json(
+    tmp_path,
+) -> None:
     pkl_path = tmp_path / "marker_xgb.pkl"
     json_path = tmp_path / "marker_xgb.json"
 
     assert resolve_marker_model_path(pkl_path) is None
 
     pkl_path.write_bytes(b"legacy pickle bytes")
-    assert resolve_marker_model_path(pkl_path) == pkl_path
+    assert resolve_marker_model_path(pkl_path) is None
 
     json_path.write_text("{}")
     assert resolve_marker_model_path(pkl_path) == json_path
 
 
-def test_load_warns_when_model_card_missing(tmp_path, caplog) -> None:
+def test_legacy_pickle_is_rejected_without_deserialization(tmp_path) -> None:
     import pickle
 
-    import xgboost as xgb
+    sentinel = tmp_path / "pickle_was_executed"
 
-    X = np.random.default_rng(0).random((10, 2), dtype=np.float32)
-    y = np.array([0, 1] * 5, dtype=np.int64)
-    model = xgb.XGBClassifier(n_estimators=2, max_depth=2)
-    model.fit(X, y)
+    class Payload:
+        def __reduce__(self):
+            command = "from pathlib import Path; " f"Path({str(sentinel)!r}).touch()"
+            return exec, (command,)
 
-    out_path = tmp_path / "legacy_marker_xgb.pkl"
-    with open(out_path, "wb") as fh:
-        pickle.dump(model, fh)
+    pkl_path = tmp_path / "legacy_marker_xgb.pkl"
+    pkl_path.write_bytes(pickle.dumps(Payload()))
 
-    with caplog.at_level(logging.WARNING):
-        loaded = MarkerClassifier.load(out_path)
+    with pytest.raises(ValueError, match="Refusing legacy pickle"):
+        MarkerClassifier.load(pkl_path)
 
-    assert loaded.metadata == {}
-    assert any("No model card" in rec.message for rec in caplog.records)
+    assert not sentinel.exists()
