@@ -544,42 +544,214 @@ def _infer_drug_class(description: str) -> str:
     return "unknown"
 
 
-def load_amrfinder_metadata(fam_tab_path: Path | str) -> dict[str, dict]:  # type: ignore[type-arg]
-    """Load AMRFinderPlus fam.tab into a dict keyed by gene/family symbol.
+AMRFinderEntry = dict[str, str]
+AMRFinderMetadata = dict[str, list[AMRFinderEntry]]
+LegacyAMRFinderMetadata = dict[str, dict[str, str]]
 
-    fam.tab columns (may vary by DB version):
-        #family_symbol  type  subtype  description  class  subclass  ...
-    We keep type=AMR rows only — STRESS and VIRULENCE are covered by VFDB.
+
+def load_amrfinder_metadata(fam_path: Path | str) -> AMRFinderMetadata:
+    """Load modern fam.tsv or legacy fam.tab AMRFinderPlus metadata.
+
+    Modern fam.tsv is hierarchical: type, class, and subclass can be inherited
+    from parent nodes. All element types are retained so AMRProt hits belonging
+    to VIRULENCE or STRESS can be excluded during parsing.
     """
-    meta: dict[str, dict] = {}  # type: ignore[type-arg]
-    fam_tab_path = Path(fam_tab_path)
-    if not fam_tab_path.exists():
-        logger.warning(
-            "AMRFinder fam.tab not found at %s — drug classes will be inferred from headers",
-            fam_tab_path,
-        )
-        return meta
+    metadata: AMRFinderMetadata = {}
+    fam_path = Path(fam_path)
 
-    with open(fam_tab_path, newline="") as fh:
-        reader = csv.DictReader(fh, delimiter="\t")
-        for row in reader:
-            # Normalise column names (strip leading #)
-            row = {k.lstrip("#"): v for k, v in row.items()}
-            if row.get("type", "AMR").upper() not in ("AMR", ""):
-                continue
-            symbol = row.get("family_symbol", row.get("gene_symbol", "")).strip().lower()
-            if not symbol:
-                continue
-            drug_class = (
-                row.get("class", row.get("subclass", row.get("subtype", "unknown")))
-            ).strip() or "unknown"
-            meta[symbol] = {
-                "drug_class": drug_class.lower(),
-                "subclass": row.get("subclass", "").strip(),
-                "description": row.get("description", "").strip(),
+    if not fam_path.exists():
+        logger.warning(
+            "AMRFinder metadata not found at %s — AMRProt types cannot be verified",
+            fam_path,
+        )
+        return metadata
+
+    with fam_path.open(newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        rows = [
+            {str(key).lstrip("#"): str(value or "").strip() for key, value in row.items()}
+            for row in reader
+        ]
+
+    if not rows:
+        logger.warning("AMRFinder metadata file is empty: %s", fam_path)
+        return metadata
+
+    def add_entry(symbol: str, entry: AMRFinderEntry) -> None:
+        symbol = symbol.strip().lower()
+        if not symbol or symbol == "-":
+            return
+        entries = metadata.setdefault(symbol, [])
+        if entry not in entries:
+            entries.append(entry)
+
+    if "node_id" not in rows[0]:
+        # Backward compatibility with older flat fam.tab files.
+        for row in rows:
+            symbol = row.get("family_symbol") or row.get("gene_symbol") or ""
+            entry = {
+                "element_type": (row.get("type") or "AMR").upper(),
+                "drug_class": (
+                    row.get("class") or row.get("subclass") or row.get("subtype") or "unknown"
+                ).lower(),
+                "subclass": row.get("subclass", ""),
+                "description": row.get("description", ""),
             }
-    logger.info("Loaded %d AMRFinder family entries from %s", len(meta), fam_tab_path)
-    return meta
+            add_entry(symbol, entry)
+    else:
+        nodes = {row["node_id"]: row for row in rows if row.get("node_id")}
+        cache: dict[tuple[str, str], str] = {}
+
+        def inherited(
+            node_id: str,
+            field: str,
+            seen: set[str] | None = None,
+        ) -> str:
+            key = (node_id, field)
+            if key in cache:
+                return cache[key]
+
+            if seen is None:
+                seen = set()
+            if node_id in seen:
+                return ""
+
+            row = nodes.get(node_id)
+            if row is None:
+                return ""
+
+            value = row.get(field, "").strip()
+            if value and value != "-":
+                cache[key] = value
+                return value
+
+            parent = row.get("parent_node_id", "").strip()
+            if not parent or parent == node_id:
+                cache[key] = ""
+                return ""
+
+            value = inherited(parent, field, seen | {node_id})
+            cache[key] = value
+            return value
+
+        for node_id, row in nodes.items():
+            entry = {
+                "element_type": (inherited(node_id, "type") or "UNKNOWN").upper(),
+                "drug_class": (
+                    inherited(node_id, "class") or inherited(node_id, "subclass") or "unknown"
+                ).lower(),
+                "subclass": inherited(node_id, "subclass"),
+                "description": (
+                    inherited(node_id, "family_name") or inherited(node_id, "description")
+                ),
+            }
+
+            # Modern headers normally use gene_symbol, but node_id is also a
+            # useful exact alias for several AMRFinder hierarchy families.
+            add_entry(row.get("gene_symbol", ""), entry)
+            add_entry(node_id, entry)
+
+    logger.info(
+        "Loaded %d AMRFinder hierarchy symbols from %s",
+        len(metadata),
+        fam_path,
+    )
+    return metadata
+
+
+def _metadata_entries_for(
+    metadata: AMRFinderMetadata | LegacyAMRFinderMetadata,
+    symbol: str,
+) -> list[AMRFinderEntry]:
+    value = metadata.get(symbol.lower())
+    if isinstance(value, dict):
+        legacy_entry = {str(key): str(item) for key, item in value.items()}
+        legacy_entry.setdefault("element_type", "AMR")
+        return [legacy_entry]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _resolve_amrfinder_entries(
+    metadata: AMRFinderMetadata | LegacyAMRFinderMetadata,
+    gene_name: str,
+    family_name: str = "",
+) -> list[AMRFinderEntry]:
+    entries: list[AMRFinderEntry] = []
+
+    for symbol in (gene_name.strip().lower(), family_name.strip().lower()):
+        if not symbol:
+            continue
+        for entry in _metadata_entries_for(metadata, symbol):
+            if entry not in entries:
+                entries.append(entry)
+
+    if entries:
+        return entries
+
+    queries = [
+        value
+        for value in (
+            gene_name.strip().lower(),
+            family_name.strip().lower(),
+        )
+        if value
+    ]
+    prefix_symbols = [
+        symbol
+        for symbol in metadata
+        if len(symbol) >= 4 and any(query.startswith(symbol) for query in queries)
+    ]
+
+    if not prefix_symbols:
+        return []
+
+    longest = max(len(symbol) for symbol in prefix_symbols)
+    for symbol in prefix_symbols:
+        if len(symbol) != longest:
+            continue
+        for entry in _metadata_entries_for(metadata, symbol):
+            if entry not in entries:
+                entries.append(entry)
+
+    return entries
+
+
+def _select_amr_entry(
+    entries: list[AMRFinderEntry],
+    header_class: str = "",
+    header_subclass: str = "",
+) -> AMRFinderEntry | None:
+    amr_entries = [entry for entry in entries if entry.get("element_type", "").upper() == "AMR"]
+    if not amr_entries:
+        return None
+
+    resolved_types = {entry.get("element_type", "UNKNOWN").upper() for entry in entries}
+    if resolved_types == {"AMR"}:
+        return amr_entries[0]
+
+    # Shared symbols such as cblA and clbB occur in both AMR and virulence
+    # branches. Require the modern header class to match the AMR branch.
+    header_terms = {
+        value.strip().lower() for value in (header_class, header_subclass) if value.strip()
+    }
+    if not header_terms:
+        return None
+
+    for entry in amr_entries:
+        entry_terms = {
+            value.strip().lower()
+            for value in (
+                entry.get("drug_class", ""),
+                entry.get("subclass", ""),
+            )
+            if value.strip() and value.strip().lower() != "unknown"
+        }
+        if header_terms & entry_terms:
+            return entry
+
+    return None
 
 
 def parse_amrprot_hits(
@@ -589,8 +761,8 @@ def parse_amrprot_hits(
     """Parse DIAMOND tabular output from an AMRProt search into ARGHit objects.
 
     Gene symbol is extracted from the stitle (second word of the FASTA header).
-    Drug class is resolved from fam.tab metadata when available, otherwise
-    inferred from the last bracketed field in the header.
+    Modern headers and fam.tsv hierarchy metadata are used to retain AMR
+    proteins while excluding stress and virulence proteins.
 
     Args:
         tsv_path: DIAMOND output (format 6: qseqid sseqid pident qcovhsp evalue stitle).
@@ -621,38 +793,75 @@ def parse_amrprot_hits(
             )
             contig_id = re.sub(r"_\d+$", "", qseqid)
 
-            # Header format: "ACCESSION description GENE-NAME [Organism]"
-            # Gene name = last token before the trailing [organism] bracket.
-            # e.g. "WP_001.1 subclass B1 metallo-beta-lactamase VIM-97 [Pseudomonas aeruginosa]"
-            #       → gene_name = "VIM-97", description = "subclass B1 metallo-beta-lactamase"
-            bracket_match = _AMRPROT_BRACKET_RE.search(stitle)
-            if bracket_match:
-                pre_bracket = stitle[: bracket_match.start()].strip()
-            else:
-                pre_bracket = stitle.strip()
+            # AMRFinderPlus 4.x AMRProt headers are pipe-delimited:
+            # accession|...|gene|family|...|reportable|subclass|class|description
+            modern_fields = stitle.split("|", 9)
 
-            pre_tokens = pre_bracket.split()
-            # Skip accession (first token), gene = last token, description = middle
-            if len(pre_tokens) >= 3:
-                gene_name = pre_tokens[-1]
-                description = " ".join(pre_tokens[1:-1])
-            elif len(pre_tokens) == 2:
-                gene_name = pre_tokens[-1]
-                description = pre_tokens[0]
-            else:
-                gene_name = sseqid
-                description = stitle
+            if len(modern_fields) >= 10:
+                gene_name = modern_fields[3].strip() or modern_fields[4].strip() or sseqid
+                family_name = modern_fields[4].strip()
+                header_subclass = modern_fields[7].strip()
+                header_class = modern_fields[8].strip()
+                description = modern_fields[9].replace("_", " ").strip()
 
-            # Drug class: fam.tab lookup → keyword inference from description
-            drug_class = "unknown"
-            gene_lower = gene_name.lower()
-            if gene_lower in meta:
-                drug_class = meta[gene_lower]["drug_class"]
+                entries = _resolve_amrfinder_entries(
+                    meta,
+                    gene_name,
+                    family_name,
+                )
+                selected = _select_amr_entry(
+                    entries,
+                    header_class,
+                    header_subclass,
+                )
+
+                # With hierarchy metadata available, unresolved, STRESS, and
+                # VIRULENCE proteins are deliberately excluded from ARG calls.
+                if meta and selected is None:
+                    continue
+
+                if selected is not None:
+                    drug_class = (
+                        header_class or header_subclass or selected.get("drug_class", "unknown")
+                    ).lower()
+                else:
+                    drug_class = (header_class or header_subclass).lower() or _infer_drug_class(
+                        description
+                    )
             else:
-                for symbol, m in meta.items():
-                    if gene_lower.startswith(symbol):
-                        drug_class = m["drug_class"]
-                        break
+                # Backward compatibility with historical space-delimited
+                # AMRProt headers ending in an organism name in brackets.
+                bracket_match = _AMRPROT_BRACKET_RE.search(stitle)
+                if bracket_match:
+                    pre_bracket = stitle[: bracket_match.start()].strip()
+                else:
+                    pre_bracket = stitle.strip()
+
+                pre_tokens = pre_bracket.split()
+                if len(pre_tokens) >= 3:
+                    gene_name = pre_tokens[-1]
+                    description = " ".join(pre_tokens[1:-1])
+                elif len(pre_tokens) == 2:
+                    gene_name = pre_tokens[-1]
+                    description = pre_tokens[0]
+                else:
+                    gene_name = sseqid
+                    description = stitle
+
+                entries = _resolve_amrfinder_entries(
+                    meta,
+                    gene_name,
+                )
+                selected = _select_amr_entry(entries)
+
+                if meta and selected is None:
+                    continue
+
+                if selected is not None:
+                    drug_class = selected.get(
+                        "drug_class",
+                        "unknown",
+                    )
                 else:
                     drug_class = _infer_drug_class(description)
 
@@ -838,9 +1047,16 @@ def annotate_contigs_with_orfs(
                     min_identity=min_identity,
                     min_coverage=min_coverage,
                 )
-            # Load fam.tab from same directory as the DB for drug class metadata
-            fam_tab = amrprot_db_path.parent / "fam.tab"
-            amr_meta = load_amrfinder_metadata(fam_tab)
+            # Prefer modern hierarchical fam.tsv; retain legacy fam.tab support.
+            metadata_candidates = (
+                amrprot_db_path.parent / "fam.tsv",
+                amrprot_db_path.parent / "fam.tab",
+            )
+            fam_path = next(
+                (candidate for candidate in metadata_candidates if candidate.exists()),
+                metadata_candidates[0],
+            )
+            amr_meta = load_amrfinder_metadata(fam_path)
             amr_hits = parse_amrprot_hits(amrprot_tsv, amr_meta)
         else:
             logger.warning("AMRProt database not found at %s — skipping", amrprot_db)
