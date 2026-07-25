@@ -112,7 +112,7 @@ download() {
     if command -v wget &>/dev/null; then
         wget -q --show-progress -O "$dest" "$url" || { rm -f "$dest"; return 1; }
     else
-        curl -L --progress-bar -o "$dest" "$url" || { rm -f "$dest"; return 1; }
+        curl -fL --progress-bar -o "$dest" "$url" || { rm -f "$dest"; return 1; }
     fi
     ok "Downloaded: $label  ($(du -sh "$dest" | cut -f1))"
 }
@@ -336,29 +336,100 @@ fi
 section "4. AMRFinderPlus (NCBI)"
 AMR_DIR="$DB_DIR/amrfinder"
 AMR_DMND="$AMR_DIR/amrprot.dmnd"
+AMR_META="$AMR_DIR/fam.tsv"
+AMR_VERSION="$AMR_DIR/version.txt"
+AMR_FORMAT="$AMR_DIR/database_format_version.txt"
+AMR_TMP="$AMR_DIR/.plasflow_amrfinder_download"
 mkdir -p "$AMR_DIR"
 
 if $SKIP_AMRFINDER; then
     warn "Skipping AMRFinderPlus (--skip-amrfinder)"
-elif [[ -f "$AMR_DMND" ]]; then
-    ok "AMRFinderPlus: $AMR_DMND  ($(du -sh "$AMR_DMND" | cut -f1))"
+elif [[ -f "$AMR_DMND" && -f "$AMR_META" && -f "$AMR_VERSION" && -f "$AMR_FORMAT" ]]; then
+    ok "AMRFinderPlus DIAMOND: $AMR_DMND  ($(du -sh "$AMR_DMND" | cut -f1))"
+    ok "AMRFinderPlus hierarchy: $AMR_META"
+    info "Database version: $(head -n 1 "$AMR_VERSION")"
 else
-    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
-    AMR_FASTA="$AMR_DIR/AMRProt"
-    # Primary: pre-built DIAMOND database from PlasFlow v2 release.
-    # Fallback: download AMRProt (protein FASTA) from NCBI and build locally.
-    # NOTE: AMR_CDS.fa is a nucleotide file — DIAMOND requires protein (AMRProt).
-    if download "$RELEASE_BASE/amrprot.dmnd" "$AMR_DMND" "amrprot.dmnd"; then
-        ok "AMRFinderPlus DIAMOND database ready"
+    # v2.1.2 distributes a matched DIAMOND database and fam.tsv hierarchy.
+    # Both files must come from the same AMRFinderPlus database release.
+    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.1.2"
+
+    rm -rf "$AMR_TMP"
+    mkdir -p "$AMR_TMP"
+
+    release_ok=true
+    for fname in \
+        amrprot.dmnd \
+        fam.tsv \
+        version.txt \
+        database_format_version.txt; do
+        if ! download \
+            "$RELEASE_BASE/$fname" \
+            "$AMR_TMP/$fname" \
+            "$fname"; then
+            release_ok=false
+            break
+        fi
+    done
+
+    if $release_ok; then
+        mv "$AMR_TMP/amrprot.dmnd" "$AMR_DMND"
+        mv "$AMR_TMP/fam.tsv" "$AMR_META"
+        mv "$AMR_TMP/version.txt" "$AMR_VERSION"
+        mv "$AMR_TMP/database_format_version.txt" "$AMR_FORMAT"
+        rm -rf "$AMR_TMP"
+
+        ok "AMRFinderPlus matched database and hierarchy installed"
+        info "Database version: $(head -n 1 "$AMR_VERSION")"
     else
-        AMR_URL="https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest/AMRProt"
-        if download "$AMR_URL" "$AMR_FASTA" "AMRProt"; then
-            build_diamond "$AMR_FASTA" "$AMR_DIR/amrprot"
-        else
-            warn "AMRFinderPlus download failed."
-            info "Manual: download AMRProt (protein FASTA) from:"
-            info "  https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest/"
-            info "  → Save to: $AMR_FASTA and re-run"
+        warn "PlasFlow release download unavailable — trying official NCBI files"
+
+        rm -rf "$AMR_TMP"
+        mkdir -p "$AMR_TMP"
+
+        NCBI_BASE="https://ftp.ncbi.nlm.nih.gov/pathogen/Antimicrobial_resistance/AMRFinderPlus/database/latest"
+        ncbi_ok=true
+
+        for fname in \
+            AMRProt.fa \
+            fam.tsv \
+            version.txt \
+            database_format_version.txt; do
+            if ! download \
+                "$NCBI_BASE/$fname" \
+                "$AMR_TMP/$fname" \
+                "$fname"; then
+                ncbi_ok=false
+                break
+            fi
+        done
+
+        if $ncbi_ok; then
+            if build_diamond \
+                "$AMR_TMP/AMRProt.fa" \
+                "$AMR_TMP/amrprot"; then
+                mv "$AMR_TMP/amrprot.dmnd" "$AMR_DMND"
+                mv "$AMR_TMP/AMRProt.fa" "$AMR_DIR/AMRProt.fa"
+                mv "$AMR_TMP/fam.tsv" "$AMR_META"
+                mv "$AMR_TMP/version.txt" "$AMR_VERSION"
+                mv "$AMR_TMP/database_format_version.txt" "$AMR_FORMAT"
+                rm -rf "$AMR_TMP"
+
+                ok "AMRFinderPlus built from matched official NCBI files"
+                info "Database version: $(head -n 1 "$AMR_VERSION")"
+            else
+                ncbi_ok=false
+            fi
+        fi
+
+        if ! $ncbi_ok; then
+            rm -rf "$AMR_TMP"
+            warn "AMRFinderPlus installation failed."
+            info "Required matched files:"
+            info "  amrprot.dmnd"
+            info "  fam.tsv"
+            info "  version.txt"
+            info "  database_format_version.txt"
+            info "Place them in: $AMR_DIR"
         fi
     fi
 fi
@@ -744,6 +815,7 @@ check_file "CARD.dmnd"          "$DB_DIR/card/card.dmnd"
 check_file "CARD ARO index"     "$DB_DIR/card/aro_index.tsv"
 check_file "SARG.dmnd"          "$DB_DIR/sarg/sarg.dmnd"
 check_file "AMRFinderPlus.dmnd" "$DB_DIR/amrfinder/amrprot.dmnd"
+check_file "AMRFinder hierarchy" "$DB_DIR/amrfinder/fam.tsv"
 check_file "VFDB.dmnd"          "$DB_DIR/vfdb/vfdb.dmnd"
 check_file "BacMet2.dmnd"       "$DB_DIR/bacmet/bacmet.dmnd"
 check_file "MGE/ISfinder.dmnd"  "$DB_DIR/mge/isfinder.dmnd"

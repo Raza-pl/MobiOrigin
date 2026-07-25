@@ -59,3 +59,38 @@ A pUC19 full-pipeline regression run confirmed:
 
 Validation: Black, Ruff, Mypy and shell syntax checks passed; 275 tests passed.
 
+## v2.1.2 AMRFinderPlus hierarchy hardening
+
+PlasFlow now supports the modern pipe-delimited AMRFinderPlus 4.x AMRProt
+headers and the hierarchical `fam.tsv` metadata format. Parent-node inheritance
+is resolved for element type, drug class and subclass.
+
+Only references resolved to the AMR hierarchy are accepted as ARG evidence.
+References classified as VIRULENCE or STRESS are excluded. Symbols shared
+between AMR and virulence branches require the class and subclass encoded in
+the AMRProt header to match the AMR hierarchy. Unresolved references are
+conservatively excluded when hierarchy metadata is available. Legacy flat
+`fam.tab` metadata remains supported.
+
+The production audit used AMRFinderPlus 4.2.7 database version 2026-05-15.1:
+
+- 9,998 total AMRProt reference sequences;
+- 8,443 references retained as AMR;
+- 1,555 stress, virulence or unresolved references excluded;
+- 7,308 unique retained gene names;
+- 44 retained drug classes;
+- zero ARSENIC, CADMIUM, COPPER, INTIMIN, STX1 or STX2 classes leaked into
+  ARG annotations.
+
+A full pUC19 pipeline regression retained the genuine `blaTEM-116`
+AMRFinderPlus hit as beta-lactam resistance. CARD remained the preferred
+merged annotation for the same ORF.
+
+The setup workflow now installs `amrprot.dmnd`, `fam.tsv`, `version.txt` and
+`database_format_version.txt` as a matched release set. If release assets are
+unavailable, it downloads `AMRProt.fa` and its matching hierarchy directly
+from NCBI and builds the DIAMOND database in an isolated temporary directory.
+
+Validation: fresh NCBI installation passed; Black, Ruff, Mypy and shell syntax
+checks passed; 278 tests passed.
+
