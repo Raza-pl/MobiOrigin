@@ -85,7 +85,7 @@ def test_training_writes_and_resumes_recovery_checkpoint(tmp_path, monkeypatch) 
 
     checkpoint_path = tmp_path / "training_checkpoint.pt"
     assert checkpoint_path.exists()
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     assert checkpoint["epoch"] == 1
     assert "best_val_macro_f1" in checkpoint
     model_path.unlink()

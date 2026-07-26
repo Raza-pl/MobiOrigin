@@ -215,7 +215,7 @@ def _train_mlp_mmap(
     elapsed_before_resume = 0.0
 
     if resume and checkpoint_path.exists():
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
         expected_config = {
             "input_dim": input_dim,
             "hidden_dims": tuple(hidden_dims),

@@ -67,7 +67,7 @@ from plasflow2.classify.threshold_policy import (
     default_threshold_policy_for_profile,
     validate_profile_threshold_policy,
 )
-from plasflow2.utils.device import IDX_TO_CLASS, get_device
+from plasflow2.utils.device import IDX_TO_CLASS, NUM_CLASSES, get_device
 
 logger = logging.getLogger(__name__)
 
@@ -691,7 +691,14 @@ def predict(
     )
 
     device = get_device()
-    model = load_model(model_path, device=device)
+    model = load_model(
+        model_path,
+        device=device,
+        expected_input_dim=(model_contract.input_dim if model_contract is not None else None),
+        expected_num_classes=(
+            model_contract.num_classes if model_contract is not None else NUM_CLASSES
+        ),
+    )
 
     # Detect expected input dimension from the loaded model's first layer.
     # This determines whether gene content features should be appended to the
