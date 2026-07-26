@@ -1,0 +1,19 @@
+{
+  "artifact_type": "plasflow-mlp",
+  "calibration_id": "rev5-temperature-1.5470323867-zero-phage-proxy-202607",
+  "input_dim": 9557,
+  "model_id": "plasflow-rev5-general-production-20260724",
+  "model_sha256": "3564913c14eaad068a217572f9641907fa8c86b1527abbb2f855b0df4bf3cb23",
+  "num_classes": 3,
+  "profile_threshold_policies": {
+    "balanced": "rev5-balanced-p080-20260724-v1",
+    "evidence-assisted": "rev5-balanced-p080-compass-k21-s5m-20260724-v1",
+    "sequence-only": "rev5-tiered-default-20260724-v1"
+  },
+  "provenance": {
+    "calibration_warning": "Temperature was fitted without phage-positive calibration rows; retained only for established general profiles.",
+    "deployment_role": "retained-general-production",
+    "promotion_decision_sha256": "32fbe0e9a8a78f1489cd41a2c13f22e1f0ac808e5c6477b4195fa13a343feb89"
+  },
+  "schema_version": 1
+}
