@@ -207,6 +207,7 @@ def run_pipeline(
     skip_genomad: bool = False,
     lenient: bool = False,
     require_hallmarks: bool = False,
+    enable_marker_fusion: bool = False,
     widen_candidates: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
@@ -1274,14 +1275,11 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # 6d. Marker XGBoost — post-annotation rescoring of plasmid candidates
     # ------------------------------------------------------------------
-    # Runs AFTER all annotations so every feature has a real value:
-    # mobility class, ARG/MGE/ICE hit density, ORF coding density.
-    # PLSDB match is used as a hard override RULE (not a model feature)
-    # to avoid training-time data leakage.
-    # Base name kept as .pkl for backward compat with existing deployments;
-    # resolve_marker_model_path() below prefers a marker_xgb.json/.ubj
-    # sibling (XGBoost native format) and only falls back to this literal
-    # .pkl for legacy checkpoints predating the pickle -> JSON migration.
+    # Experimental learned fusion runs after annotation so its full feature
+    # profile can use mobility, ARG/MGE/ICE density, ORFs, and geNomad data.
+    # PLSDB remains advisory and is not a classification override.
+    # The historical .pkl name is used only as a lookup base; resolution
+    # accepts native XGBoost JSON/UBJ siblings and never deserializes pickle.
     _marker_model_path_base = Path(model_path).parent / "marker_xgb.pkl"
     _seq_by_id = dict(zip(seq_ids, sequences))
     # Pre-build ORF lookup dict — avoids O(n²) scan of 481k ORFs per contig
@@ -1292,7 +1290,25 @@ def run_pipeline(
             _orfs_by_contig.setdefault(_cid, []).append(_orf)
 
     _marker_model_path = resolve_marker_model_path(_marker_model_path_base)
-    if _marker_model_path is not None and marker_classifier_available():
+    if not enable_marker_fusion:
+        if _marker_model_path is not None:
+            logger.info(
+                "Marker XGBoost artifact available but disabled by default; "
+                "biological evidence remains advisory. Use the explicit experimental "
+                "marker-fusion option only for controlled evaluation."
+            )
+    else:
+        if _marker_model_path is None:
+            raise FileNotFoundError(
+                "Experimental marker fusion was requested, but no native "
+                "marker_xgb.json or marker_xgb.ubj model was found beside "
+                f"the MLP model: {model_path}"
+            )
+        if not marker_classifier_available():
+            raise RuntimeError(
+                "Experimental marker fusion was requested, but XGBoost "
+                "is unavailable in the current environment."
+            )
         try:
             _marker_clf = MarkerClassifier.load(_marker_model_path)
             _marker_safety_issues = marker_model_safety_issues(
@@ -1303,7 +1319,6 @@ def run_pipeline(
                 raise RuntimeError(
                     "unsafe marker model disabled: " + "; ".join(_marker_safety_issues)
                 )
-            _n_xgb_promoted = 0
             _n_xgb_demoted = 0
 
             # Rescore all current plasmid predictions using real annotation data
@@ -1391,14 +1406,11 @@ def run_pipeline(
                     new_label = "plasmid"
 
                 if new_label != pred.label:
-                    if new_label == "plasmid":
-                        _n_xgb_promoted += 1
-                    else:
-                        _n_xgb_demoted += 1
+                    _n_xgb_demoted += 1
 
                 # Always update Prediction with post-XGBoost scores and evidence,
                 # even when the label doesn't change (so TSV reflects final scores).
-                _evidence_type = "plsdb_nt_override" if cid in plasmid_db_hits else "xgb_blend"
+                _evidence_type = "xgb_blend"
                 pred_by_id[cid] = Prediction(
                     sequence_id=cid,
                     label=new_label,
@@ -1416,8 +1428,7 @@ def run_pipeline(
                 )
 
             logger.info(
-                "Marker XGBoost: promoted %d → plasmid, demoted %d → other",
-                _n_xgb_promoted,
+                "Marker XGBoost: demoted %d existing plasmid calls → other",
                 _n_xgb_demoted,
             )
             # Rebuild plasmid_records after XGBoost rescoring

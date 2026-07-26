@@ -241,7 +241,6 @@ class Prediction:
                         "mlp_only"              — no XGBoost used.
                         "xgb_blend"             — MLP + XGBoost soft blend.
                         "conjugative_override"  — hard override (relaxase + MPF).
-                        "plsdb_nt_override"     — PLSDB nucleotide hard override (minimap2 asm5).
                         "replicon_boost"         — rep.dna.fas replicon detected (minimap2/BLASTN).
                         (hallmark_boost, plsdb_prot_boost, marker_threshold_boost
                         removed 2026-07-21 — proved functionally dead under

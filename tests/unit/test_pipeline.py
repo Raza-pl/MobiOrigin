@@ -91,6 +91,7 @@ def _mock_pipeline(
     skip_mobility: bool = False,
     plasmid_db_hits: dict | None = None,
     require_hallmarks: bool = False,
+    enable_marker_fusion: bool = False,
 ) -> PipelineResult:
     """Run run_pipeline() with all external I/O mocked."""
     fasta = tmp_path / "contigs.fasta"
@@ -138,7 +139,71 @@ def _mock_pipeline(
             skip_mobility=skip_mobility,
             plasmid_db_dir=plasmid_db_dir,
             require_hallmarks=require_hallmarks,
+            enable_marker_fusion=enable_marker_fusion,
         )
+
+
+def test_marker_fusion_is_disabled_by_default(tmp_path: Path) -> None:
+    marker_path = tmp_path / "marker_xgb.json"
+    marker_path.write_text("{}")
+
+    with (
+        patch(
+            "plasflow2.pipeline.resolve_marker_model_path",
+            return_value=marker_path,
+        ),
+        patch("plasflow2.pipeline.MarkerClassifier.load") as marker_load,
+    ):
+        _mock_pipeline(
+            tmp_path,
+            fasta_records=[_record("p1")],
+            predictions=[_prediction("p1", "plasmid")],
+        )
+
+    marker_load.assert_not_called()
+
+
+def test_explicit_marker_fusion_requires_native_model(tmp_path: Path) -> None:
+    with patch(
+        "plasflow2.pipeline.resolve_marker_model_path",
+        return_value=None,
+    ):
+        with pytest.raises(
+            FileNotFoundError,
+            match="Experimental marker fusion was requested",
+        ):
+            _mock_pipeline(
+                tmp_path,
+                fasta_records=[_record("p1")],
+                predictions=[_prediction("p1", "plasmid")],
+                enable_marker_fusion=True,
+            )
+
+
+def test_explicit_marker_fusion_requires_xgboost(tmp_path: Path) -> None:
+    marker_path = tmp_path / "marker_xgb.json"
+    marker_path.write_text("{}")
+
+    with (
+        patch(
+            "plasflow2.pipeline.resolve_marker_model_path",
+            return_value=marker_path,
+        ),
+        patch(
+            "plasflow2.pipeline.marker_classifier_available",
+            return_value=False,
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="XGBoost is unavailable",
+        ):
+            _mock_pipeline(
+                tmp_path,
+                fasta_records=[_record("p1")],
+                predictions=[_prediction("p1", "plasmid")],
+                enable_marker_fusion=True,
+            )
 
 
 # ---------------------------------------------------------------------------

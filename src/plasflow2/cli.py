@@ -163,6 +163,24 @@ def _resolve_classification_profile(
     return str(resolved_sketch), threshold
 
 
+def _resolve_explicit_marker_model(
+    marker_model_path: str | None,
+    no_marker_model: bool,
+) -> str | None:
+    """Resolve marker fusion only when explicitly requested by the user."""
+    if no_marker_model or marker_model_path is None:
+        return None
+
+    resolved = resolve_marker_model_path(Path(marker_model_path))
+    if resolved is None:
+        raise click.BadParameter(
+            "No native XGBoost JSON/UBJ marker model was found. "
+            "Legacy pickle models are unsupported.",
+            param_hint="--marker-model",
+        )
+    return str(resolved)
+
+
 def _resolve_model(model_path: str | None) -> Path:
     if model_path:
         p = Path(model_path)
@@ -984,6 +1002,16 @@ def main(ctx: click.Context, verbose: bool) -> None:
     ),
 )
 @click.option(
+    "--experimental-marker-fusion",
+    is_flag=True,
+    default=False,
+    help=(
+        "Enable the experimental post-annotation marker-XGBoost stage. "
+        "Disabled by default because candidate-conditioned training/runtime "
+        "parity and independent ablation have not yet been demonstrated."
+    ),
+)
+@click.option(
     "--widen-candidates",
     "widen_candidates",
     is_flag=True,
@@ -1162,6 +1190,7 @@ def run(
     plasmid_db_timeout: int,
     lenient: bool,
     require_hallmarks: bool,
+    experimental_marker_fusion: bool,
     widen_candidates: bool,
 ) -> None:
     """Run the full pipeline: classify contigs, annotate plasmids, score AMR risk, write reports.
@@ -1342,6 +1371,7 @@ def run(
         skip_genomad=skip_genomad,
         lenient=lenient,
         require_hallmarks=require_hallmarks,
+        enable_marker_fusion=experimental_marker_fusion,
         widen_candidates=widen_candidates,
     )
 
@@ -1494,8 +1524,8 @@ def run(
     type=click.Path(exists=True),
     help=(
         "Pre-computed annotation TSV with biological marker features. "
-        "Enables XGBoost stage-2 blending, adding conjugation proteins, replicon type, "
-        "and coding density on top of k-mer scores. "
+        "Used by experimental XGBoost marker fusion only when --marker-model "
+        "is also supplied. Otherwise annotations remain advisory. "
         "Generate by running 'plasflow2 run' and providing the work/arg_annotation output."
     ),
 )
@@ -1504,7 +1534,11 @@ def run(
     "marker_model_path",
     default=None,
     type=click.Path(),
-    help="XGBoost stage-2 model (.pkl). Auto-detected from data/models/marker_xgb.pkl.",
+    help=(
+        "Experimental XGBoost stage-2 model in native JSON/UBJ format. "
+        "Marker fusion is disabled by default and is enabled only when this "
+        "option is supplied explicitly."
+    ),
 )
 @click.option(
     "--threads",
@@ -1517,7 +1551,10 @@ def run(
     "no_marker_model",
     is_flag=True,
     default=False,
-    help="Force MLP-only mode — disable XGBoost stage-2 even if marker_xgb.pkl is present.",
+    help=(
+        "Backward-compatible explicit MLP-only switch. Marker fusion is already "
+        "disabled by default unless --marker-model is supplied."
+    ),
 )
 @click.option(
     "--profile",
@@ -1601,15 +1638,11 @@ def classify(
             f"(plasmid_threshold={plasmid_threshold:.2f}, base containment=0.002)"
         )
 
-    # Resolve marker model (auto-detect unless explicitly disabled)
-    resolved_marker: str | None = None
-    if not no_marker_model:
-        if marker_model_path:
-            resolved_marker = marker_model_path
-        elif resolve_marker_model_path(_DEFAULT_MARKER_MODEL) is not None:
-            resolved_marker = str(resolve_marker_model_path(_DEFAULT_MARKER_MODEL))
-        elif resolve_marker_model_path(_DOCKER_MARKER_MODEL) is not None:
-            resolved_marker = str(resolve_marker_model_path(_DOCKER_MARKER_MODEL))
+    # Learned marker fusion is experimental and must be explicitly requested.
+    resolved_marker = _resolve_explicit_marker_model(
+        marker_model_path,
+        no_marker_model,
+    )
 
     if resolved_marker:
         click.echo(f"Stage-2 marker XGBoost: {resolved_marker}")

@@ -268,7 +268,10 @@ def _page_upload() -> None:
         skip_genomad = col3.checkbox(
             "Skip geNomad",
             value=False,
-            help="Skip geNomad SPM features. Faster; reduces marker XGBoost accuracy.",
+            help=(
+                "Skip geNomad gene-marker analysis. Faster, but reduces "
+                "biological marker annotation and supporting evidence."
+            ),
         )
         skip_plasmid_db = col4.checkbox(
             "Skip PLSDB search",
