@@ -167,12 +167,34 @@ THRESHOLD_POLICIES: Mapping[str, ThresholdPolicy] = MappingProxyType(
 )
 
 
+DEFAULT_PROFILE_POLICY_IDS: Mapping[str, str] = MappingProxyType(
+    {
+        "sequence-only": SEQUENCE_ONLY_POLICY_ID,
+        "balanced": BALANCED_POLICY_ID,
+        "evidence-assisted": EVIDENCE_ASSISTED_POLICY_ID,
+        "conservative": CONSERVATIVE_POLICY_ID,
+    }
+)
+
+
 def get_threshold_policy(policy_id: str) -> ThresholdPolicy:
     """Return a known immutable threshold policy."""
     try:
         return THRESHOLD_POLICIES[policy_id]
     except KeyError as error:
         raise ThresholdPolicyError(f"Unknown threshold policy ID: {policy_id!r}.") from error
+
+
+def default_threshold_policy_for_profile(
+    profile: str,
+) -> ThresholdPolicy:
+    """Return the canonical policy for an explicitly allowed custom model."""
+    try:
+        policy_id = DEFAULT_PROFILE_POLICY_IDS[profile]
+    except KeyError as error:
+        raise ThresholdPolicyError(f"Unsupported classification profile: {profile!r}.") from error
+
+    return get_threshold_policy(policy_id)
 
 
 def validate_profile_threshold_policy(

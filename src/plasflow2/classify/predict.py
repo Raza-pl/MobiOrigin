@@ -57,6 +57,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from plasflow2.classify.features import extract_features
+from plasflow2.classify.model_contract import (
+    ModelContract,
+    validate_model_profile_pair,
+)
+from plasflow2.classify.threshold_policy import (
+    ThresholdPolicy,
+    ThresholdPolicyError,
+    default_threshold_policy_for_profile,
+    validate_profile_threshold_policy,
+)
 from plasflow2.utils.device import IDX_TO_CLASS, get_device
 
 logger = logging.getLogger(__name__)
@@ -395,6 +405,7 @@ def _assign_label(
     plasmid_threshold: float | None,
     threshold: float | None,
     argmax_fallback: bool,
+    threshold_policy: ThresholdPolicy | None = None,
 ) -> tuple[str, float]:
     """Return (label, confidence) from scores + length-aware thresholds.
 
@@ -428,14 +439,22 @@ def _assign_label(
     best_class = max(scores, key=scores.__getitem__)
     confidence = float(scores[best_class])
 
-    plas_t, phage_t, chr_t = _get_length_thresholds(seq_len)
+    if threshold_policy is None:
+        plas_t, phage_t, chr_t = _get_length_thresholds(seq_len)
+    else:
+        policy_tier = threshold_policy.thresholds_for_length(seq_len)
+        plas_t = policy_tier.plasmid
+        phage_t = policy_tier.phage
+        chr_t = policy_tier.chromosome
+
     if plasmid_threshold is not None:
         plas_t = plasmid_threshold
-    elif seq_len < 5_000:
+    elif threshold_policy is None and seq_len < 5_000:
         plas_t = max(plas_t, _LEGACY_DEFAULT_SHORT_PLASMID_FLOOR)
+
     if threshold is not None:
         chr_t = threshold
-    elif seq_len < 5_000:
+    elif threshold_policy is None and seq_len < 5_000:
         chr_t = min(chr_t, _LEGACY_DEFAULT_SHORT_CHR_CEILING)
 
     if best_class == "plasmid":
@@ -497,6 +516,68 @@ def _mlp_scores_chunked(
     return all_raw_scores
 
 
+def _resolve_prediction_policy(
+    model_path: Path | str,
+    profile: str,
+    *,
+    allow_unverified_custom_model: bool,
+) -> tuple[ModelContract | None, ThresholdPolicy]:
+    """Verify the model/profile pairing and resolve its immutable policy."""
+    contract = validate_model_profile_pair(
+        model_path,
+        profile,
+        allow_unverified_custom_model=allow_unverified_custom_model,
+    )
+
+    if contract is None:
+        return None, default_threshold_policy_for_profile(profile)
+
+    policy = validate_profile_threshold_policy(
+        profile,
+        contract.threshold_policy_for(profile),
+    )
+    return contract, policy
+
+
+def _validate_prediction_policy_options(
+    policy: ThresholdPolicy,
+    *,
+    threshold: float | None,
+    plasmid_threshold: float | None,
+    argmax_fallback: bool,
+    marker_model_path: Path | str | None,
+    compass_sketch_path: Path | str | None,
+    apply_prior: bool | None,
+) -> bool:
+    """Reject runtime options that violate a frozen threshold policy."""
+    if not policy.allow_threshold_overrides and (
+        threshold is not None or plasmid_threshold is not None
+    ):
+        raise ThresholdPolicyError(f"Profile {policy.profile!r} forbids threshold overrides.")
+
+    if policy.requires_compass and compass_sketch_path is None:
+        raise ThresholdPolicyError(f"Profile {policy.profile!r} requires a COMPASS sketch.")
+
+    if not policy.allow_compass and compass_sketch_path is not None:
+        raise ThresholdPolicyError(f"Profile {policy.profile!r} forbids COMPASS post-processing.")
+
+    if not policy.allow_marker_fusion and marker_model_path is not None:
+        raise ThresholdPolicyError(f"Profile {policy.profile!r} forbids marker-model fusion.")
+
+    if not policy.allow_argmax_fallback and argmax_fallback:
+        raise ThresholdPolicyError(f"Profile {policy.profile!r} forbids argmax fallback.")
+
+    if apply_prior is None:
+        return policy.apply_prior_correction
+
+    if not policy.allow_threshold_overrides and apply_prior != policy.apply_prior_correction:
+        raise ThresholdPolicyError(
+            f"Profile {policy.profile!r} requires " f"apply_prior={policy.apply_prior_correction}."
+        )
+
+    return apply_prior
+
+
 def predict(
     sequences: list[str],
     sequence_ids: list[str],
@@ -506,7 +587,7 @@ def predict(
     batch_size: int = 512,
     argmax_fallback: bool = False,
     source_context: str = "unspecified",
-    apply_prior: bool = True,
+    apply_prior: bool | None = None,
     # --- Marker XGBoost (second stage) ---
     marker_model_path: Path | str | None = None,
     use_pyrodigal: bool = True,
@@ -517,6 +598,9 @@ def predict(
     # --- COMPASS containment filter (post-processing) ---
     compass_sketch_path: Path | str | None = None,
     compass_threshold: float = 0.002,
+    # --- Verified model/profile contract ---
+    profile: str = "sequence-only",
+    allow_unverified_custom_model: bool = False,
 ) -> list[Prediction]:
     """Classify sequences using the 3-class MLP (plasmid / chromosome / phage).
 
@@ -581,6 +665,30 @@ def predict(
     import torch.nn as nn
 
     from plasflow2.classify.model import load_model
+
+    model_contract, threshold_policy = _resolve_prediction_policy(
+        model_path,
+        profile,
+        allow_unverified_custom_model=allow_unverified_custom_model,
+    )
+    effective_apply_prior = _validate_prediction_policy_options(
+        threshold_policy,
+        threshold=threshold,
+        plasmid_threshold=plasmid_threshold,
+        argmax_fallback=argmax_fallback,
+        marker_model_path=marker_model_path,
+        compass_sketch_path=compass_sketch_path,
+        apply_prior=apply_prior,
+    )
+
+    logger.info(
+        "Classification contract: profile=%s policy=%s model=%s verified=%s prior=%s",
+        profile,
+        threshold_policy.policy_id,
+        model_contract.model_id if model_contract is not None else Path(model_path).name,
+        model_contract is not None,
+        effective_apply_prior,
+    )
 
     device = get_device()
     model = load_model(model_path, device=device)
@@ -653,7 +761,7 @@ def predict(
     # Apply prior correction
     all_scores: list[dict[str, float]] = []
     for raw_scores in all_raw_scores:
-        if apply_prior and source_context != "unspecified":
+        if effective_apply_prior and source_context != "unspecified":
             all_scores.append(apply_prior_correction(raw_scores, source_context))
         else:
             all_scores.append(raw_scores)
@@ -1110,7 +1218,12 @@ def predict(
     for i, (sid, scores) in enumerate(zip(sequence_ids, all_scores)):
         seq_len = len(sequences[i])
         label, confidence = _assign_label(
-            scores, seq_len, plasmid_threshold, threshold, argmax_fallback
+            scores,
+            seq_len,
+            plasmid_threshold,
+            threshold,
+            argmax_fallback,
+            threshold_policy=threshold_policy,
         )
         results.append(
             Prediction(
