@@ -46,7 +46,12 @@ class ThresholdPolicy:
     profile: str
     tiers: tuple[ThresholdTier, ...]
     requires_compass: bool = False
+    allow_compass: bool = True
     allow_threshold_overrides: bool = True
+    apply_prior_correction: bool = True
+    allow_marker_fusion: bool = True
+    allow_argmax_fallback: bool = True
+    allow_postclassification_label_changes: bool = True
 
     def __post_init__(self) -> None:
         if not self.policy_id:
@@ -102,8 +107,10 @@ SEQUENCE_ONLY_POLICY = ThresholdPolicy(
     policy_id=SEQUENCE_ONLY_POLICY_ID,
     profile="sequence-only",
     tiers=(
-        _tier(2_000, 0.862, 0.75, 0.855),
-        _tier(4_999, 0.864, 0.68, 0.850),
+        # Effective shipped behavior includes the historical <5 kb
+        # floors applied by _assign_label(), not merely the raw tier table.
+        _tier(2_000, 0.950, 0.70, 0.855),
+        _tier(4_999, 0.950, 0.68, 0.850),
         _tier(9_999, 0.859, 0.65, 0.845),
         _tier(19_999, 0.857, 0.63, 0.835),
         _tier(None, 0.809, 0.62, 0.750),
@@ -114,7 +121,7 @@ BALANCED_POLICY = ThresholdPolicy(
     policy_id=BALANCED_POLICY_ID,
     profile="balanced",
     tiers=(
-        _tier(2_000, 0.800, 0.75, 0.855),
+        _tier(2_000, 0.800, 0.70, 0.855),
         _tier(4_999, 0.800, 0.68, 0.850),
         _tier(9_999, 0.800, 0.65, 0.845),
         _tier(19_999, 0.800, 0.63, 0.835),
@@ -139,7 +146,12 @@ CONSERVATIVE_POLICY = ThresholdPolicy(
         _tier(19_999, 0.945, 0.350, 0.905),
         _tier(None, 0.945, 0.365, 0.555),
     ),
+    allow_compass=False,
     allow_threshold_overrides=False,
+    apply_prior_correction=False,
+    allow_marker_fusion=False,
+    allow_argmax_fallback=False,
+    allow_postclassification_label_changes=False,
 )
 
 THRESHOLD_POLICIES: Mapping[str, ThresholdPolicy] = MappingProxyType(

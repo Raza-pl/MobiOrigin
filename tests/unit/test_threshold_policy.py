@@ -1,7 +1,5 @@
-import math
-
 import pytest
-from plasflow2.classify.predict import LENGTH_THRESHOLD_TIERS
+from plasflow2.classify.predict import _assign_label
 from plasflow2.classify.threshold_policy import (
     BALANCED_POLICY,
     CONSERVATIVE_POLICY,
@@ -14,27 +12,66 @@ from plasflow2.classify.threshold_policy import (
 )
 
 
-def test_sequence_policy_matches_existing_runtime_thresholds() -> None:
-    expected = tuple(
-        (
-            None if math.isinf(maximum) else int(maximum),
-            plasmid,
-            chromosome,
-            phage,
-        )
-        for maximum, plasmid, phage, chromosome in LENGTH_THRESHOLD_TIERS
-    )
-    observed = tuple(
-        (
-            tier.max_length_bp,
-            tier.plasmid,
-            tier.chromosome,
-            tier.phage,
-        )
-        for tier in SEQUENCE_ONLY_POLICY.tiers
-    )
+@pytest.mark.parametrize(
+    ("length_bp", "expected"),
+    [
+        (2_000, (0.950, 0.700, 0.855)),
+        (2_001, (0.950, 0.680, 0.850)),
+        (4_999, (0.950, 0.680, 0.850)),
+        (5_000, (0.859, 0.650, 0.845)),
+        (10_000, (0.857, 0.630, 0.835)),
+        (20_000, (0.809, 0.620, 0.750)),
+    ],
+)
+def test_sequence_policy_records_effective_shipped_thresholds(
+    length_bp: int,
+    expected: tuple[float, float, float],
+) -> None:
+    tier = SEQUENCE_ONLY_POLICY.thresholds_for_length(length_bp)
 
-    assert observed == expected
+    assert (
+        tier.plasmid,
+        tier.chromosome,
+        tier.phage,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "length_bp",
+    [2_000, 2_001, 4_999, 5_000, 10_000, 20_000],
+)
+@pytest.mark.parametrize(
+    "class_name",
+    ["plasmid", "chromosome", "phage"],
+)
+def test_sequence_policy_matches_legacy_label_assignment(
+    length_bp: int,
+    class_name: str,
+) -> None:
+    tier = SEQUENCE_ONLY_POLICY.thresholds_for_length(length_bp)
+    threshold = float(getattr(tier, class_name))
+    remainder = (1.0 - threshold) / 2.0
+    scores = {name: remainder for name in ("plasmid", "chromosome", "phage")}
+    scores[class_name] = threshold
+
+    accepted, _ = _assign_label(
+        scores,
+        length_bp,
+        None,
+        None,
+        False,
+    )
+    assert accepted == class_name
+
+    scores[class_name] = threshold - 0.000001
+    rejected, _ = _assign_label(
+        scores,
+        length_bp,
+        None,
+        None,
+        False,
+    )
+    assert rejected == "unclassified"
 
 
 def test_balanced_policy_changes_only_plasmid_thresholds() -> None:
@@ -81,9 +118,14 @@ def test_conservative_policy_exact_boundaries(
     ) == expected
 
 
-def test_conservative_policy_is_locked_against_overrides() -> None:
-    assert CONSERVATIVE_POLICY.allow_threshold_overrides is False
+def test_conservative_policy_locks_confirmatory_semantics() -> None:
     assert CONSERVATIVE_POLICY.requires_compass is False
+    assert CONSERVATIVE_POLICY.allow_compass is False
+    assert CONSERVATIVE_POLICY.allow_threshold_overrides is False
+    assert CONSERVATIVE_POLICY.apply_prior_correction is False
+    assert CONSERVATIVE_POLICY.allow_marker_fusion is False
+    assert CONSERVATIVE_POLICY.allow_argmax_fallback is False
+    assert CONSERVATIVE_POLICY.allow_postclassification_label_changes is False
 
 
 def test_get_threshold_policy_returns_frozen_candidate_policy() -> None:
