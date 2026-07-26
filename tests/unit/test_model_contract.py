@@ -20,7 +20,7 @@ def _sha256(path: Path) -> str:
 def _write_model_and_manifest(
     tmp_path: Path,
     *,
-    compatible_profiles: list[str] | None = None,
+    profile_threshold_policies: dict[str, str] | None = None,
 ) -> tuple[Path, Path]:
     model = tmp_path / "model.pt"
     model.write_bytes(b"safe-test-model")
@@ -33,8 +33,11 @@ def _write_model_and_manifest(
                 "artifact_type": MODEL_ARTIFACT_TYPE,
                 "model_id": "test-model",
                 "model_sha256": _sha256(model),
-                "compatible_profiles": compatible_profiles or ["sequence-only", "balanced"],
-                "threshold_policy_id": "test-thresholds-v1",
+                "profile_threshold_policies": profile_threshold_policies
+                or {
+                    "sequence-only": "test-tiered-v1",
+                    "balanced": "test-balanced-v1",
+                },
                 "calibration_id": "test-calibration-v1",
                 "input_dim": 9557,
                 "num_classes": 3,
@@ -53,7 +56,7 @@ def test_model_manifest_path_is_unambiguous(
     assert model_manifest_path(model) == Path(f"{model}.manifest.json")
 
 
-def test_load_model_contract_verifies_identity(
+def test_load_model_contract_verifies_identity_and_policies(
     tmp_path: Path,
 ) -> None:
     model, manifest = _write_model_and_manifest(tmp_path)
@@ -68,6 +71,8 @@ def test_load_model_contract_verifies_identity(
         "sequence-only",
         "balanced",
     )
+    assert contract.threshold_policy_for("sequence-only") == "test-tiered-v1"
+    assert contract.threshold_policy_for("balanced") == "test-balanced-v1"
 
 
 def test_tampered_model_is_rejected(
@@ -88,7 +93,9 @@ def test_incompatible_profile_is_rejected(
 ) -> None:
     model, _ = _write_model_and_manifest(
         tmp_path,
-        compatible_profiles=["conservative"],
+        profile_threshold_policies={
+            "conservative": "candidate-conservative-v1",
+        },
     )
 
     with pytest.raises(
@@ -99,6 +106,64 @@ def test_incompatible_profile_is_rejected(
             model,
             "balanced",
         )
+
+
+def test_threshold_policy_lookup_rejects_undeclared_profile(
+    tmp_path: Path,
+) -> None:
+    model, _ = _write_model_and_manifest(tmp_path)
+    contract = load_model_contract(model)
+
+    with pytest.raises(
+        ModelContractError,
+        match="no threshold policy",
+    ):
+        contract.threshold_policy_for("evidence-assisted")
+
+
+def test_missing_profile_policy_map_is_rejected(
+    tmp_path: Path,
+) -> None:
+    model, manifest = _write_model_and_manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload.pop("profile_threshold_policies")
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(
+        ModelContractError,
+        match="profile_threshold_policies",
+    ):
+        load_model_contract(model)
+
+
+def test_blank_threshold_policy_is_rejected(
+    tmp_path: Path,
+) -> None:
+    model, manifest = _write_model_and_manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["profile_threshold_policies"] = {"balanced": "   "}
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(
+        ModelContractError,
+        match="threshold-policy ID",
+    ):
+        load_model_contract(model)
+
+
+def test_unsupported_declared_profile_is_rejected(
+    tmp_path: Path,
+) -> None:
+    model, manifest = _write_model_and_manifest(tmp_path)
+    payload = json.loads(manifest.read_text())
+    payload["profile_threshold_policies"] = {"unknown-profile": "policy-v1"}
+    manifest.write_text(json.dumps(payload))
+
+    with pytest.raises(
+        ModelContractError,
+        match="unsupported profile",
+    ):
+        load_model_contract(model)
 
 
 def test_missing_manifest_fails_closed(

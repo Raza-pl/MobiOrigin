@@ -39,13 +39,27 @@ class ModelContract:
     artifact_type: str
     model_id: str
     model_sha256: str
-    compatible_profiles: tuple[str, ...]
-    threshold_policy_id: str
+    profile_threshold_policies: tuple[tuple[str, str], ...]
     calibration_id: str
     input_dim: int
     num_classes: int
     model_path: Path
     manifest_path: Path
+
+    @property
+    def compatible_profiles(self) -> tuple[str, ...]:
+        """Return profiles explicitly paired with this model."""
+        return tuple(profile for profile, _ in self.profile_threshold_policies)
+
+    def threshold_policy_for(self, profile: str) -> str:
+        """Return the frozen threshold-policy ID for one profile."""
+        for declared_profile, policy_id in self.profile_threshold_policies:
+            if declared_profile == profile:
+                return policy_id
+
+        raise ModelContractError(
+            f"Model {self.model_id!r} has no threshold policy " f"for profile {profile!r}."
+        )
 
 
 def model_manifest_path(model_path: Path | str) -> Path:
@@ -134,26 +148,34 @@ def _parse_manifest(
             "exactly 64 lowercase hexadecimal characters."
         )
 
-    raw_profiles = payload.get("compatible_profiles")
+    raw_profile_policies = payload.get("profile_threshold_policies")
 
-    if (
-        not isinstance(raw_profiles, list)
-        or not raw_profiles
-        or not all(isinstance(profile, str) and profile for profile in raw_profiles)
-    ):
+    if not isinstance(raw_profile_policies, dict) or not raw_profile_policies:
         raise ModelContractError(
-            "Model manifest field 'compatible_profiles' must be "
-            "a non-empty list of profile names."
+            "Model manifest field 'profile_threshold_policies' "
+            "must be a non-empty object mapping each profile to "
+            "one threshold-policy ID."
         )
 
-    compatible_profiles = tuple(dict.fromkeys(raw_profiles))
+    profile_threshold_policies: list[tuple[str, str]] = []
 
-    unsupported = set(compatible_profiles) - SUPPORTED_CLASSIFICATION_PROFILES
+    for profile, policy_id in raw_profile_policies.items():
+        if not isinstance(profile, str) or not profile:
+            raise ModelContractError(
+                "Every profile_threshold_policies key must be " "a non-empty profile name."
+            )
 
-    if unsupported:
-        raise ModelContractError(
-            "Model manifest declares unsupported profiles: " + ", ".join(sorted(unsupported))
-        )
+        if profile not in SUPPORTED_CLASSIFICATION_PROFILES:
+            raise ModelContractError(
+                "Model manifest declares unsupported profile: " f"{profile!r}."
+            )
+
+        if not isinstance(policy_id, str) or not policy_id.strip():
+            raise ModelContractError(
+                "Every profile_threshold_policies value must be " "a non-empty threshold-policy ID."
+            )
+
+        profile_threshold_policies.append((profile, policy_id.strip()))
 
     num_classes = _required_positive_int(
         payload,
@@ -168,11 +190,7 @@ def _parse_manifest(
         artifact_type=artifact_type,
         model_id=_required_text(payload, "model_id"),
         model_sha256=model_sha256,
-        compatible_profiles=compatible_profiles,
-        threshold_policy_id=_required_text(
-            payload,
-            "threshold_policy_id",
-        ),
+        profile_threshold_policies=tuple(profile_threshold_policies),
         calibration_id=_required_text(
             payload,
             "calibration_id",
