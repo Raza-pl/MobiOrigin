@@ -7,11 +7,12 @@ def test_sequence_only_profile_preserves_settings():
     assert cli._resolve_classification_profile("sequence-only", None, None) == (None, None)
 
 
-def test_balanced_profile_sets_threshold_without_compass():
-    assert cli._resolve_classification_profile("balanced", None, None) == (
+def test_balanced_profile_defers_threshold_to_policy_registry():
+    assert cli._resolve_classification_profile(
+        "balanced",
         None,
-        0.80,
-    )
+        None,
+    ) == (None, None)
 
 
 def test_balanced_profile_respects_explicit_settings():
@@ -30,7 +31,7 @@ def test_evidence_assisted_profile_autodetects_sketch(tmp_path, monkeypatch):
     resolved, threshold = cli._resolve_classification_profile("evidence-assisted", None, None)
 
     assert resolved == str(sketch)
-    assert threshold == 0.80
+    assert threshold is None
 
 
 def test_evidence_assisted_profile_respects_explicit_threshold(tmp_path):
@@ -51,6 +52,38 @@ def test_evidence_assisted_profile_requires_sketch(tmp_path, monkeypatch):
 
     with pytest.raises(click.ClickException):
         cli._resolve_classification_profile("evidence-assisted", None, None)
+
+
+def test_conservative_profile_has_no_runtime_overrides():
+    assert cli._resolve_classification_profile(
+        "conservative",
+        None,
+        None,
+    ) == (None, None)
+
+
+def test_conservative_profile_rejects_compass():
+    with pytest.raises(
+        click.BadParameter,
+        match="forbids COMPASS",
+    ):
+        cli._resolve_classification_profile(
+            "conservative",
+            "custom.npy",
+            None,
+        )
+
+
+def test_conservative_profile_rejects_plasmid_threshold():
+    with pytest.raises(
+        click.BadParameter,
+        match="forbids threshold overrides",
+    ):
+        cli._resolve_classification_profile(
+            "conservative",
+            None,
+            0.95,
+        )
 
 
 def test_marker_fusion_requires_explicit_model(tmp_path):

@@ -365,6 +365,94 @@ def test_classify_tsv_has_correct_columns(tmp_path: Path) -> None:
     ]
 
 
+def test_classify_passes_profile_contract_options(
+    tmp_path: Path,
+) -> None:
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+    model = tmp_path / "candidate.pt"
+    model.write_text("mock")
+    output = tmp_path / "predictions.tsv"
+
+    from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
+
+    runner = CliRunner()
+    with (
+        patch(
+            "plasflow2.cli.load_fasta",
+            return_value=[
+                SeqRecord(
+                    Seq(_SEQ),
+                    id="p1",
+                    description="",
+                )
+            ],
+        ),
+        patch(
+            "plasflow2.cli.predict",
+            return_value=[_prediction("p1", "plasmid")],
+        ) as mock_predict,
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "classify",
+                "--input",
+                str(fasta),
+                "--output",
+                str(output),
+                "--model",
+                str(model),
+                "--profile",
+                "conservative",
+                "--allow-unverified-custom-model",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    kwargs = mock_predict.call_args.kwargs
+    assert kwargs["profile"] == "conservative"
+    assert kwargs["allow_unverified_custom_model"] is True
+    assert kwargs["threshold"] is None
+    assert kwargs["plasmid_threshold"] is None
+    assert kwargs["marker_model_path"] is None
+    assert kwargs["compass_sketch_path"] is None
+
+
+def test_classify_rejects_conservative_threshold_before_prediction(
+    tmp_path: Path,
+) -> None:
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+    model = tmp_path / "candidate.pt"
+    model.write_text("mock")
+    output = tmp_path / "predictions.tsv"
+
+    runner = CliRunner()
+    with patch("plasflow2.cli.predict") as mock_predict:
+        result = runner.invoke(
+            main,
+            [
+                "classify",
+                "--input",
+                str(fasta),
+                "--output",
+                str(output),
+                "--model",
+                str(model),
+                "--profile",
+                "conservative",
+                "--threshold",
+                "0.50",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert "forbids threshold overrides" in result.output
+    mock_predict.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # plasflow2 annotate
 # ---------------------------------------------------------------------------

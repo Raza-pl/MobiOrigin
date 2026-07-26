@@ -48,11 +48,12 @@ from plasflow2 import __version__  # noqa: E402
 from plasflow2.annotate.args import annotate_contigs  # noqa: E402
 from plasflow2.annotate.mobility import annotate_mobility  # noqa: E402
 from plasflow2.classify.marker_classifier import resolve_marker_model_path  # noqa: E402
+from plasflow2.classify.model_contract import ModelContractError  # noqa: E402
 from plasflow2.classify.predict import (  # noqa: E402
-    DEFAULT_PLASMID_THRESHOLD,
     DEFAULT_THRESHOLD,
     predict,
 )
+from plasflow2.classify.threshold_policy import ThresholdPolicyError  # noqa: E402
 from plasflow2.output.genes_tsv import write_genes_tsv  # noqa: E402
 from plasflow2.pipeline import PipelineResult, run_pipeline  # noqa: E402
 from plasflow2.report.generator import (  # noqa: E402  # noqa: E402
@@ -131,13 +132,22 @@ def _resolve_classification_profile(
     compass_sketch: str | None,
     plasmid_threshold: float | None,
 ) -> tuple[str | None, float | None]:
-    """Resolve sequence-only, balanced, or evidence-assisted settings."""
-    if profile == "sequence-only":
+    """Resolve profile-specific evidence assets and explicit overrides."""
+    if profile in {"sequence-only", "balanced"}:
         return compass_sketch, plasmid_threshold
 
-    if profile == "balanced":
-        threshold = DEFAULT_PLASMID_THRESHOLD if plasmid_threshold is None else plasmid_threshold
-        return compass_sketch, threshold
+    if profile == "conservative":
+        if compass_sketch is not None:
+            raise click.BadParameter(
+                "The conservative profile forbids COMPASS post-processing.",
+                param_hint="--compass-sketch",
+            )
+        if plasmid_threshold is not None:
+            raise click.BadParameter(
+                "The conservative profile forbids threshold overrides.",
+                param_hint="--plasmid-threshold",
+            )
+        return None, None
 
     if profile != "evidence-assisted":
         raise click.BadParameter(f"Unknown classification profile: {profile}")
@@ -147,7 +157,10 @@ def _resolve_classification_profile(
         resolved_sketch = next(
             (
                 candidate
-                for candidate in (_DEFAULT_COMPASS_SKETCH, _DOCKER_COMPASS_SKETCH)
+                for candidate in (
+                    _DEFAULT_COMPASS_SKETCH,
+                    _DOCKER_COMPASS_SKETCH,
+                )
                 if candidate.exists()
             ),
             None,
@@ -156,11 +169,11 @@ def _resolve_classification_profile(
     if resolved_sketch is None or not resolved_sketch.exists():
         raise click.ClickException(
             "The evidence-assisted profile requires the COMPASS sketch. "
-            "Provide --compass-sketch or install sketch_compass_k21_s5m.npy."
+            "Provide --compass-sketch or install "
+            "sketch_compass_k21_s5m.npy."
         )
 
-    threshold = DEFAULT_PLASMID_THRESHOLD if plasmid_threshold is None else plasmid_threshold
-    return str(resolved_sketch), threshold
+    return str(resolved_sketch), plasmid_threshold
 
 
 def _resolve_explicit_marker_model(
@@ -1557,17 +1570,33 @@ def run(
     ),
 )
 @click.option(
+    "--allow-unverified-custom-model",
+    is_flag=True,
+    default=False,
+    help=(
+        "Allow a custom MLP model only when its .manifest.json sidecar is "
+        "missing. This never bypasses malformed metadata, checksum mismatches, "
+        "or declared profile incompatibility."
+    ),
+)
+@click.option(
     "--profile",
     type=click.Choice(
-        ["sequence-only", "balanced", "evidence-assisted"],
+        [
+            "sequence-only",
+            "balanced",
+            "evidence-assisted",
+            "conservative",
+        ],
         case_sensitive=False,
     ),
     default="sequence-only",
     show_default=True,
     help=(
-        "Classifier operating profile. balanced uses plasmid threshold 0.80 "
-        "without requiring COMPASS; evidence-assisted adds the calibrated "
-        "COMPASS filter for high-precision calls."
+        "Classifier operating profile. balanced uses the verified general "
+        "model with plasmid threshold 0.80; evidence-assisted adds COMPASS; "
+        "conservative requires a compatible confirmatory model and locks all "
+        "thresholds and post-classification mutations."
     ),
 )
 @click.option(
@@ -1605,6 +1634,7 @@ def classify(
     marker_model_path: str | None,
     threads: int,
     no_marker_model: bool,
+    allow_unverified_custom_model: bool,
     profile: str,
     compass_sketch: str | None,
     compass_threshold: float,
@@ -1631,11 +1661,24 @@ def classify(
         compass_sketch,
         plasmid_threshold,
     )
+
+    if profile == "conservative" and threshold is not None:
+        raise click.BadParameter(
+            "The conservative profile forbids threshold overrides.",
+            param_hint="--threshold",
+        )
+
+    if profile == "conservative" and marker_model_path is not None and not no_marker_model:
+        raise click.BadParameter(
+            "The conservative profile forbids marker-model fusion.",
+            param_hint="--marker-model",
+        )
+
     click.echo(f"Classifier profile: {profile}")
     if profile == "evidence-assisted":
         click.echo(
             f"COMPASS: {compass_sketch} "
-            f"(plasmid_threshold={plasmid_threshold:.2f}, base containment=0.002)"
+            "(balanced threshold policy + calibrated containment filter)"
         )
 
     # Learned marker fusion is experimental and must be explicitly requested.
@@ -1748,26 +1791,31 @@ def classify(
                         err=True,
                     )
 
-    predictions = predict(
-        [str(r.seq) for r in records],
-        [r.id for r in records],
-        resolved_model,
-        threshold=threshold,
-        plasmid_threshold=plasmid_threshold,
-        argmax_fallback=False,
-        marker_model_path=resolved_marker,
-        annotation_tsv=annotation_tsv,
-        use_pyrodigal=bool(resolved_marker),
-        # alpha_base=0.0: XGBoost only affects sequences WITH biological evidence.
-        # Zero-evidence sequences pass through with pure MLP score unchanged,
-        # preventing XGBoost from penalising non-mobilizable plasmids that lack
-        # a relaxase/replicon hit.
-        marker_alpha_base=0.0,
-        pre_computed_annotations=pre_computed_annotations,
-        precomputed_orf_data=_shared_orf_data,  # skip second pyrodigal call
-        compass_sketch_path=Path(compass_sketch) if compass_sketch else None,
-        compass_threshold=compass_threshold,
-    )
+    try:
+        predictions = predict(
+            [str(r.seq) for r in records],
+            [r.id for r in records],
+            resolved_model,
+            threshold=threshold,
+            plasmid_threshold=plasmid_threshold,
+            argmax_fallback=False,
+            marker_model_path=resolved_marker,
+            annotation_tsv=annotation_tsv,
+            use_pyrodigal=bool(resolved_marker),
+            # alpha_base=0.0: XGBoost only affects sequences WITH biological evidence.
+            # Zero-evidence sequences pass through with pure MLP score unchanged,
+            # preventing XGBoost from penalising non-mobilizable plasmids that lack
+            # a relaxase/replicon hit.
+            marker_alpha_base=0.0,
+            pre_computed_annotations=pre_computed_annotations,
+            precomputed_orf_data=_shared_orf_data,  # skip second pyrodigal call
+            compass_sketch_path=Path(compass_sketch) if compass_sketch else None,
+            compass_threshold=compass_threshold,
+            profile=profile,
+            allow_unverified_custom_model=allow_unverified_custom_model,
+        )
+    except (ModelContractError, ThresholdPolicyError) as error:
+        raise click.ClickException(str(error)) from error
 
     out_path = Path(output_tsv)
     _write_predictions_tsv_simple(predictions, out_path)
