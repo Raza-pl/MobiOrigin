@@ -16,6 +16,7 @@ from plasflow2.annotate.args import ARGHit
 from plasflow2.annotate.mobility import MobilityResult
 from plasflow2.annotate.plasmid_db import PlasmidDBHit
 from plasflow2.classify.predict import Prediction
+from plasflow2.classify.threshold_policy import ThresholdPolicyError
 from plasflow2.pipeline import ContigResult, PipelineResult, run_pipeline
 from plasflow2.risk.scorer import RiskScore
 
@@ -428,6 +429,43 @@ def test_no_marker_model_plsdb_hit_stays_plasmid_with_original_scores(
     final = next(p for p in result.all_predictions if p.sequence_id == "p1")
     assert final.label == "plasmid"
     assert final.scores == original_scores
+
+
+@pytest.mark.parametrize(
+    "forbidden_options",
+    [
+        {"confidence_threshold": 0.50},
+        {"plasmid_threshold": 0.80},
+        {"argmax_fallback": True},
+        {"lenient": True},
+        {"require_hallmarks": True},
+        {"enable_marker_fusion": True},
+        {"widen_candidates": True},
+        {"compass_sketch_path": "compass.npy"},
+    ],
+)
+def test_conservative_pipeline_rejects_label_mutations(
+    tmp_path: Path,
+    forbidden_options: dict[str, object],
+) -> None:
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+    model = tmp_path / "candidate.pt"
+    model.write_text("mock")
+
+    with pytest.raises(
+        ThresholdPolicyError,
+        match="forbids pipeline mutations",
+    ):
+        run_pipeline(
+            fasta_path=fasta,
+            model_path=model,
+            card_db=None,
+            aro_index=None,
+            work_dir=tmp_path / "work",
+            profile="conservative",
+            **forbidden_options,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -866,6 +866,52 @@ def main(ctx: click.Context, verbose: bool) -> None:
     ),
 )
 @click.option(
+    "--profile",
+    type=click.Choice(
+        [
+            "sequence-only",
+            "balanced",
+            "evidence-assisted",
+            "conservative",
+        ],
+        case_sensitive=False,
+    ),
+    default="sequence-only",
+    show_default=True,
+    help=(
+        "Verified classifier profile. balanced is recommended for general "
+        "classification; evidence-assisted requires COMPASS; conservative "
+        "requires a compatible confirmatory model and forbids label-changing "
+        "post-processing."
+    ),
+)
+@click.option(
+    "--allow-unverified-custom-model",
+    is_flag=True,
+    default=False,
+    help=(
+        "Allow a custom MLP model only when its .manifest.json sidecar is "
+        "missing. Malformed manifests, checksum mismatches, and declared "
+        "profile incompatibility are never bypassed."
+    ),
+)
+@click.option(
+    "--compass-sketch",
+    default=None,
+    type=click.Path(),
+    help=(
+        "COMPASS MinHash sketch for containment evidence. Required by the "
+        "evidence-assisted profile and forbidden by conservative."
+    ),
+)
+@click.option(
+    "--compass-threshold",
+    default=0.002,
+    type=float,
+    show_default=True,
+    help="Base COMPASS containment threshold.",
+)
+@click.option(
     "--card-db",
     default=None,
     type=click.Path(),
@@ -1176,6 +1222,10 @@ def run(
     input_fasta: str,
     output_dir: str,
     model_path: str | None,
+    profile: str,
+    allow_unverified_custom_model: bool,
+    compass_sketch: str | None,
+    compass_threshold: float,
     card_db: str | None,
     aro_index: str | None,
     threshold: float | None,
@@ -1251,6 +1301,40 @@ def run(
     out.mkdir(parents=True, exist_ok=True)
 
     resolved_model = _resolve_model(model_path)
+
+    compass_sketch, plasmid_threshold = _resolve_classification_profile(
+        profile,
+        compass_sketch,
+        plasmid_threshold,
+    )
+
+    if profile == "conservative":
+        forbidden_options = []
+        if threshold is not None:
+            forbidden_options.append("--threshold")
+        if min_confidence is not None:
+            forbidden_options.append("--min-confidence")
+        if lenient:
+            forbidden_options.append("--lenient")
+        if require_hallmarks:
+            forbidden_options.append("--require-hallmarks")
+        if experimental_marker_fusion:
+            forbidden_options.append("--experimental-marker-fusion")
+        if widen_candidates:
+            forbidden_options.append("--widen-candidates")
+
+        if forbidden_options:
+            raise click.UsageError(
+                "The conservative profile forbids label-changing options: "
+                + ", ".join(forbidden_options)
+            )
+
+    click.echo(f"Classifier profile: {profile}")
+    if profile == "evidence-assisted":
+        click.echo(
+            f"COMPASS: {compass_sketch} "
+            "(balanced threshold policy + calibrated containment filter)"
+        )
 
     # CARD: only error if the user explicitly passed a path that doesn't exist.
     # If not provided, auto-detect — and skip ARG annotation gracefully if absent.
@@ -1352,41 +1436,48 @@ def run(
             f"argmax label instead of 'unclassified'"
         )
 
-    pipeline_result = run_pipeline(
-        fasta_path=input_fasta,
-        model_path=resolved_model,
-        card_db=card_db_path,
-        aro_index=aro_index_path,
-        work_dir=out / "work",
-        source_context=context,
-        confidence_threshold=effective_threshold,
-        plasmid_threshold=effective_plasmid_threshold,
-        argmax_fallback=argmax_fallback,
-        min_contig_length=min_length,
-        threads=threads,
-        skip_mobility=skip_mobility,
-        taxonomy_db=taxonomy_db,
-        taxon_map_path=taxon_map,
-        skip_taxonomy=skip_taxonomy,
-        sarg_db=sarg_db,
-        amrprot_db=amrprot_db,
-        min_identity=min_identity,
-        vfdb=vfdb,
-        mge_db=mge_db,
-        plasmid_db_dir=plasmid_db_dir,
-        skip_plasmid_db=skip_plasmid_db,
-        plasmid_db_timeout=plasmid_db_timeout,
-        taxonomy_engine=taxonomy_engine,
-        kaiju_db=kaiju_db,
-        kaiju_nodes=kaiju_nodes,
-        kaiju_names=kaiju_names,
-        genomad_db_path=genomad_db if genomad_db else None,
-        skip_genomad=skip_genomad,
-        lenient=lenient,
-        require_hallmarks=require_hallmarks,
-        enable_marker_fusion=experimental_marker_fusion,
-        widen_candidates=widen_candidates,
-    )
+    try:
+        pipeline_result = run_pipeline(
+            fasta_path=input_fasta,
+            model_path=resolved_model,
+            card_db=card_db_path,
+            aro_index=aro_index_path,
+            work_dir=out / "work",
+            source_context=context,
+            confidence_threshold=effective_threshold,
+            plasmid_threshold=effective_plasmid_threshold,
+            argmax_fallback=argmax_fallback,
+            min_contig_length=min_length,
+            threads=threads,
+            skip_mobility=skip_mobility,
+            taxonomy_db=taxonomy_db,
+            taxon_map_path=taxon_map,
+            skip_taxonomy=skip_taxonomy,
+            sarg_db=sarg_db,
+            amrprot_db=amrprot_db,
+            min_identity=min_identity,
+            vfdb=vfdb,
+            mge_db=mge_db,
+            plasmid_db_dir=plasmid_db_dir,
+            skip_plasmid_db=skip_plasmid_db,
+            plasmid_db_timeout=plasmid_db_timeout,
+            taxonomy_engine=taxonomy_engine,
+            kaiju_db=kaiju_db,
+            kaiju_nodes=kaiju_nodes,
+            kaiju_names=kaiju_names,
+            genomad_db_path=genomad_db if genomad_db else None,
+            skip_genomad=skip_genomad,
+            lenient=lenient,
+            require_hallmarks=require_hallmarks,
+            enable_marker_fusion=experimental_marker_fusion,
+            widen_candidates=widen_candidates,
+            profile=profile,
+            allow_unverified_custom_model=allow_unverified_custom_model,
+            compass_sketch_path=(Path(compass_sketch) if compass_sketch else None),
+            compass_threshold=compass_threshold,
+        )
+    except (ModelContractError, ThresholdPolicyError) as error:
+        raise click.ClickException(str(error)) from error
 
     # --- Write comprehensive predictions TSV (all contigs, all annotations) ---
     preds_tsv = out / "all_predictions.tsv"

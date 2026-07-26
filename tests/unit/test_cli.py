@@ -155,6 +155,93 @@ def test_run_produces_outputs(tmp_path: Path) -> None:
     assert (out / "report_plasmid.html").exists()
 
 
+def test_run_passes_profile_contract_options(tmp_path: Path) -> None:
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+    model = tmp_path / "candidate.pt"
+    model.write_text("mock")
+    card_db = tmp_path / "card.dmnd"
+    card_db.write_text("mock")
+    aro_index = tmp_path / "aro_index.tsv"
+    aro_index.write_text("mock")
+    output = tmp_path / "output"
+
+    pipeline_result = _make_pipeline_result(tmp_path)
+    runner = CliRunner()
+
+    with (
+        patch(
+            "plasflow2.cli.run_pipeline",
+            return_value=pipeline_result,
+        ) as mock_pipeline,
+        patch("plasflow2.cli.load_fasta", return_value=[]),
+        patch("plasflow2.cli.write_fasta"),
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "run",
+                "--input",
+                str(fasta),
+                "--output",
+                str(output),
+                "--model",
+                str(model),
+                "--card-db",
+                str(card_db),
+                "--aro-index",
+                str(aro_index),
+                "--profile",
+                "conservative",
+                "--allow-unverified-custom-model",
+                "--skip-mobility",
+                "--skip-taxonomy",
+                "--skip-genomad",
+                "--skip-plasmid-db",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    kwargs = mock_pipeline.call_args.kwargs
+    assert kwargs["profile"] == "conservative"
+    assert kwargs["allow_unverified_custom_model"] is True
+    assert kwargs["compass_sketch_path"] is None
+    assert kwargs["confidence_threshold"] is None
+    assert kwargs["plasmid_threshold"] is None
+    assert kwargs["argmax_fallback"] is False
+
+
+def test_run_rejects_conservative_label_mutation_options(
+    tmp_path: Path,
+) -> None:
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+    model = tmp_path / "candidate.pt"
+    model.write_text("mock")
+
+    runner = CliRunner()
+    with patch("plasflow2.cli.run_pipeline") as mock_pipeline:
+        result = runner.invoke(
+            main,
+            [
+                "run",
+                "--input",
+                str(fasta),
+                "--output",
+                str(tmp_path / "output"),
+                "--model",
+                str(model),
+                "--profile",
+                "conservative",
+                "--require-hallmarks",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert "forbids label-changing options" in result.output
+    mock_pipeline.assert_not_called()
+
+
 def test_run_rejects_conflicting_hallmark_modes(tmp_path: Path) -> None:
     fasta = tmp_path / "contigs.fasta"
     fasta.write_text(f">p1\n{_SEQ}\n")
