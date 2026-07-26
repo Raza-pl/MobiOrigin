@@ -38,12 +38,12 @@ Classifies metagenomic contigs as **plasmid, chromosome, or phage** and annotate
 
 ## How it works
 
-PlasFlow v2 uses a two-stage classifier:
+PlasFlow v2 uses a calibrated sequence classifier:
 
-1. **Binary MLP** (k=7 k-mer features) — fast sequence-composition classifier. Processes 60,000 contigs in ~15 seconds on CPU.
-2. **Marker XGBoost** — refines MLP scores using biological evidence: conjugation proteins, replicon type, geNomad gene signatures, ICE elements, and GC content.
+1. **Three-class MLP** using k=7 sequence-composition features classifies every contig as plasmid, chromosome, phage, or unclassified.
+2. **Biological evidence** from mobility, replicons, ARGs, MGEs, geNomad, and reference comparisons is reported as annotation and confidence context. It does not silently veto the calibrated classifier.
 
-**Hallmark gate** — a plasmid call on any contig shorter than 50 kb must be backed by at least one biological hallmark: a PLSDB match, relaxase, replicon type, ICE hit, or rep protein. Contigs with high MLP scores but no hallmarks are returned as `unclassified`. Use `--lenient` to skip this gate (see [Lenient mode](#lenient-mode)).
+The default pipeline keeps MLP classification authoritative. Use `--require-hallmarks` only when an explicit high-precision biological-evidence gate is desired. Learned marker-XGBoost fusion is experimental and disabled by default because its candidate-conditioned training/runtime parity has not yet been independently validated.
 
 ---
 

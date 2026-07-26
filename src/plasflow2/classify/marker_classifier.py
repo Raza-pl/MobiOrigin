@@ -20,26 +20,23 @@ Aggregation (attention-weighted):
     where α = marker_gene_fraction  (increases as more genes get marker hits)
     When no genes match markers → α=0, MLP score is used unchanged.
 
-Features (15 total)
+Features (28 total)
 -------------------
-From the MLP (3):
-    mlp_plasmid_score, mlp_chromosome_score, mlp_phage_score
+MLP scores (3):
+    plasmid, chromosome, and phage probabilities
 
-Biological markers (8):
-    is_conjugative     — MOB DIAMOND: relaxase + MPF hit
-    is_mobilizable     — MOB DIAMOND: relaxase hit only
-    has_replicon       — replicon type assigned (IncF, IncP, …)
-    has_plsdb_match    — PLSDB / RefSeq plasmid DB match
-    has_phage_marker   — ICE / MGE hit of phage origin
-    n_arg_normalized   — ARG hits per kb
-    n_mge_normalized   — MGE hits per kb
-    n_ice_normalized   — ICE hits per kb
+Mobility and replication evidence (5):
+    conjugative, mobilizable, replicon, ICE, and replication-protein evidence
 
-Sequence features (4):
-    log10_length       — log10(contig_length)
-    gc_content         — fraction G+C
-    coding_density     — fraction of contig covered by ORFs
-    n_orfs_per_kb      — ORF density
+Evidence densities (4):
+    ARG, MGE, ICE, and replication-protein hits per kb
+
+Sequence properties (4):
+    length, GC content, coding density, and ORF density
+
+geNomad-derived gene features (12):
+    plasmid/chromosome/virus marker frequencies, SPM summaries,
+    strand-switch and RBS statistics, and plasmid-marker counts
 
 Training
 --------
@@ -62,7 +59,6 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,8 +111,23 @@ MARKER_FEATURE_NAMES = [
 ]
 
 N_MARKER_FEATURES = len(MARKER_FEATURE_NAMES)
+
+MARKER_PROFILE_QUICK = "quick-classify-v1"
+MARKER_PROFILE_FULL = "full-annotation-v1"
+SUPPORTED_MARKER_FEATURE_PROFILES = frozenset(
+    {
+        MARKER_PROFILE_QUICK,
+        MARKER_PROFILE_FULL,
+    }
+)
 # Mobility feature indices — used to compute marker_gene_fraction
-_MOBILITY_FEATURE_INDICES = [3, 4, 5, 6, 7]  # conjugative, mobilizable, replicon, ice, rep_protein
+_MOBILITY_FEATURE_INDICES = [
+    3,
+    4,
+    5,
+    6,
+    7,
+]  # conjugative, mobilizable, replicon, ice, rep_protein
 
 
 # ---------------------------------------------------------------------------
@@ -403,32 +414,106 @@ def aggregate_scores(
 
 
 def resolve_marker_model_path(path: Path) -> Path | None:
-    """Return whichever of ``<stem>.json``, ``<stem>.ubj``, or *path* exists.
+    """Resolve a marker model to native XGBoost JSON or UBJ only.
 
-    Callers throughout this project historically pass a ``.pkl`` path (e.g.
-    ``data/models/marker_xgb.pkl``); this lets `save()`'s output (a
-    ``.json`` file) be found by that same caller code without every
-    auto-detection site needing to know the extension changed.
+    Historical callers may still pass ``marker_xgb.pkl`` as the base name.
+    In that case a JSON or UBJ sibling is accepted, but the pickle itself is
+    never returned or deserialized.
     """
-    candidates = [path.with_suffix(".json"), path.with_suffix(".ubj"), path]
+    path = Path(path)
+    candidates = [path.with_suffix(".json"), path.with_suffix(".ubj")]
+
+    if path.suffix in {".json", ".ubj"}:
+        candidates.insert(0, path)
+
     for candidate in candidates:
         if candidate.exists():
             return candidate
+
     return None
 
 
 def _load_xgboost_native(path: Path):  # type: ignore[no-untyped-def]
     """Load an XGBClassifier from its native JSON/UBJ serialization.
 
-    Raises whatever XGBoost/the JSON parser raises if *path* isn't actually
-    in that format (e.g. a legacy pickle) — callers use this to detect and
-    fall back, not to validate up front.
+    Raises the native XGBoost parser error if the artifact is malformed.
+    Pickle deserialization is deliberately unsupported.
     """
     from xgboost import XGBClassifier  # type: ignore[import]
 
     model = XGBClassifier()
     model.load_model(str(path))
     return model
+
+
+def marker_model_safety_issues(
+    metadata: dict,
+    *,
+    required_feature_profile: str | None = None,
+) -> list[str]:
+    """Return reasons a marker model is unsafe for production fusion.
+
+    A production marker model must be a genuine three-class model trained
+    with a leakage-resistant source-group split and the exact runtime feature
+    schema. Returning a list makes pipeline warnings actionable and keeps
+    validation independently testable.
+    """
+    issues: list[str] = []
+
+    class_counts = metadata.get("class_counts")
+    if not isinstance(class_counts, dict):
+        issues.append("model card has no class_counts mapping")
+    else:
+        for class_name in ("plasmid", "chromosome", "phage"):
+            count = class_counts.get(class_name)
+            if not isinstance(count, (int, float)) or count <= 0:
+                issues.append(f"class {class_name!r} has no positive training rows")
+
+    if metadata.get("split_type") != "grouped_by_source_genome":
+        issues.append("training split was not grouped by source genome")
+
+    n_groups = metadata.get("n_distinct_groups")
+    if not isinstance(n_groups, int) or n_groups < 3:
+        issues.append("model card has no valid distinct source-group count")
+
+    if metadata.get("feature_names") != MARKER_FEATURE_NAMES:
+        issues.append("model feature schema does not match the runtime schema")
+
+    if metadata.get("feature_schema_version") != "marker-v2":
+        issues.append("model card has no supported marker feature-schema version")
+
+    feature_profile = metadata.get("feature_profile")
+    if feature_profile not in SUPPORTED_MARKER_FEATURE_PROFILES:
+        issues.append("model card has no supported marker feature profile")
+    elif required_feature_profile is not None and feature_profile != required_feature_profile:
+        issues.append(
+            f"marker feature profile {feature_profile!r} is incompatible with "
+            f"required consumer profile {required_feature_profile!r}"
+        )
+
+    if metadata.get("training_prediction_parity_verified") is not True:
+        issues.append("training/prediction feature parity was not verified")
+
+    training_hash = metadata.get("training_data_sha256")
+    if not (
+        isinstance(training_hash, str)
+        and len(training_hash) == 64
+        and all(char in "0123456789abcdefABCDEF" for char in training_hash)
+    ):
+        issues.append("model card has no valid training-data SHA-256")
+
+    if metadata.get("benchmark_lockout_verified") is not True:
+        issues.append("benchmark lockout was not verified during training")
+
+    lockout_hash = metadata.get("benchmark_lockout_sha256")
+    if not (
+        isinstance(lockout_hash, str)
+        and len(lockout_hash) == 64
+        and all(char in "0123456789abcdefABCDEF" for char in lockout_hash)
+    ):
+        issues.append("model card has no valid benchmark-lockout SHA-256")
+
+    return issues
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +585,15 @@ class MarkerClassifier:
         Returns:
             Dict with 'val_accuracy' and 'feature_importances'.
         """
+        expected_classes = {0, 1, 2}
+        observed_classes = {int(value) for value in np.unique(y)}
+        if observed_classes != expected_classes:
+            raise ValueError(
+                "MarkerClassifier requires plasmid, chromosome, and phage "
+                f"training rows with labels {sorted(expected_classes)}; "
+                f"observed {sorted(observed_classes)}"
+            )
+
         try:
             from xgboost import XGBClassifier  # type: ignore[import]
         except ImportError as e:
@@ -561,11 +655,9 @@ class MarkerClassifier:
                 X, y, test_size=eval_fraction, stratify=y, random_state=random_state
             )
 
-        # Always force 3-class multiclass — even when a class is absent from
-        # this training batch (e.g. no phage in benchmark data).  Without
-        # explicit num_class XGBoost auto-detects binary mode when only two
-        # label values are present, then throws "num_class=1 but found 1".
-        n_classes = 3
+        # Class completeness is validated above; never manufacture a nominal
+        # three-class model from a dataset with an absent biological class.
+        n_classes = len(expected_classes)
         self._model = XGBClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -681,49 +773,35 @@ class MarkerClassifier:
 
     @classmethod
     def load(cls, path: Path | str) -> MarkerClassifier:
-        """Load a saved MarkerClassifier.
+        """Load a native XGBoost JSON or UBJ marker model.
 
-        Resolves *path* to whichever of ``<stem>.json``, ``<stem>.ubj``, or
-        the literal *path* actually exists on disk, preferring the native
-        XGBoost format over a legacy pickle. If the resolved file turns out
-        to be a legacy pickle (predates the JSON migration — e.g. an
-        already-deployed ``marker_xgb.pkl`` downloaded before this fix), it
-        is unpickled as a fallback with a warning encouraging a re-save.
-
-        Logs a warning (does not fail) if no ``<resolved_path>.meta.json``
-        model card is present, since older checkpoints predate that
-        convention entirely.
+        ``.pkl`` may be supplied as a historical base name only when a native
+        ``.json`` or ``.ubj`` sibling exists. Pickle artifacts are rejected
+        before their contents are opened because deserialization can execute
+        arbitrary code.
         """
         path = Path(path)
         resolved = resolve_marker_model_path(path)
+
         if resolved is None:
+            if path.suffix == ".pkl" and path.exists():
+                raise ValueError(
+                    f"Refusing legacy pickle marker model: {path}. "
+                    "Only native XGBoost JSON/UBJ artifacts are supported."
+                )
             raise FileNotFoundError(
-                f"No marker model found at {path} (also checked "
-                f"{path.with_suffix('.json')} and {path.with_suffix('.ubj')})"
+                f"No native marker model found at {path} "
+                f"(checked {path.with_suffix('.json')} and "
+                f"{path.with_suffix('.ubj')})"
             )
 
-        model: object
-        if resolved.suffix in (".json", ".ubj"):
-            model = _load_xgboost_native(resolved)
-        else:
-            # Legacy .pkl path that resolved to itself (no .json/.ubj sibling
-            # exists). Try the native loader first in case it was already
-            # re-saved under the old extension; only unpickle as a last
-            # resort, since that's the exact risk this migration removes.
-            try:
-                model = _load_xgboost_native(resolved)
-            except Exception:
-                logger.warning(
-                    "%s is not a native XGBoost JSON/UBJ file — falling back "
-                    "to pickle.load() for this legacy checkpoint. Re-save it "
-                    "(MarkerClassifier.load(%r).save(%r)) to drop the pickle "
-                    "dependency for this file.",
-                    resolved,
-                    str(resolved),
-                    str(resolved),
-                )
-                with open(resolved, "rb") as fh:
-                    model = pickle.load(fh)  # noqa: S301
+        if resolved.suffix not in {".json", ".ubj"}:
+            raise ValueError(
+                f"Unsupported marker model format: {resolved.suffix}. "
+                "Only native XGBoost JSON/UBJ artifacts are supported."
+            )
+
+        model = _load_xgboost_native(resolved)
 
         obj = cls()
         obj._model = model
@@ -743,6 +821,7 @@ class MarkerClassifier:
                 "hyperparameters) for this checkpoint is unknown.",
                 meta_path,
             )
+
         return obj
 
 

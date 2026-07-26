@@ -90,6 +90,8 @@ def _mock_pipeline(
     mob_results: list[MobilityResult] | None = None,
     skip_mobility: bool = False,
     plasmid_db_hits: dict | None = None,
+    require_hallmarks: bool = False,
+    enable_marker_fusion: bool = False,
 ) -> PipelineResult:
     """Run run_pipeline() with all external I/O mocked."""
     fasta = tmp_path / "contigs.fasta"
@@ -136,7 +138,72 @@ def _mock_pipeline(
             work_dir=tmp_path / "work",
             skip_mobility=skip_mobility,
             plasmid_db_dir=plasmid_db_dir,
+            require_hallmarks=require_hallmarks,
+            enable_marker_fusion=enable_marker_fusion,
         )
+
+
+def test_marker_fusion_is_disabled_by_default(tmp_path: Path) -> None:
+    marker_path = tmp_path / "marker_xgb.json"
+    marker_path.write_text("{}")
+
+    with (
+        patch(
+            "plasflow2.pipeline.resolve_marker_model_path",
+            return_value=marker_path,
+        ),
+        patch("plasflow2.pipeline.MarkerClassifier.load") as marker_load,
+    ):
+        _mock_pipeline(
+            tmp_path,
+            fasta_records=[_record("p1")],
+            predictions=[_prediction("p1", "plasmid")],
+        )
+
+    marker_load.assert_not_called()
+
+
+def test_explicit_marker_fusion_requires_native_model(tmp_path: Path) -> None:
+    with patch(
+        "plasflow2.pipeline.resolve_marker_model_path",
+        return_value=None,
+    ):
+        with pytest.raises(
+            FileNotFoundError,
+            match="Experimental marker fusion was requested",
+        ):
+            _mock_pipeline(
+                tmp_path,
+                fasta_records=[_record("p1")],
+                predictions=[_prediction("p1", "plasmid")],
+                enable_marker_fusion=True,
+            )
+
+
+def test_explicit_marker_fusion_requires_xgboost(tmp_path: Path) -> None:
+    marker_path = tmp_path / "marker_xgb.json"
+    marker_path.write_text("{}")
+
+    with (
+        patch(
+            "plasflow2.pipeline.resolve_marker_model_path",
+            return_value=marker_path,
+        ),
+        patch(
+            "plasflow2.pipeline.marker_classifier_available",
+            return_value=False,
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="XGBoost is unavailable",
+        ):
+            _mock_pipeline(
+                tmp_path,
+                fasta_records=[_record("p1")],
+                predictions=[_prediction("p1", "plasmid")],
+                enable_marker_fusion=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +275,62 @@ def test_run_pipeline_plasmid_count(tmp_path: Path) -> None:
     ]
     result = _mock_pipeline(tmp_path, fasta_records=records, predictions=preds, skip_mobility=True)
     assert result.total_plasmids == 2
+
+
+def test_default_policy_keeps_short_plasmid_without_hallmarks(
+    tmp_path: Path,
+) -> None:
+    records = [_record("novel_p1", "ACGT" * 1_000)]
+    preds = [_prediction("novel_p1", "plasmid", 0.86)]
+
+    result = _mock_pipeline(
+        tmp_path,
+        fasta_records=records,
+        predictions=preds,
+        skip_mobility=True,
+    )
+
+    final = next(p for p in result.all_predictions if p.sequence_id == "novel_p1")
+    assert final.label == "plasmid"
+    assert result.total_plasmids == 1
+
+
+def test_require_hallmarks_demotes_short_unsupported_plasmid(
+    tmp_path: Path,
+) -> None:
+    records = [_record("unsupported_p1", "ACGT" * 1_000)]
+    preds = [_prediction("unsupported_p1", "plasmid", 0.86)]
+
+    result = _mock_pipeline(
+        tmp_path,
+        fasta_records=records,
+        predictions=preds,
+        skip_mobility=True,
+        require_hallmarks=True,
+    )
+
+    final = next(p for p in result.all_predictions if p.sequence_id == "unsupported_p1")
+    assert final.label == "unclassified"
+    assert result.total_plasmids == 0
+
+
+def test_require_hallmarks_keeps_supported_short_plasmid(
+    tmp_path: Path,
+) -> None:
+    records = [_record("supported_p1", "ACGT" * 1_000)]
+    preds = [_prediction("supported_p1", "plasmid", 0.86)]
+
+    result = _mock_pipeline(
+        tmp_path,
+        fasta_records=records,
+        predictions=preds,
+        mob_results=[_mob_result("supported_p1", "mobilizable")],
+        require_hallmarks=True,
+    )
+
+    final = next(p for p in result.all_predictions if p.sequence_id == "supported_p1")
+    assert final.label == "plasmid"
+    assert result.total_plasmids == 1
 
 
 def test_run_pipeline_arg_hits_grouped_by_contig(tmp_path: Path) -> None:

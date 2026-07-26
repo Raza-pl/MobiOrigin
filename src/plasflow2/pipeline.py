@@ -61,10 +61,12 @@ from plasflow2.annotate.taxonomy_kaiju import (
 from plasflow2.annotate.topology import Topology, detect_topologies
 from plasflow2.annotate.vfdb import VFHit, annotate_vf
 from plasflow2.classify.marker_classifier import (
+    MARKER_PROFILE_FULL,
     MarkerClassifier,
     aggregate_scores,
     extract_marker_features,
     marker_classifier_available,
+    marker_model_safety_issues,
     resolve_marker_model_path,
 )
 from plasflow2.classify.predict import (
@@ -204,6 +206,8 @@ def run_pipeline(
     genomad_db_path: Path | str | None = None,
     skip_genomad: bool = False,
     lenient: bool = False,
+    require_hallmarks: bool = False,
+    enable_marker_fusion: bool = False,
     widen_candidates: bool = False,
 ) -> PipelineResult:
     """Run the full PlasFlow v2 pipeline on a FASTA file.
@@ -267,6 +271,12 @@ def run_pipeline(
         mge_db: Optional path to a DIAMOND .dmnd database built from ISfinder
             transposase protein sequences.  When provided, MGE/IS element
             annotation runs on plasmid contigs.
+        lenient: Preserve the legacy high-sensitivity threshold policy.
+            This does not control whether biological evidence is required.
+        require_hallmarks: If True, apply the high-precision biological-evidence
+            gate. Plasmid calls shorter than 50 kb without PLSDB, mobility,
+            replicon, ICE, or rep-protein evidence become unclassified. False
+            by default so annotations support rather than veto classifier calls.
         widen_candidates: If True, also route "near-miss" contigs into
             biological-evidence annotation and marker-XGBoost rescoring —
             contigs where the Stage-1 MLP's own argmax winner was "plasmid"
@@ -1045,9 +1055,17 @@ def run_pipeline(
     HALLMARK_HARD_THRESHOLD = 50_000  # bp — above this: trust MLP, flag low_confidence
     _hallmark_demoted = 0
     _hallmark_flagged = 0
-    if lenient:
-        logger.info("Hallmark gate disabled (--lenient): accepting all MLP plasmid predictions.")
-    for record in list(plasmid_records) if not lenient else []:
+    if require_hallmarks:
+        logger.info(
+            "Biological hallmark gate enabled (--require-hallmarks): "
+            "short plasmid calls without supporting evidence may be reclassified."
+        )
+    else:
+        logger.info(
+            "Biological evidence policy: advisory; calibrated classifier labels remain authoritative."
+        )
+
+    for record in list(plasmid_records):
         cid = record.id
         mob = mobility_by_contig.get(cid)
         has_mobility = mob is not None and mob.mobility_class in ("conjugative", "mobilizable")
@@ -1076,6 +1094,13 @@ def run_pipeline(
                     scores=old.scores,
                 )
             continue  # good evidence — keep/promote to plasmid
+
+        if not require_hallmarks:
+            # Default policy: evidence is advisory. Preserve original
+            # calibrated classifier calls when no database hallmark is found.
+            # Near-miss candidates remain unclassified unless evidence or the
+            # marker model promotes them.
+            continue
 
         contig_len = len(record.seq)
         old = pred_by_id[cid]
@@ -1250,14 +1275,11 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # 6d. Marker XGBoost — post-annotation rescoring of plasmid candidates
     # ------------------------------------------------------------------
-    # Runs AFTER all annotations so every feature has a real value:
-    # mobility class, ARG/MGE/ICE hit density, ORF coding density.
-    # PLSDB match is used as a hard override RULE (not a model feature)
-    # to avoid training-time data leakage.
-    # Base name kept as .pkl for backward compat with existing deployments;
-    # resolve_marker_model_path() below prefers a marker_xgb.json/.ubj
-    # sibling (XGBoost native format) and only falls back to this literal
-    # .pkl for legacy checkpoints predating the pickle -> JSON migration.
+    # Experimental learned fusion runs after annotation so its full feature
+    # profile can use mobility, ARG/MGE/ICE density, ORFs, and geNomad data.
+    # PLSDB remains advisory and is not a classification override.
+    # The historical .pkl name is used only as a lookup base; resolution
+    # accepts native XGBoost JSON/UBJ siblings and never deserializes pickle.
     _marker_model_path_base = Path(model_path).parent / "marker_xgb.pkl"
     _seq_by_id = dict(zip(seq_ids, sequences))
     # Pre-build ORF lookup dict — avoids O(n²) scan of 481k ORFs per contig
@@ -1268,10 +1290,35 @@ def run_pipeline(
             _orfs_by_contig.setdefault(_cid, []).append(_orf)
 
     _marker_model_path = resolve_marker_model_path(_marker_model_path_base)
-    if _marker_model_path is not None and marker_classifier_available():
+    if not enable_marker_fusion:
+        if _marker_model_path is not None:
+            logger.info(
+                "Marker XGBoost artifact available but disabled by default; "
+                "biological evidence remains advisory. Use the explicit experimental "
+                "marker-fusion option only for controlled evaluation."
+            )
+    else:
+        if _marker_model_path is None:
+            raise FileNotFoundError(
+                "Experimental marker fusion was requested, but no native "
+                "marker_xgb.json or marker_xgb.ubj model was found beside "
+                f"the MLP model: {model_path}"
+            )
+        if not marker_classifier_available():
+            raise RuntimeError(
+                "Experimental marker fusion was requested, but XGBoost "
+                "is unavailable in the current environment."
+            )
         try:
             _marker_clf = MarkerClassifier.load(_marker_model_path)
-            _n_xgb_promoted = 0
+            _marker_safety_issues = marker_model_safety_issues(
+                _marker_clf.metadata,
+                required_feature_profile=MARKER_PROFILE_FULL,
+            )
+            if _marker_safety_issues:
+                raise RuntimeError(
+                    "unsafe marker model disabled: " + "; ".join(_marker_safety_issues)
+                )
             _n_xgb_demoted = 0
 
             # Rescore all current plasmid predictions using real annotation data
@@ -1359,14 +1406,11 @@ def run_pipeline(
                     new_label = "plasmid"
 
                 if new_label != pred.label:
-                    if new_label == "plasmid":
-                        _n_xgb_promoted += 1
-                    else:
-                        _n_xgb_demoted += 1
+                    _n_xgb_demoted += 1
 
                 # Always update Prediction with post-XGBoost scores and evidence,
                 # even when the label doesn't change (so TSV reflects final scores).
-                _evidence_type = "plsdb_nt_override" if cid in plasmid_db_hits else "xgb_blend"
+                _evidence_type = "xgb_blend"
                 pred_by_id[cid] = Prediction(
                     sequence_id=cid,
                     label=new_label,
@@ -1384,8 +1428,7 @@ def run_pipeline(
                 )
 
             logger.info(
-                "Marker XGBoost: promoted %d → plasmid, demoted %d → other",
-                _n_xgb_promoted,
+                "Marker XGBoost: demoted %d existing plasmid calls → other",
                 _n_xgb_demoted,
             )
             # Rebuild plasmid_records after XGBoost rescoring

@@ -5,11 +5,99 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import pytest
 from plasflow2.classify.marker_classifier import (
+    MARKER_FEATURE_NAMES,
+    MARKER_PROFILE_FULL,
+    MARKER_PROFILE_QUICK,
     ContigMarkerFeatures,
     MarkerClassifier,
+    aggregate_scores,
+    marker_model_safety_issues,
     resolve_marker_model_path,
 )
+
+
+def _safe_model_card() -> dict:
+    return {
+        "class_counts": {"plasmid": 100, "chromosome": 100, "phage": 100},
+        "split_type": "grouped_by_source_genome",
+        "n_distinct_groups": 30,
+        "feature_names": list(MARKER_FEATURE_NAMES),
+        "feature_schema_version": "marker-v2",
+        "feature_profile": MARKER_PROFILE_FULL,
+        "training_prediction_parity_verified": True,
+        "training_data_sha256": "a" * 64,
+        "benchmark_lockout_verified": True,
+        "benchmark_lockout_sha256": "b" * 64,
+    }
+
+
+def test_marker_model_safety_accepts_complete_grouped_model() -> None:
+    assert marker_model_safety_issues(_safe_model_card()) == []
+
+
+def test_marker_model_safety_enforces_consumer_profile() -> None:
+    metadata = _safe_model_card()
+
+    assert (
+        marker_model_safety_issues(
+            metadata,
+            required_feature_profile=MARKER_PROFILE_FULL,
+        )
+        == []
+    )
+
+    issues = marker_model_safety_issues(
+        metadata,
+        required_feature_profile=MARKER_PROFILE_QUICK,
+    )
+
+    assert any("incompatible with required consumer profile" in issue for issue in issues)
+
+
+def test_marker_model_safety_requires_verified_feature_parity() -> None:
+    metadata = _safe_model_card()
+    metadata["training_prediction_parity_verified"] = False
+
+    issues = marker_model_safety_issues(metadata)
+
+    assert "training/prediction feature parity was not verified" in issues
+
+
+def test_marker_model_safety_rejects_deployed_binary_collapsed_semantics() -> None:
+    metadata = _safe_model_card()
+    metadata["class_counts"] = {
+        "plasmid": 30_000,
+        "chromosome": 60_000,
+        "phage": 0,
+    }
+    metadata["split_type"] = "random_per_row"
+    metadata["n_distinct_groups"] = None
+
+    issues = marker_model_safety_issues(metadata)
+
+    assert any("phage" in issue for issue in issues)
+    assert any("not grouped" in issue for issue in issues)
+    assert any("source-group count" in issue for issue in issues)
+
+
+def test_train_rejects_missing_biological_class() -> None:
+    X = np.random.default_rng(2).normal(size=(30, 4)).astype(np.float32)
+    y = np.array([0, 1] * 15, dtype=np.int64)
+
+    with pytest.raises(ValueError, match="plasmid, chromosome, and phage"):
+        MarkerClassifier().train(X, y, n_estimators=2)
+
+
+def test_aggregate_scores_uses_marker_fraction_as_attention_weight() -> None:
+    combined = aggregate_scores(
+        {"plasmid": 0.8, "chromosome": 0.1, "phage": 0.1},
+        {"plasmid": 0.2, "chromosome": 0.7, "phage": 0.1},
+        marker_gene_fraction=0.5,
+    )
+
+    assert combined == pytest.approx({"plasmid": 0.5, "chromosome": 0.4, "phage": 0.1})
 
 
 def test_train_grouped_split_never_splits_a_group_across_train_and_val() -> None:
@@ -122,35 +210,35 @@ def test_save_writes_model_card_and_load_reads_it_back(tmp_path) -> None:
     np.testing.assert_allclose(loaded.predict_proba(X), classifier.predict_proba(X))
 
 
-def test_resolve_marker_model_path_prefers_json_over_pkl(tmp_path) -> None:
+def test_resolve_marker_model_path_ignores_pickle_and_prefers_json(
+    tmp_path,
+) -> None:
     pkl_path = tmp_path / "marker_xgb.pkl"
     json_path = tmp_path / "marker_xgb.json"
 
     assert resolve_marker_model_path(pkl_path) is None
 
     pkl_path.write_bytes(b"legacy pickle bytes")
-    assert resolve_marker_model_path(pkl_path) == pkl_path
+    assert resolve_marker_model_path(pkl_path) is None
 
     json_path.write_text("{}")
     assert resolve_marker_model_path(pkl_path) == json_path
 
 
-def test_load_warns_when_model_card_missing(tmp_path, caplog) -> None:
+def test_legacy_pickle_is_rejected_without_deserialization(tmp_path) -> None:
     import pickle
 
-    import xgboost as xgb
+    sentinel = tmp_path / "pickle_was_executed"
 
-    X = np.random.default_rng(0).random((10, 2), dtype=np.float32)
-    y = np.array([0, 1] * 5, dtype=np.int64)
-    model = xgb.XGBClassifier(n_estimators=2, max_depth=2)
-    model.fit(X, y)
+    class Payload:
+        def __reduce__(self):
+            command = "from pathlib import Path; " f"Path({str(sentinel)!r}).touch()"
+            return exec, (command,)
 
-    out_path = tmp_path / "legacy_marker_xgb.pkl"
-    with open(out_path, "wb") as fh:
-        pickle.dump(model, fh)
+    pkl_path = tmp_path / "legacy_marker_xgb.pkl"
+    pkl_path.write_bytes(pickle.dumps(Payload()))
 
-    with caplog.at_level(logging.WARNING):
-        loaded = MarkerClassifier.load(out_path)
+    with pytest.raises(ValueError, match="Refusing legacy pickle"):
+        MarkerClassifier.load(pkl_path)
 
-    assert loaded.metadata == {}
-    assert any("No model card" in rec.message for rec in caplog.records)
+    assert not sentinel.exists()

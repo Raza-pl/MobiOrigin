@@ -155,6 +155,28 @@ def test_run_produces_outputs(tmp_path: Path) -> None:
     assert (out / "report_plasmid.html").exists()
 
 
+def test_run_rejects_conflicting_hallmark_modes(tmp_path: Path) -> None:
+    fasta = tmp_path / "contigs.fasta"
+    fasta.write_text(f">p1\n{_SEQ}\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "run",
+            "--input",
+            str(fasta),
+            "--output",
+            str(tmp_path / "out"),
+            "--lenient",
+            "--require-hallmarks",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--lenient and --require-hallmarks cannot be used together" in result.output
+
+
 def test_run_missing_model_raises(tmp_path: Path) -> None:
     fasta = tmp_path / "contigs.fasta"
     fasta.write_text(f">p1\n{_SEQ}\n")
