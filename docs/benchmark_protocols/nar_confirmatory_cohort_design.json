@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "design_status": "PRE_REGISTERED_NOT_ACQUIRED",
+  "seed": 20260727,
+  "production_freeze_date": "2026-07-24",
+  "bacterial_source_query": {
+    "taxon": "bacteria",
+    "assembly_source": "RefSeq",
+    "assembly_level": "complete",
+    "released_after": "2026-07-24",
+    "assembly_status": "current",
+    "selection_rule": "Include every eligible assembly through the first UTC census date satisfying the prospective accrual thresholds.",
+    "prospective_accrual_thresholds": {
+      "total_assemblies": 100,
+      "plasmid_bearing_assemblies": 50,
+      "plasmid_replicons": 100,
+      "chromosome_replicons": 100
+    },
+    "if_threshold_not_met": "Repeat the identical census weekly and extend only forward in time. Do not move the release boundary backward."
+  },
+  "phage_source_query": {
+    "source": "RefSeq viral genomes",
+    "organism_scope": "bacteriophages",
+    "released_after": "2026-07-24",
+    "minimum_independent_phage_sources": 100,
+    "if_threshold_not_met": "Accrue prospectively using the same rule; do not substitute previously inspected phage rows for primary confirmation."
+  },
+  "ground_truth": {
+    "bacterial_replicons": "NCBI sequence-report assigned molecule location type.",
+    "plasmid_label": "Plasmid",
+    "chromosome_label": "Chromosome",
+    "ambiguous_replicons": "Retain in the audit inventory but exclude from primary scoring before predictions are generated.",
+    "phage_label": "Eligible complete bacteriophage RefSeq genome accession."
+  },
+  "minimum_sequence_length_bp": 1000,
+  "biological_group": "assembly accession or independent viral genome source",
+  "fragment_lengths_bp": [
+    1000,
+    2000,
+    5000,
+    10000,
+    20000
+  ],
+  "maximum_windows_per_replicon_per_length": 5,
+  "window_policy": {
+    "method": "deterministic evenly spaced non-overlapping windows",
+    "short_replicon_policy": "A replicon contributes only to fragment lengths not exceeding its sequence length.",
+    "cross_length_overlap": "Allowed because each length is evaluated separately; pooled uncertainty remains clustered by biological source."
+  },
+  "cohorts": {
+    "full_replicon": {
+      "purpose": "Complete-replicon sanity and source-level evaluation",
+      "sampling": "All eligible labeled replicons"
+    },
+    "source_population_fragments": {
+      "purpose": "Primary fragment evaluation preserving eligible replicon composition under the declared per-replicon cap",
+      "precision_interpretation": "Precision applies to this explicitly sampled cohort, not to arbitrary metagenomic prevalence."
+    },
+    "balanced_diagnostic_fragments": {
+      "purpose": "Length-controlled discrimination and sensitivity comparison",
+      "sampling": "Balance plasmid and chromosome windows within each fixed length after applying source and replicon caps.",
+      "precision_interpretation": "Diagnostic benchmark precision only; not deployment PPV."
+    },
+    "phage_three_class": {
+      "purpose": "Three-class and phage-versus-non-phage evaluation",
+      "negative_classes": [
+        "plasmid",
+        "chromosome"
+      ],
+      "requirement": "Phage positives and bacterial negatives must all be frozen before predictions are inspected."
+    },
+    "W1_length_standardized": {
+      "purpose": "Reweight class-conditional performance to the observed W1 contig-length distribution.",
+      "restriction": "W1 supplies length weights only and supplies no truth labels."
+    }
+  },
+  "prevalence_scenarios": {
+    "plasmid_prevalence_percent": [
+      1,
+      5,
+      10,
+      20,
+      50
+    ],
+    "reported_quantity": "Sensitivity, specificity and prevalence-standardized PPV/NPV"
+  },
+  "leakage_rules": {
+    "exact_training_identifier_match": "exclude from primary cohort",
+    "exact_training_sequence_match": "exclude from primary cohort",
+    "training_near_duplicate": {
+      "identity_minimum": 0.99,
+      "query_coverage_minimum": 0.9,
+      "action": "exclude from primary cohort and retain in audit appendix"
+    },
+    "training_close_relative": {
+      "identity_minimum": 0.95,
+      "query_coverage_minimum": 0.8,
+      "action": "retain but report in a predefined known/close stratum"
+    },
+    "tool_reference_database_match": {
+      "action": "Do not selectively exclude. Assign reference-known and reference-novel strata and report separately."
+    }
+  },
+  "primary_plasflow2_configuration": {
+    "profile": "balanced",
+    "model_sha256": "3564913c14eaad068a217572f9641907fa8c86b1527abbb2f855b0df4bf3cb23",
+    "threshold_policy": "rev5-balanced-p080-20260724-v1",
+    "marker_fusion": false,
+    "hallmark_gate": false
+  },
+  "secondary_plasflow2_configuration": {
+    "profile": "evidence-assisted",
+    "model_sha256": "3564913c14eaad068a217572f9641907fa8c86b1527abbb2f855b0df4bf3cb23",
+    "threshold_policy": "rev5-balanced-p080-compass-k21-s5m-20260724-v1",
+    "compass_sha256": "06aba56318345b7f38e38aa529389af20665e27b39788db730ea2ee7cb00834f",
+    "marker_fusion": false,
+    "hallmark_gate": false
+  },
+  "statistics": {
+    "bootstrap_unit": "biological source",
+    "bootstrap_replicates": 2000,
+    "confidence_interval_percent": 95,
+    "paired_comparator_bootstrap": true,
+    "source_level_macro_metrics": true,
+    "pooled_window_metrics": true,
+    "required_strata": [
+      "length",
+      "taxon",
+      "sequence novelty",
+      "reference-known versus reference-novel"
+    ]
+  },
+  "blindness_rule": "No PlasFlow2 or comparator predictions may be generated until selection, truth labels, exclusions, window manifests, hashes and scoring adapters are frozen."
+}
