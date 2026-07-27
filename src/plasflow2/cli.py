@@ -1517,27 +1517,28 @@ def run(
         click.echo(f"  {label.capitalize()} sequences ({len(recs)}) → {fasta_out}")
 
     # --- Write gene-level TSV (all ORFs with ARG/VF/MGE flags + coordinates) ---
-    if pipeline_result.orfs:
-        label_by_contig = {p.sequence_id: p.label for p in pipeline_result.all_predictions}
-        all_vf_hits = [h for cr in pipeline_result.plasmid_results for h in cr.vf_hits] + [
-            h for cr in pipeline_result.non_plasmid_results for h in cr.vf_hits
-        ]
-        all_mge_hits = [h for cr in pipeline_result.plasmid_results for h in cr.mge_hits] + [
-            h for cr in pipeline_result.non_plasmid_results for h in cr.mge_hits
-        ]
-        all_arg_hits = [h for cr in pipeline_result.plasmid_results for h in cr.arg_hits] + [
-            h for cr in pipeline_result.non_plasmid_results for h in cr.arg_hits
-        ]
-        genes_tsv_path = out / "genes.tsv"
-        write_genes_tsv(
-            orfs=pipeline_result.orfs,
-            arg_hits=all_arg_hits,
-            vf_hits=all_vf_hits,
-            mge_hits=all_mge_hits,
-            label_by_contig=label_by_contig,
-            output_path=genes_tsv_path,
-        )
-        click.echo(f"  Gene table   → {genes_tsv_path}")
+    # Always create this documented output. When annotation produced no ORFs,
+    # write_genes_tsv emits a header-only table with a stable schema.
+    label_by_contig = {p.sequence_id: p.label for p in pipeline_result.all_predictions}
+    all_vf_hits = [h for cr in pipeline_result.plasmid_results for h in cr.vf_hits] + [
+        h for cr in pipeline_result.non_plasmid_results for h in cr.vf_hits
+    ]
+    all_mge_hits = [h for cr in pipeline_result.plasmid_results for h in cr.mge_hits] + [
+        h for cr in pipeline_result.non_plasmid_results for h in cr.mge_hits
+    ]
+    all_arg_hits = [h for cr in pipeline_result.plasmid_results for h in cr.arg_hits] + [
+        h for cr in pipeline_result.non_plasmid_results for h in cr.arg_hits
+    ]
+    genes_tsv_path = out / "genes.tsv"
+    write_genes_tsv(
+        orfs=pipeline_result.orfs,
+        arg_hits=all_arg_hits,
+        vf_hits=all_vf_hits,
+        mge_hits=all_mge_hits,
+        label_by_contig=label_by_contig,
+        output_path=genes_tsv_path,
+    )
+    click.echo(f"  Gene table   → {genes_tsv_path}")
 
     # --- Write annotations JSON ---
     ann_json = out / "annotations.json"
