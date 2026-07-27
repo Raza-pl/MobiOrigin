@@ -5,7 +5,10 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+import pytest
+
 from scripts.benchmark.evaluate import (
+    _parse_genomad,
     _parse_mobrecon,
     _parse_plasflow2,
     _parse_rfplasmid,
@@ -201,3 +204,71 @@ def test_full_coverage_parsers_preserve_unclassified_calls(tmp_path: Path) -> No
 
     assert _parse_plasflow2(tmp_path) == {"p1": "unclassified"}
     assert _parse_rfplasmid(tmp_path) == {"p1": "unclassified"}
+
+
+def test_genomad_standardized_output_preserves_all_labels(
+    tmp_path: Path,
+) -> None:
+    genomad_dir = tmp_path / "genomad"
+    genomad_dir.mkdir()
+    (genomad_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\n"
+        "p1\tplasmid\tcalled_plasmid\n"
+        "v1\tphage\tcalled_phage\n"
+        "c1\tchromosome\tnot_detected\n"
+        "u1\tunclassified\tambiguous_dual_call\n"
+    )
+
+    assert _parse_genomad(tmp_path) == {
+        "p1": "plasmid",
+        "v1": "phage",
+        "c1": "chromosome",
+        "u1": "unclassified",
+    }
+
+
+def test_genomad_standardized_output_rejects_duplicates(
+    tmp_path: Path,
+) -> None:
+    genomad_dir = tmp_path / "genomad"
+    genomad_dir.mkdir()
+    (genomad_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\n"
+        "p1\tplasmid\tcalled_plasmid\n"
+        "p1\tchromosome\tnot_detected\n"
+    )
+
+    with pytest.raises(ValueError, match="Duplicate geNomad"):
+        _parse_genomad(tmp_path)
+
+
+def test_incomplete_standardized_genomad_output_abstains(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    output = tmp_path / "evaluation"
+    labels = tmp_path / "labels.tsv"
+    genomad_dir = results / "genomad"
+    genomad_dir.mkdir(parents=True)
+    _write_labels(labels)
+
+    (genomad_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\n" "p1\tplasmid\tcalled_plasmid\n"
+    )
+    (results / "timing.tsv").write_text("tool\twallclock_sec\tstatus\n" "genomad\t1\tok\n")
+
+    evaluate(results, labels, output)
+
+    with (output / "per_contig.tsv").open() as handle:
+        predictions = {
+            row["contig_id"]: row["pred_genomad"] for row in csv.DictReader(handle, delimiter="\t")
+        }
+    assert predictions == {
+        "p1": "plasmid",
+        "c1": "unclassified",
+    }
+
+    with (output / "tool_status.tsv").open() as handle:
+        tool_status = {row["tool"]: row for row in csv.DictReader(handle, delimiter="\t")}
+    assert tool_status["genomad"]["available"] == "false"
+    assert "incomplete output" in tool_status["genomad"]["reason"]

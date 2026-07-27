@@ -68,41 +68,80 @@ def _parse_plasflow2(results_dir: Path) -> dict[str, str]:
 
 
 def _parse_genomad(results_dir: Path) -> dict[str, str]:
-    """geNomad: *_plasmid_summary/plasmid.fna or *_plasmid.tsv.
-
-    geNomad's end-to-end creates:
-      genomad/{prefix}_find-proviruses/{prefix}_plasmid.tsv
-    and:
-      genomad/{prefix}_summary/{prefix}_plasmid_summary.tsv
-    We use the summary TSV if available, otherwise the plasmid TSV.
-    """
+    """Parse frozen standardized geNomad output or legacy positive-only output."""
     gdir = results_dir / "genomad"
     if not gdir.exists():
         return {}
 
-    # Find summary TSV
-    summaries = list(gdir.glob("**/*plasmid_summary.tsv"))
+    standardized = gdir / "standardized_predictions.tsv"
+    if standardized.exists():
+        out: dict[str, str] = {}
+        with standardized.open() as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            required = {
+                "contig_id",
+                "predicted_label",
+                "prediction_status",
+            }
+            missing = required - set(reader.fieldnames or [])
+            if missing:
+                raise ValueError(
+                    "geNomad standardized output is missing columns: " + ", ".join(sorted(missing))
+                )
+
+            for row in reader:
+                contig_id = (row.get("contig_id") or "").strip()
+                label = (row.get("predicted_label") or "").strip().lower()
+
+                if not contig_id:
+                    raise ValueError("geNomad standardized output has an empty ID")
+                if contig_id in out:
+                    raise ValueError("Duplicate geNomad standardized identifier: " f"{contig_id}")
+                if label not in {
+                    "plasmid",
+                    "chromosome",
+                    "phage",
+                    "unclassified",
+                }:
+                    raise ValueError(f"Invalid geNomad standardized label: {label!r}")
+
+                out[contig_id] = label
+
+        logger.info("genomad adapter: %d predictions", len(out))
+        return out
+
+    logger.warning(
+        "genomad: using legacy positive-only output fallback; "
+        "confirmatory runs require standardized_predictions.tsv"
+    )
+
+    summaries = sorted(gdir.glob("**/*plasmid_summary.tsv"))
+    if len(summaries) > 1:
+        raise ValueError("Multiple geNomad plasmid summary files were found")
+
     plasmid_ids: set[str] = set()
 
     if summaries:
-        with open(summaries[0]) as fh:
-            for row in csv.DictReader(fh, delimiter="\t"):
-                sid = row.get("seq_name", "")
-                if sid:
-                    plasmid_ids.add(sid)
+        with summaries[0].open() as handle:
+            for row in csv.DictReader(handle, delimiter="\t"):
+                raw_id = (row.get("seq_name") or "").strip()
+                if raw_id:
+                    plasmid_ids.add(raw_id.split("|provirus_", 1)[0])
     else:
-        # Fallback: look for plasmid.fna and extract IDs
-        fastas = list(gdir.glob("**/*plasmid.fna"))
-        for fa in fastas:
-            with open(fa) as fh:
-                for line in fh:
+        fastas = sorted(gdir.glob("**/*plasmid.fna"))
+        if len(fastas) > 1:
+            raise ValueError("Multiple geNomad plasmid FASTA files were found")
+        if fastas:
+            with fastas[0].open() as handle:
+                for line in handle:
                     if line.startswith(">"):
                         plasmid_ids.add(line[1:].split()[0])
 
-    # geNomad doesn't output predictions for every contig — unlisted = chromosome.
-    # We return partial results; evaluate() handles missing IDs as non-plasmid.
-    out = {sid: "plasmid" for sid in plasmid_ids}
-    logger.info("genomad: %d plasmid predictions", len(out))
+    out = {contig_id: "plasmid" for contig_id in sorted(plasmid_ids)}
+    logger.info(
+        "genomad legacy fallback: %d plasmid predictions",
+        len(out),
+    )
     return out
 
 
@@ -249,6 +288,8 @@ def _assess_tool(
     predictions: dict[str, str],
     run_status: dict[str, str],
     n_labels: int,
+    *,
+    requires_full_coverage: bool | None = None,
 ) -> tuple[bool, bool, str, float]:
     """Return metric inclusion, availability, reason, and raw coverage.
 
@@ -259,6 +300,8 @@ def _assess_tool(
     """
 
     coverage = len(predictions) / n_labels if n_labels else 0.0
+    if requires_full_coverage is None:
+        requires_full_coverage = tool in FULL_COVERAGE_TOOLS
     recorded = run_status.get(tool)
     if recorded is not None and recorded not in ("", "ok", "success", "completed"):
         return (
@@ -269,7 +312,7 @@ def _assess_tool(
         )
     if not predictions and recorded is None:
         return False, False, "not attempted: no output or run status", coverage
-    if tool in FULL_COVERAGE_TOOLS and coverage < 0.99:
+    if requires_full_coverage and coverage < 0.99:
         return (
             True,
             False,
@@ -367,13 +410,21 @@ def evaluate(
     tool_status_rows: list[dict] = []
     valid_tools: list[str] = []
     tool_availability: dict[str, bool] = {}
+    genomad_standardized = (results_dir / "genomad" / "standardized_predictions.tsv").exists()
     for tool in TOOLS:
         if tool in PARSERS:
             predictions[tool] = PARSERS[tool](results_dir)
         else:
             predictions[tool] = {}
+        requires_full_coverage = tool in FULL_COVERAGE_TOOLS or (
+            tool == "genomad" and genomad_standardized
+        )
         included, available, reason, coverage = _assess_tool(
-            tool, predictions[tool], run_status, len(labels)
+            tool,
+            predictions[tool],
+            run_status,
+            len(labels),
+            requires_full_coverage=requires_full_coverage,
         )
         tool_availability[tool] = available
         tool_status_rows.append(
@@ -424,7 +475,9 @@ def evaluate(
             # adapters must expose abstentions rather than silently turning
             # missing rows into confident negative calls.
             missing_label = (
-                "non-plasmid" if tool == "genomad" and tool_availability[tool] else "unclassified"
+                "non-plasmid"
+                if (tool == "genomad" and tool_availability[tool] and not genomad_standardized)
+                else "unclassified"
             )
             row[f"pred_{tool}"] = preds.get(cid, missing_label)
         per_contig_rows.append(row)
