@@ -120,7 +120,7 @@ mob_init
 bash scripts/setup_databases.sh
 ```
 
-This downloads CARD, SARG, AMRFinderPlus, VFDB, BacMet2, MGE, ICEberg, and model weights (~500 MB total). See [Database setup](#database-setup) for what each database does and how to skip ones you don't need.
+This downloads CARD, SARG, AMRFinderPlus, VFDB, BacMet2, MGE, ICEberg, and model weights (~500 MB total). The MLP is distributed with a cryptographic manifest and is SHA-256 verified before use. See [Database setup](#database-setup) for what each database does and how to skip ones you don't need.
 
 **Step 5 — Add PLSDB (recommended):**
 
