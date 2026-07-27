@@ -1,0 +1,2 @@
+census_date_utc	release_boundary_exclusive	queried_assemblies	eligible_assemblies	plasmid_bearing_assemblies	eligible_plasmid_replicons	eligible_chromosome_replicons	all_thresholds_met	decision	next_census_date_utc	census_report_sha256
+2026-07-27	2026-07-24	0	0	0	0	0	false	continue_prospective_accrual	2026-08-03	79bb533e5864025401046726fbc5a00b5b12e8f92f51644882e62eecf2c8ade8
