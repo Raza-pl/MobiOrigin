@@ -1,0 +1,225 @@
+{
+  "adapter_contract": {
+    "adapter_path": "scripts/benchmark/adapters/plasclass.py",
+    "adapter_sha256": "916bff9fb47300e0db3361feadb1dfe5e1e486d8caadb0b3448a0aad1186c300",
+    "contract_sha256": "70e984280cffacea651945f1dddedee1dc948b4f2f4787191caaafd074a79adf",
+    "file_sha256": "e5bd585511dbd4b8bfcf04eff7578aead89f0aa5dcd4b353e680a4b800c81553",
+    "path": "evaluation/release_audit/nar_benchmark_20260727/40_plasclass_adapter_contract/plasclass_adapter_contract.json"
+  },
+  "amendment": {
+    "biological_semantics_changed": false,
+    "confirmatory_data_accessed_during_amendment": false,
+    "model_changed": false,
+    "reason": "Runner provenance must truthfully distinguish development from confirmatory input access.",
+    "resource_allocation_changed": false,
+    "threshold_changed": false,
+    "type": "provenance-semantic-correction"
+  },
+  "amends_contract_sha256": "eee3a2f1ddf5c16b0340c5f5ceda73c0476acf6771f0440b5c9fac716e04d0a3",
+  "command_contract": {
+    "arguments": [
+      "-f",
+      "{input_fasta}",
+      "-o",
+      "{raw_scores}",
+      "-p",
+      "10"
+    ],
+    "environment_python_relative_path": "bin/python",
+    "launcher_prefix": [
+      "/usr/bin/caffeinate",
+      "-i",
+      "/usr/bin/time",
+      "-l"
+    ],
+    "official_script_relative_path": "bin/classify_fasta.py",
+    "process_group_required": true,
+    "shell_execution_allowed": false
+  },
+  "confirmatory_data_accessed": false,
+  "contract_sha256": "434dd2d3414797d95c00c54f1a0dfa8de3bbaa8750ad15a02b694e64cc3b08e9",
+  "decision_contract": {
+    "missing_output_label": "unclassified",
+    "missing_output_metric_semantics": "abstention",
+    "non_plasmid_relabeling_allowed": false,
+    "score_below_0_5": "non-plasmid",
+    "score_greater_than_or_equal_to_0_5": "plasmid"
+  },
+  "environment_contract": {
+    "environment_identity_verified_after_run": true,
+    "environment_identity_verified_before_run": true,
+    "legacy_module_paths_required": [
+      "sklearn.linear_model.logistic",
+      "sklearn.preprocessing.data"
+    ],
+    "network_access_required": false,
+    "prefix_argument_required": true,
+    "required_versions": {
+      "joblib": "0.14.0",
+      "numpy": "1.17.4",
+      "plasclass": "0.1",
+      "python": "3.7.12",
+      "scikit-learn": "0.21.3",
+      "scipy": "1.3.2"
+    },
+    "validated_prefix": "/Users/shahbazraza/miniconda3/envs/plasclass_nar"
+  },
+  "failure_contract": {
+    "adapter_failure": "runner failure",
+    "changed_environment_identity": "runner failure",
+    "changed_executable": "runner failure",
+    "changed_model_asset": "runner failure",
+    "extra_raw_rows": "runner failure",
+    "failed_run_included_in_primary_metrics": "all missing predictions become abstentions",
+    "missing_raw_rows": "runner failure",
+    "nonzero_tool_return_code": "runner failure",
+    "partial_artifacts_retained": true,
+    "timeout": "runner failure"
+  },
+  "frozen_environment_evidence": {
+    "conda_explicit_path": "evaluation/release_audit/nar_benchmark_20260727/38_plasclass_exact_environment/conda_environment_explicit.txt",
+    "conda_explicit_sha256": "8636b85efb427dbb99dfb57afc7aba677832e8e68db4a7aec23f7c909c0b0975",
+    "environment_validation_path": "evaluation/release_audit/nar_benchmark_20260727/38_plasclass_exact_environment/environment_validation.json",
+    "environment_validation_sha256": "c1d65a64b9704afb4df4eca3a93e7be192176c99c65158c881e93b905e495d7a",
+    "pip_freeze_path": "evaluation/release_audit/nar_benchmark_20260727/38_plasclass_exact_environment/pip_freeze.txt",
+    "pip_freeze_sha256": "129b13f3cc15adfe05cab39f2992c6c6343f17072e8259e2f5bd78e929da76f3",
+    "runtime_probe_sha256": "592a210a30c023ec62bdc1064b4c1ab783cd56054bb3dbfcc2e83ee40ca98092"
+  },
+  "input_contract": {
+    "allowed_cohort_roles": [
+      "development",
+      "confirmatory"
+    ],
+    "canonical_identifier_collisions": "reject",
+    "cohort_role_recorded_in_provenance": true,
+    "cohort_role_required": true,
+    "confirmatory_tuning_allowed": false,
+    "empty_sequences": "reject",
+    "format": "FASTA",
+    "identifier": "first whitespace-delimited header token",
+    "input_base_count_recorded": true,
+    "input_sequence_count_recorded": true,
+    "input_sha256_recorded": true
+  },
+  "isolation_policy": {
+    "code_location": "scripts/benchmark",
+    "production_cli_wiring_allowed": false,
+    "production_dependency_changes_allowed": false,
+    "production_pipeline_wiring_allowed": false,
+    "production_source_imports_allowed": false
+  },
+  "known_compatibility_evidence": {
+    "deterministic_smoke_repeat_passed": true,
+    "frozen_runtime_scikit_learn": "0.21.3",
+    "interpretation": "The official models emit a version warning, but the exact isolated environment produced deterministic repeated control probabilities.",
+    "serialized_estimator_training_version": "0.19.1",
+    "smoke_predictions_sha256": "1f0ea6187f90efd45fdb79267753153700df4bbfc4896faf03853f18d66b94a3",
+    "warning_suppressed": false
+  },
+  "model_assets": {
+    "m1000": {
+      "bytes": 88350,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/m1000",
+      "sha256": "b86ce698114e7fa8e6604517e86f159f4cd0b4a9efc06547a345dd8873e580af"
+    },
+    "m10000": {
+      "bytes": 88350,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/m10000",
+      "sha256": "26e6ea9aeee48816df52e52bcbcee537343b7bf8565ebcfb151c1cfd58560543"
+    },
+    "m100000": {
+      "bytes": 88350,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/m100000",
+      "sha256": "a057a9f30bf60bc030980aeaa33e26d78d4901e18c1f0fe5437efab05c34881f"
+    },
+    "m500000": {
+      "bytes": 88350,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/m500000",
+      "sha256": "4312132bbe758d2227a56c8e6b0ae99b38a4fe11957126f7fddf2ed7c8fe21ad"
+    },
+    "s1000": {
+      "bytes": 263284,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/s1000",
+      "sha256": "38307829fe41dd3f7a3882e34ce1f5523f43be6fd14d019a5eae54f3020d9d58"
+    },
+    "s10000": {
+      "bytes": 263284,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/s10000",
+      "sha256": "3efeb177ab87eebb2a770012ba527656551828f2ae0197cd0ddfdc998002656e"
+    },
+    "s100000": {
+      "bytes": 263284,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/s100000",
+      "sha256": "af2ac7b74f6656262b56a60df4630da5d1127fa77215e64a76eac6cebad5bc65"
+    },
+    "s500000": {
+      "bytes": 263282,
+      "relative_path": "lib/python3.7/site-packages/plasclass/data/s500000",
+      "sha256": "c07e8a7950e45ba1f833a80df13ba450678b77ff7336486c8d60adc4b2212d12"
+    }
+  },
+  "output_contract": {
+    "complete_raw_output_required": true,
+    "complete_standardized_output_required": true,
+    "overwrite_existing_output": false,
+    "raw_score_format": "two tab-separated columns without header",
+    "required_files": [
+      "raw_scores.tsv",
+      "standardized_predictions.tsv",
+      "adapter_metadata.json",
+      "runner_provenance.json",
+      "command.json",
+      "stdout.log",
+      "stderr.log",
+      "artifact_checksums.sha256"
+    ],
+    "standardized_output_order": "input FASTA order"
+  },
+  "production_workflow_component": false,
+  "publication_parameters": {
+    "decision_threshold": 0.5,
+    "process_override_allowed": false,
+    "processes": 10,
+    "threshold_override_allowed": false,
+    "timeout_override_allowed": false,
+    "timeout_seconds": 14400
+  },
+  "resource_reporting": {
+    "peak_memory_footprint_bytes_when_available": true,
+    "peak_rss_bytes_when_available": true,
+    "system_seconds": true,
+    "user_seconds": true,
+    "wallclock_seconds": true
+  },
+  "runner_interface": {
+    "cohort_role_choices": [
+      "development",
+      "confirmatory"
+    ],
+    "cohort_role_override_after_launch": false,
+    "confirmatory_tuning_allowed": false,
+    "required_arguments": [
+      "--input-fasta",
+      "--output-dir",
+      "--environment-prefix",
+      "--scope-contract",
+      "--cohort-role"
+    ]
+  },
+  "schema_version": "nar-plasclass-runner-contract-v1.1",
+  "scope": "manuscript-only comparative benchmarking",
+  "signal_contract": {
+    "signals_target_process_group": true,
+    "timeout_grace_seconds": 10,
+    "timeout_signal_final": "SIGKILL",
+    "timeout_signal_first": "SIGTERM"
+  },
+  "tool": {
+    "custom_classifier_wrapper_allowed": false,
+    "name": "PlasClass",
+    "official_script_relative_path": "bin/classify_fasta.py",
+    "official_script_sha256": "dadb391a1f88f802c6506aa735d1500c58b4441ac30fd5daacf0115feb7d708f",
+    "official_source": "https://github.com/Shamir-Lab/PlasClass",
+    "version": "0.1"
+  }
+}
