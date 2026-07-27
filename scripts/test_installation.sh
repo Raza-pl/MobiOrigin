@@ -9,7 +9,7 @@
 #
 # What it checks:
 #   1. plasflow2 binary is on PATH
-#   2. Model weights exist (data/models/mlp_v2.pt)
+#   2. Model weights and manifest exist and pass SHA-256 verification
 #   3. Example sequences are downloaded from NCBI (or reused)
 #   4. plasflow2 classify runs successfully (no databases needed)
 #   5. [--full] plasflow2 run completes with the example data
@@ -76,6 +76,24 @@ else
     echo "    Or models only: bash scripts/setup_databases.sh \\"
     echo "        --skip-plsdb --skip-card --skip-sarg --skip-amrfinder \\"
     echo "        --skip-vfdb --skip-bacmet --skip-mge --skip-iceberg --skip-mobsuite"
+    exit 1
+fi
+
+MODEL_MANIFEST="$MODEL.manifest.json"
+if [[ ! -f "$MODEL_MANIFEST" ]]; then
+    fail "MLP manifest not found: $MODEL_MANIFEST"
+    echo "    Rerun: bash scripts/setup_databases.sh"
+    exit 1
+fi
+
+if VERIFY_OUTPUT=$(PYTHONPATH="$REPO_ROOT/src" python -c \
+    'import sys; from plasflow2.classify.model_contract import load_model_contract; contract = load_model_contract(sys.argv[1], sys.argv[2]); print(f"{contract.model_id} sha256={contract.model_sha256}")' \
+    "$MODEL" "$MODEL_MANIFEST" 2>&1)
+then
+    ok "MLP contract verified: $VERIFY_OUTPUT"
+else
+    fail "MLP contract verification failed"
+    echo "$VERIFY_OUTPUT"
     exit 1
 fi
 

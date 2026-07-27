@@ -117,6 +117,16 @@ download() {
     ok "Downloaded: $label  ($(du -sh "$dest" | cut -f1))"
 }
 
+# ── Helper: verify the MLP against its cryptographic sidecar ─────────────────
+verify_mlp_contract() {
+    local model_path="$1"
+    local manifest_path="$2"
+
+    PYTHONPATH="$PROJECT_DIR/src" python -c \
+        'import sys; from plasflow2.classify.model_contract import load_model_contract; contract = load_model_contract(sys.argv[1], sys.argv[2]); print(f"{contract.model_id} sha256={contract.model_sha256}")' \
+        "$model_path" "$manifest_path"
+}
+
 # ── Helper: build a DIAMOND protein database ─────────────────────────────────
 build_diamond() {
     local fasta="$1" prefix="$2"
@@ -164,29 +174,32 @@ if $SKIP_MODELS; then
     warn "Skipping model download (--skip-models)"
 else
     MLP_PT="$MODEL_DIR/mlp_v2.pt"
+    MLP_MANIFEST="$MODEL_DIR/mlp_v2.pt.manifest.json"
     XGB_JSON="$MODEL_DIR/marker_xgb.json"
     XGB_META="$MODEL_DIR/marker_xgb.json.meta.json"
     PCA_PKL="$MODEL_DIR/k6_pca.pkl"
 
     ALL_MODELS_OK=true
-    for f in "$MLP_PT" "$XGB_JSON" "$XGB_META" "$PCA_PKL"; do
+    for f in "$MLP_PT" "$MLP_MANIFEST" "$XGB_JSON" "$XGB_META" "$PCA_PKL"; do
         [[ -f "$f" ]] || { ALL_MODELS_OK=false; break; }
     done
 
     if $ALL_MODELS_OK; then
         ok "mlp_v2.pt        ($(du -sh "$MLP_PT" | cut -f1))"
+        ok "MLP manifest     ($(du -sh "$MLP_MANIFEST" | cut -f1))"
         ok "marker_xgb.json  ($(du -sh "$XGB_JSON" | cut -f1))"
         ok "marker metadata  ($(du -sh "$XGB_META" | cut -f1))"
         ok "k6_pca.pkl       ($(du -sh "$PCA_PKL" | cut -f1))"
     else
         # ── Download from GitHub Releases ─────────────────────────────────────
-        # The calibrated MLP and native marker model are distributed
-        # with v2.1.0. The legacy PCA file remains available from v2.0.0.
+        # The calibrated MLP, its cryptographic manifest, and the native
+        # marker model are distributed with v2.1.0. The legacy PCA file
+        # remains available from v2.0.0.
         RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.1.0"
         LEGACY_RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
 
         model_ok=true
-        for fname in mlp_v2.pt marker_xgb.json marker_xgb.json.meta.json; do
+        for fname in mlp_v2.pt mlp_v2.pt.manifest.json marker_xgb.json marker_xgb.json.meta.json; do
             dest="$MODEL_DIR/$fname"
             if [[ ! -f "$dest" ]]; then
                 if ! download "$RELEASE_BASE/$fname" "$dest" "$fname"; then
@@ -215,13 +228,31 @@ else
             info "Options:"
             info "  1. Ask the developer for the model files and copy them to:"
             info "       $MODEL_DIR/"
-            info "     Required files: mlp_v2.pt  marker_xgb.json  marker_xgb.json.meta.json  k6_pca.pkl"
+            info "     Required files: mlp_v2.pt  mlp_v2.pt.manifest.json  marker_xgb.json  marker_xgb.json.meta.json  k6_pca.pkl"
             info ""
             info "  2. Train from scratch (requires training data):"
             info "       python scripts/train_model.py --help"
             info ""
             info "  PlasFlow v2 will NOT run without mlp_v2.pt."
         fi
+    fi
+
+    if [[ ! -f "$MLP_PT" || ! -f "$MLP_MANIFEST" ]]; then
+        err "The MLP and its manifest are both required."
+        info "Expected model:    $MLP_PT"
+        info "Expected manifest: $MLP_MANIFEST"
+        exit 1
+    fi
+
+    info "Verifying MLP checksum and compatibility manifest ..."
+    if verified_contract=$(verify_mlp_contract "$MLP_PT" "$MLP_MANIFEST" 2>&1); then
+        ok "Verified MLP contract: $verified_contract"
+    else
+        err "MLP contract verification failed."
+        echo "$verified_contract"
+        info "Delete both files and rerun setup:"
+        info "  rm -f '$MLP_PT' '$MLP_MANIFEST'"
+        exit 1
     fi
 fi
 

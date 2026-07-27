@@ -214,7 +214,7 @@ def main() -> None:
     ckpt_valid = ckpt_path.exists() and ckpt_path.stat().st_size > 0
     if ckpt_valid:
         try:
-            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             if ckpt.get("config") == expected_config:
                 rev6.load_state_dict(ckpt["model_state"])
                 optimizer.load_state_dict(ckpt["optimizer_state"])

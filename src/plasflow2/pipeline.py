@@ -75,6 +75,10 @@ from plasflow2.classify.predict import (
     _get_length_thresholds,
     predict,
 )
+from plasflow2.classify.threshold_policy import (
+    ThresholdPolicyError,
+    default_threshold_policy_for_profile,
+)
 from plasflow2.risk.scorer import RiskScore, score_nonplasmid, score_plasmid
 from plasflow2.utils.fasta import load_fasta, write_fasta
 
@@ -181,6 +185,10 @@ def run_pipeline(
     card_db: Path | str | None,
     aro_index: Path | str | None,
     work_dir: Path | str,
+    profile: str = "sequence-only",
+    allow_unverified_custom_model: bool = False,
+    compass_sketch_path: Path | str | None = None,
+    compass_threshold: float = 0.002,
     source_context: str = "unspecified",
     confidence_threshold: float | None = None,
     plasmid_threshold: float | None = None,
@@ -304,6 +312,40 @@ def run_pipeline(
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    runtime_policy = default_threshold_policy_for_profile(profile)
+    policy_violations: list[str] = []
+
+    if not runtime_policy.allow_threshold_overrides:
+        if confidence_threshold is not None:
+            policy_violations.append("confidence_threshold")
+        if plasmid_threshold is not None:
+            policy_violations.append("plasmid_threshold")
+        if lenient:
+            policy_violations.append("lenient")
+
+    if not runtime_policy.allow_argmax_fallback and argmax_fallback:
+        policy_violations.append("argmax_fallback")
+
+    if runtime_policy.requires_compass and compass_sketch_path is None:
+        policy_violations.append("missing COMPASS sketch")
+
+    if not runtime_policy.allow_compass and compass_sketch_path is not None:
+        policy_violations.append("COMPASS")
+
+    if not runtime_policy.allow_marker_fusion and enable_marker_fusion:
+        policy_violations.append("marker fusion")
+
+    if not runtime_policy.allow_postclassification_label_changes:
+        if require_hallmarks:
+            policy_violations.append("hallmark gate")
+        if widen_candidates:
+            policy_violations.append("candidate widening")
+
+    if policy_violations:
+        raise ThresholdPolicyError(
+            f"Profile {profile!r} forbids pipeline mutations: " + ", ".join(policy_violations)
+        )
+
     taxonomy_db_path = Path(taxonomy_db) if taxonomy_db else None
     taxon_map = Path(taxon_map_path) if taxon_map_path else None
 
@@ -355,7 +397,11 @@ def run_pipeline(
         plasmid_threshold=_effective_plasmid_threshold,
         argmax_fallback=argmax_fallback,
         source_context=source_context,
-        apply_prior=True,
+        apply_prior=None,
+        compass_sketch_path=compass_sketch_path,
+        compass_threshold=compass_threshold,
+        profile=profile,
+        allow_unverified_custom_model=allow_unverified_custom_model,
     )
     pred_by_id = {p.sequence_id: p for p in predictions}
 
@@ -984,6 +1030,13 @@ def run_pipeline(
                 _raw_tax_hits = parse_diamond_taxonomy_output(_diamond_tax_tsv)
             except Exception as _exc:
                 logger.warning("Could not parse taxonomy TSV for archaeal detection: %s", _exc)
+    if _raw_tax_hits and not runtime_policy.allow_postclassification_label_changes:
+        logger.info(
+            "Profile %s keeps taxonomy advisory; archaeal label override disabled.",
+            profile,
+        )
+        _raw_tax_hits = {}
+
     if _raw_tax_hits:
         try:
             # Only consider chromosome/unclassified candidates to avoid

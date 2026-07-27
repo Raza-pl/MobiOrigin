@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,6 +13,14 @@ import torch
 from plasflow2.utils.device import IDX_TO_CLASS
 from scipy.optimize import minimize_scalar  # type: ignore[import]
 from sklearn.metrics import log_loss, precision_recall_curve  # type: ignore[import]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _softmax(values: np.ndarray) -> np.ndarray:
@@ -97,9 +106,34 @@ def calibrate_model(
 
     validation = np.load(validation_scores_path)
     probabilities = np.asarray(validation["probabilities"], dtype=np.float64)
-    probabilities = probabilities / probabilities.sum(axis=1, keepdims=True)
     labels = np.asarray(validation["labels"], dtype=np.int64)
+
+    if probabilities.ndim != 2:
+        raise ValueError("Calibration probabilities must be a two-dimensional matrix.")
+    if len(probabilities) != len(labels):
+        raise ValueError("Calibration probabilities and labels have different row counts.")
+    if probabilities.shape[1] != len(IDX_TO_CLASS):
+        raise ValueError(
+            "Primary-model calibration requires exactly three probability "
+            f"columns; observed {probabilities.shape[1]}."
+        )
+    if not np.isfinite(probabilities).all():
+        raise ValueError("Calibration probabilities contain non-finite values.")
+
+    row_sums = probabilities.sum(axis=1, keepdims=True)
+    if np.any(row_sums <= 0):
+        raise ValueError("Calibration probability rows must have a positive sum.")
+    probabilities = probabilities / row_sums
+
     class_labels = list(range(probabilities.shape[1]))
+    observed_classes = {int(value) for value in np.unique(labels)}
+    expected_classes = set(class_labels)
+    if observed_classes != expected_classes:
+        raise ValueError(
+            "Calibration requires positive validation rows for every class; "
+            f"expected {sorted(expected_classes)}, "
+            f"observed {sorted(observed_classes)}."
+        )
 
     def objective(temperature: float) -> float:
         return float(
@@ -122,11 +156,11 @@ def calibrate_model(
     if "lengths" in validation:
         lengths = np.asarray(validation["lengths"], dtype=np.int64)
         length_bins = {
-            "<2 kb": (0, 2_000),
-            "2-5 kb": (2_000, 5_000),
+            "<=2 kb": (0, 2_001),
+            "2-5 kb": (2_001, 5_000),
             "5-10 kb": (5_000, 10_000),
-            "10-50 kb": (10_000, 50_000),
-            ">50 kb": (50_000, np.iinfo(np.int64).max),
+            "10-20 kb": (10_000, 20_000),
+            ">20 kb": (20_000, np.iinfo(np.int64).max),
         }
         for name, (lower, upper) in length_bins.items():
             mask = (lengths >= lower) & (lengths < upper)
@@ -138,14 +172,30 @@ def calibrate_model(
                     ),
                 }
 
-    state = torch.load(model_path, map_location="cpu", weights_only=False)
+    source_model_sha256 = _sha256(model_path)
+    validation_scores_sha256 = _sha256(validation_scores_path)
+
+    state = torch.load(model_path, map_location="cpu", weights_only=True)
+    for required_key in ("net.11.weight", "net.11.bias"):
+        if required_key not in state:
+            raise ValueError(f"Model checkpoint is missing required tensor {required_key!r}.")
+
     state["net.11.weight"] = state["net.11.weight"] / temperature
     state["net.11.bias"] = state["net.11.bias"] / temperature
     out_model_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(state, out_model_path)
+    calibrated_model_sha256 = _sha256(out_model_path)
 
     report: dict[str, object] = {
+        "calibration_method": "scalar_temperature_final_logits",
         "temperature": temperature,
+        "class_names": [IDX_TO_CLASS[index] for index in class_labels],
+        "class_counts": {
+            IDX_TO_CLASS[index]: int((labels == index).sum()) for index in class_labels
+        },
+        "source_model_sha256": source_model_sha256,
+        "validation_scores_sha256": validation_scores_sha256,
+        "calibrated_model_sha256": calibrated_model_sha256,
         "validation_rows": int(len(labels)),
         "nll_before": float(log_loss(labels, probabilities, labels=class_labels)),
         "nll_after": float(log_loss(labels, calibrated, labels=class_labels)),

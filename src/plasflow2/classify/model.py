@@ -8,6 +8,7 @@ Architecture: MLP (9557→2048→512→128→3) with BatchNorm, GELU, Dropout.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 
 import torch
@@ -58,6 +59,10 @@ class PlasFlowMLP(nn.Module):
         return self.net(x.float())  # float32 required for MPS
 
 
+class ModelLoadError(ValueError):
+    """Raised when an MLP checkpoint cannot be loaded safely."""
+
+
 def save_model(model: PlasFlowMLP, path: Path | str) -> None:
     """Save model weights to CPU (safe across platforms).
 
@@ -71,49 +76,128 @@ def save_model(model: PlasFlowMLP, path: Path | str) -> None:
     logger.info("Saved MLP weights to %s", path)
 
 
-def load_model(path: Path | str, device: torch.device | None = None) -> PlasFlowMLP:
-    """Load MLP weights from a .pt file.
+def load_model(
+    path: Path | str,
+    device: torch.device | None = None,
+    *,
+    expected_input_dim: int | None = None,
+    expected_num_classes: int | None = None,
+) -> PlasFlowMLP:
+    """Safely load a tensor-only MLP state dictionary.
 
-    The input dimension is inferred from the checkpoint's first-layer weight
-    shape, so the function remains correct even if FEATURE_DIM changes between
-    releases.
-
-    Args:
-        path: Path to .pt file.
-        device: Target device (defaults to CPU if not specified).
-
-    Returns:
-        PlasFlowMLP in eval mode.
+    PyTorch pickle object reconstruction is disabled. The checkpoint must be
+    a plain mapping of string parameter names to tensors and must describe the
+    expected PlasFlow MLP architecture.
     """
-    # weights_only=False: model .pt files are our own trusted weights (not
-    # user-supplied), so pickle-based loading is safe here. Explicit False
-    # suppresses the FutureWarning in PyTorch >= 2.4.
-    state = torch.load(str(path), map_location="cpu", weights_only=False)
-    # Infer input_dim from the saved first-layer weight rather than hardcoding
-    # INPUT_DIM — this survives feature-dimension changes without manual updates.
-    input_dim = state["net.0.weight"].shape[1]
-    # Infer hidden widths and num_classes so compact/full candidates share the
-    # same portable checkpoint format without a sidecar configuration file.
-    hidden_dims = (
-        state["net.0.weight"].shape[0],
-        state["net.4.weight"].shape[0],
-        state["net.8.weight"].shape[0],
+    checkpoint = Path(path)
+
+    try:
+        raw_state = torch.load(
+            str(checkpoint),
+            map_location="cpu",
+            weights_only=True,
+        )
+    except Exception as error:
+        raise ModelLoadError(
+            f"Unable to safely load tensor-only MLP checkpoint {checkpoint}: {error}"
+        ) from error
+
+    if not isinstance(raw_state, Mapping):
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} must contain a state-dictionary mapping."
+        )
+
+    state = dict(raw_state)
+    if not state:
+        raise ModelLoadError(f"MLP checkpoint {checkpoint} contains no parameters.")
+
+    if any(not isinstance(key, str) for key in state):
+        raise ModelLoadError(f"MLP checkpoint {checkpoint} contains a non-string parameter name.")
+
+    non_tensor_keys = [key for key, value in state.items() if not torch.is_tensor(value)]
+    if non_tensor_keys:
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} contains non-tensor values: "
+            + ", ".join(sorted(non_tensor_keys)[:10])
+        )
+
+    required_weights = (
+        "net.0.weight",
+        "net.4.weight",
+        "net.8.weight",
+        "net.11.weight",
     )
-    num_classes = state["net.11.weight"].shape[0]
+    missing = [key for key in required_weights if key not in state]
+    if missing:
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} is missing required weights: " + ", ".join(missing)
+        )
+
+    weights = [state[key] for key in required_weights]
+    if any(weight.ndim != 2 for weight in weights):
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} contains invalid linear-layer dimensions."
+        )
+
+    first, second, third, output = weights
+    hidden_1, input_dim = first.shape
+    hidden_2, second_input = second.shape
+    hidden_3, third_input = third.shape
+    num_classes, output_input = output.shape
+
+    dimensions = (
+        input_dim,
+        hidden_1,
+        hidden_2,
+        hidden_3,
+        num_classes,
+    )
+    if any(int(value) <= 0 for value in dimensions):
+        raise ModelLoadError(f"MLP checkpoint {checkpoint} contains a zero-sized architecture.")
+
+    if second_input != hidden_1 or third_input != hidden_2 or output_input != hidden_3:
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} has incompatible adjacent layer dimensions."
+        )
+
+    if expected_input_dim is not None and input_dim != expected_input_dim:
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} input dimension {input_dim} does not "
+            f"match its declared contract value {expected_input_dim}."
+        )
+
+    if expected_num_classes is not None and num_classes != expected_num_classes:
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} output dimension {num_classes} does not "
+            f"match its declared contract value {expected_num_classes}."
+        )
+
     model = PlasFlowMLP(
-        input_dim=input_dim,
-        num_classes=num_classes,
-        hidden_dims=hidden_dims,
+        input_dim=int(input_dim),
+        num_classes=int(num_classes),
+        hidden_dims=(
+            int(hidden_1),
+            int(hidden_2),
+            int(hidden_3),
+        ),
     )
-    model.load_state_dict(state)
+
+    try:
+        model.load_state_dict(state, strict=True)
+    except RuntimeError as error:
+        raise ModelLoadError(
+            f"MLP checkpoint {checkpoint} does not match the PlasFlow architecture: {error}"
+        ) from error
+
     model.eval()
     if device is not None:
         model = model.to(device)
+
     logger.info(
-        "Loaded MLP from %s  (input_dim=%d, hidden_dims=%s, num_classes=%d)",
-        path,
+        "Safely loaded MLP from %s " "(input_dim=%d, hidden_dims=%s, num_classes=%d)",
+        checkpoint,
         input_dim,
-        hidden_dims,
+        (hidden_1, hidden_2, hidden_3),
         num_classes,
     )
     return model
