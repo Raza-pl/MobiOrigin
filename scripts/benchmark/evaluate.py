@@ -146,24 +146,176 @@ def _parse_genomad(results_dir: Path) -> dict[str, str]:
 
 
 def _parse_plasclass(results_dir: Path) -> dict[str, str]:
-    """PlasClass: plasclass_scores.csv — columns: name, score (0-1 plasmid prob)."""
-    csv_path = results_dir / "plasclass" / "plasclass_scores.csv"
-    if not csv_path.exists():
-        logger.warning("plasclass: %s not found", csv_path)
+    """Parse frozen standardized PlasClass output or legacy score CSV."""
+
+    plasclass_dir = results_dir / "plasclass"
+    if not plasclass_dir.exists():
         return {}
-    THRESHOLD = 0.5
-    out = {}
-    with open(csv_path) as fh:
-        reader = csv.DictReader(fh)
+
+    standardized = plasclass_dir / "standardized_predictions.tsv"
+
+    if standardized.exists():
+        output: dict[str, str] = {}
+        expected_status = {
+            "plasmid": "called_plasmid",
+            "non-plasmid": "called_non_plasmid",
+            "unclassified": "missing_output",
+        }
+
+        with standardized.open() as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            required = {
+                "contig_id",
+                "predicted_label",
+                "prediction_status",
+                "plasmid_score",
+                "decision_threshold",
+                "source_tool",
+                "source_version",
+            }
+            missing = required - set(reader.fieldnames or [])
+
+            if missing:
+                raise ValueError(
+                    "PlasClass standardized output is missing columns: "
+                    + ", ".join(sorted(missing))
+                )
+
+            for row in reader:
+                contig_id = (row.get("contig_id") or "").strip()
+                label = (row.get("predicted_label") or "").strip().lower()
+                prediction_status = (row.get("prediction_status") or "").strip()
+                score_text = (row.get("plasmid_score") or "").strip()
+                threshold_text = (row.get("decision_threshold") or "").strip()
+                source_tool = (row.get("source_tool") or "").strip()
+                source_version = (row.get("source_version") or "").strip()
+
+                if not contig_id:
+                    raise ValueError("PlasClass standardized output has an empty ID")
+
+                if contig_id in output:
+                    raise ValueError("Duplicate PlasClass standardized identifier: " f"{contig_id}")
+
+                if label not in expected_status:
+                    raise ValueError(f"Invalid PlasClass standardized label: {label!r}")
+
+                if prediction_status != expected_status[label]:
+                    raise ValueError(
+                        "PlasClass prediction status is inconsistent with "
+                        f"label for {contig_id}: "
+                        f"{prediction_status!r} versus {label!r}"
+                    )
+
+                try:
+                    decision_threshold = float(threshold_text)
+                except ValueError as error:
+                    raise ValueError(
+                        "Invalid PlasClass decision threshold for "
+                        f"{contig_id}: {threshold_text!r}"
+                    ) from error
+
+                if not math.isfinite(decision_threshold) or decision_threshold != 0.5:
+                    raise ValueError(
+                        "PlasClass decision threshold must equal 0.5; "
+                        f"{contig_id} declares {threshold_text!r}"
+                    )
+
+                if source_tool != "PlasClass":
+                    raise ValueError(
+                        "Invalid PlasClass source_tool for " f"{contig_id}: {source_tool!r}"
+                    )
+
+                if source_version != "0.1":
+                    raise ValueError(
+                        "Invalid PlasClass source_version for " f"{contig_id}: {source_version!r}"
+                    )
+
+                if label == "unclassified":
+                    if score_text:
+                        raise ValueError(
+                            "PlasClass abstention must not contain a score: " f"{contig_id}"
+                        )
+                else:
+                    try:
+                        score = float(score_text)
+                    except ValueError as error:
+                        raise ValueError(
+                            "Invalid PlasClass score for " f"{contig_id}: {score_text!r}"
+                        ) from error
+
+                    if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                        raise ValueError(
+                            "PlasClass score must be finite and within "
+                            f"[0,1] for {contig_id}: {score_text!r}"
+                        )
+
+                    expected_label = "plasmid" if score >= decision_threshold else "non-plasmid"
+
+                    if label != expected_label:
+                        raise ValueError(
+                            "PlasClass score and label are inconsistent for "
+                            f"{contig_id}: score={score_text}, label={label}"
+                        )
+
+                output[contig_id] = label
+
+        logger.info(
+            "plasclass adapter: %d predictions",
+            len(output),
+        )
+        return output
+
+    legacy_scores = plasclass_dir / "plasclass_scores.csv"
+
+    if not legacy_scores.exists():
+        logger.warning(
+            "plasclass: standardized_predictions.tsv not found in %s",
+            plasclass_dir,
+        )
+        return {}
+
+    logger.warning(
+        "plasclass: using legacy score-CSV fallback; confirmatory runs "
+        "require standardized_predictions.tsv"
+    )
+
+    threshold = 0.5
+    output: dict[str, str] = {}
+
+    with legacy_scores.open() as handle:
+        reader = csv.DictReader(handle)
+
         for row in reader:
-            sid = row.get("name") or row.get("seq_name") or row.get("id", "")
+            contig_id = (row.get("name") or row.get("seq_name") or row.get("id") or "").strip()
+
+            if not contig_id:
+                raise ValueError("PlasClass legacy score output has an empty identifier")
+
+            if contig_id in output:
+                raise ValueError("Duplicate PlasClass legacy identifier: " f"{contig_id}")
+
+            score_text = (row.get("score") or row.get("plasmid_score") or "").strip()
+
             try:
-                score = float(row.get("score") or row.get("plasmid_score", 0.0))
-            except ValueError:
-                score = 0.0
-            out[sid] = "plasmid" if score >= THRESHOLD else "non-plasmid"
-    logger.info("plasclass: %d predictions", len(out))
-    return out
+                score = float(score_text)
+            except ValueError as error:
+                raise ValueError(
+                    "Invalid PlasClass legacy score for " f"{contig_id}: {score_text!r}"
+                ) from error
+
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                raise ValueError(
+                    "PlasClass legacy score must be finite and within "
+                    f"[0,1] for {contig_id}: {score_text!r}"
+                )
+
+            output[contig_id] = "plasmid" if score >= threshold else "non-plasmid"
+
+    logger.info(
+        "plasclass legacy fallback: %d predictions",
+        len(output),
+    )
+    return output
 
 
 def _parse_rfplasmid(results_dir: Path) -> dict[str, str]:

@@ -10,6 +10,7 @@ import pytest
 from scripts.benchmark.evaluate import (
     _parse_genomad,
     _parse_mobrecon,
+    _parse_plasclass,
     _parse_plasflow2,
     _parse_rfplasmid,
     evaluate,
@@ -272,3 +273,159 @@ def test_incomplete_standardized_genomad_output_abstains(
         tool_status = {row["tool"]: row for row in csv.DictReader(handle, delimiter="\t")}
     assert tool_status["genomad"]["available"] == "false"
     assert "incomplete output" in tool_status["genomad"]["reason"]
+
+
+def test_plasclass_standardized_output_preserves_binary_semantics(
+    tmp_path: Path,
+) -> None:
+    plasclass_dir = tmp_path / "plasclass"
+    plasclass_dir.mkdir()
+
+    (plasclass_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\t"
+        "plasmid_score\tdecision_threshold\tsource_tool\t"
+        "source_version\n"
+        "p1\tplasmid\tcalled_plasmid\t0.75\t0.5\t"
+        "PlasClass\t0.1\n"
+        "c1\tnon-plasmid\tcalled_non_plasmid\t0.25\t0.5\t"
+        "PlasClass\t0.1\n"
+        "u1\tunclassified\tmissing_output\t\t0.5\t"
+        "PlasClass\t0.1\n"
+    )
+
+    assert _parse_plasclass(tmp_path) == {
+        "p1": "plasmid",
+        "c1": "non-plasmid",
+        "u1": "unclassified",
+    }
+
+
+def test_plasclass_standardized_output_rejects_duplicates(
+    tmp_path: Path,
+) -> None:
+    plasclass_dir = tmp_path / "plasclass"
+    plasclass_dir.mkdir()
+
+    (plasclass_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\t"
+        "plasmid_score\tdecision_threshold\tsource_tool\t"
+        "source_version\n"
+        "p1\tplasmid\tcalled_plasmid\t0.75\t0.5\t"
+        "PlasClass\t0.1\n"
+        "p1\tnon-plasmid\tcalled_non_plasmid\t0.25\t0.5\t"
+        "PlasClass\t0.1\n"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Duplicate PlasClass",
+    ):
+        _parse_plasclass(tmp_path)
+
+
+def test_plasclass_standardized_output_rejects_score_label_mismatch(
+    tmp_path: Path,
+) -> None:
+    plasclass_dir = tmp_path / "plasclass"
+    plasclass_dir.mkdir()
+
+    (plasclass_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\t"
+        "plasmid_score\tdecision_threshold\tsource_tool\t"
+        "source_version\n"
+        "p1\tnon-plasmid\tcalled_non_plasmid\t0.90\t0.5\t"
+        "PlasClass\t0.1\n"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="score and label are inconsistent",
+    ):
+        _parse_plasclass(tmp_path)
+
+
+def test_plasclass_abstentions_remain_in_primary_metrics(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    output = tmp_path / "evaluation"
+    labels = tmp_path / "labels.tsv"
+    plasclass_dir = results / "plasclass"
+    plasclass_dir.mkdir(parents=True)
+    _write_labels(labels)
+
+    (plasclass_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\t"
+        "plasmid_score\tdecision_threshold\tsource_tool\t"
+        "source_version\n"
+        "p1\tunclassified\tmissing_output\t\t0.5\t"
+        "PlasClass\t0.1\n"
+        "c1\tnon-plasmid\tcalled_non_plasmid\t0.20\t0.5\t"
+        "PlasClass\t0.1\n"
+    )
+    (results / "timing.tsv").write_text("tool\twallclock_sec\tstatus\n" "plasclass\t1\tok\n")
+
+    evaluate(results, labels, output)
+
+    with (output / "metrics_overall.tsv").open() as handle:
+        metrics = list(csv.DictReader(handle, delimiter="\t"))
+
+    assert len(metrics) == 1
+    assert metrics[0]["tool"] == "plasclass"
+    assert metrics[0]["tp"] == "0"
+    assert metrics[0]["fp"] == "0"
+    assert metrics[0]["tn"] == "1"
+    assert metrics[0]["fn"] == "1"
+    assert metrics[0]["n_unclassified"] == "1"
+    assert metrics[0]["prediction_coverage"] == "0.5"
+
+    with (output / "per_contig.tsv").open() as handle:
+        predictions = {
+            row["contig_id"]: row["pred_plasclass"]
+            for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+    assert predictions == {
+        "p1": "unclassified",
+        "c1": "non-plasmid",
+    }
+
+
+def test_incomplete_standardized_plasclass_output_abstains(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    output = tmp_path / "evaluation"
+    labels = tmp_path / "labels.tsv"
+    plasclass_dir = results / "plasclass"
+    plasclass_dir.mkdir(parents=True)
+    _write_labels(labels)
+
+    (plasclass_dir / "standardized_predictions.tsv").write_text(
+        "contig_id\tpredicted_label\tprediction_status\t"
+        "plasmid_score\tdecision_threshold\tsource_tool\t"
+        "source_version\n"
+        "p1\tplasmid\tcalled_plasmid\t0.75\t0.5\t"
+        "PlasClass\t0.1\n"
+    )
+    (results / "timing.tsv").write_text("tool\twallclock_sec\tstatus\n" "plasclass\t1\tok\n")
+
+    evaluate(results, labels, output)
+
+    with (output / "per_contig.tsv").open() as handle:
+        predictions = {
+            row["contig_id"]: row["pred_plasclass"]
+            for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+    assert predictions == {
+        "p1": "plasmid",
+        "c1": "unclassified",
+    }
+
+    with (output / "tool_status.tsv").open() as handle:
+        tool_status = {row["tool"]: row for row in csv.DictReader(handle, delimiter="\t")}
+
+    assert tool_status["plasclass"]["available"] == "false"
+    assert tool_status["plasclass"]["included_in_metrics"] == "true"
+    assert "incomplete output" in tool_status["plasclass"]["reason"]
