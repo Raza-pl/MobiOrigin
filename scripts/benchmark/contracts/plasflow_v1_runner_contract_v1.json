@@ -1,0 +1,253 @@
+{
+  "schema_version": "nar-plasflow-v1-runner-contract-v1.1",
+  "scope": "manuscript-only comparative benchmarking",
+  "production_workflow_component": false,
+  "tool": {
+    "name": "PlasFlow",
+    "version": "1.1",
+    "official_cli": "/usr/local/bin/PlasFlow.py",
+    "immutable_image": "quay.io/biocontainers/plasflow@sha256:e69acee3233010dbf5a5245620252bf5b9bde930ad5546473ec496992995a7da",
+    "container_digest": "sha256:e69acee3233010dbf5a5245620252bf5b9bde930ad5546473ec496992995a7da",
+    "platform": "linux/amd64",
+    "distribution": "Bioconda plasflow 1.1.0 build py35_0",
+    "application_source": "PyPI plasflow 1.1.0",
+    "model_source": "GitHub PlasFlow v1.1 archive",
+    "container_executable_sha256": "78f66cd77ad5614aaa45bbc876c1cc567682123a5405664fb2c8a76b929e55e9"
+  },
+  "adapter_contract": {
+    "path": "evaluation/release_audit/nar_benchmark_20260727/81_plasflow_v1_adapter_contract/plasflow_v1_adapter_contract.json",
+    "contract_sha256": "7e24ac29aedb6f0b106e421302cb1ee147f076c96c24d299f9b9d55d1b42c3bf",
+    "adapter_path": "scripts/benchmark/adapters/plasflow_v1.py",
+    "adapter_sha256": "431b92f4d7150220cf42a14832ed5529ad930ad16fe4f095ef6a973906fb4236"
+  },
+  "runtime_contract": {
+    "runtime": "Docker through Colima",
+    "docker_context": "colima-plasflow1-nar",
+    "colima_profile": "plasflow1-nar",
+    "guest_os": "linux",
+    "guest_architecture": "amd64",
+    "vm_backend": "qemu",
+    "network_required": false,
+    "network_mode": "none",
+    "image_identity_verified_before_run": true,
+    "image_identity_verified_after_run": true,
+    "host_docker_context_must_not_change": true
+  },
+  "runner_interface": {
+    "required_arguments": [
+      "--input-fasta",
+      "--output-dir",
+      "--docker-context",
+      "--scope-contract",
+      "--cohort-role"
+    ],
+    "cohort_role_choices": [
+      "development",
+      "confirmatory"
+    ],
+    "cohort_role_required": true,
+    "confirmatory_tuning_allowed": false
+  },
+  "publication_parameters": {
+    "threshold": 0.7,
+    "threshold_override_allowed": false,
+    "tool_invocations_per_cohort": 1,
+    "cohort_sharding_allowed": false,
+    "parallel_sequence_partitions_allowed": false,
+    "timeout_seconds": 172800,
+    "timeout_override_allowed": false,
+    "native_batch_size_argument_supported": false,
+    "native_cache_files_produced": false
+  },
+  "command_contract": {
+    "launcher_prefix": [
+      "/usr/bin/caffeinate",
+      "-i",
+      "/usr/bin/time",
+      "-l"
+    ],
+    "docker_arguments": [
+      "--context",
+      "colima-plasflow1-nar",
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--platform",
+      "linux/amd64",
+      "--volume",
+      "{output_directory}:/work",
+      "--workdir",
+      "/work",
+      "quay.io/biocontainers/plasflow@sha256:e69acee3233010dbf5a5245620252bf5b9bde930ad5546473ec496992995a7da",
+      "PlasFlow.py",
+      "--input",
+      "/work/input.fasta",
+      "--output",
+      "/work/raw_predictions.tsv",
+      "--threshold",
+      "0.7"
+    ],
+    "shell_execution_allowed": false,
+    "process_group_required": true,
+    "unique_container_name_required": true,
+    "forbidden_arguments": [
+      "--batch_size"
+    ],
+    "native_executable_interface": [
+      "--input",
+      "--output",
+      "--threshold",
+      "--labels",
+      "--models"
+    ]
+  },
+  "cohort_dependence": {
+    "tfidf_fitted_on_submitted_cohort": true,
+    "tfidf_smooth_idf": false,
+    "predictions_may_depend_on_cohort_composition": true,
+    "external_sequence_sharding_prohibited": true,
+    "full_frozen_cohort_single_invocation_required": true,
+    "internal_kmer_frequency_chunking_allowed": false,
+    "internal_chunks_recombined_before_tfidf_fit": false,
+    "development_and_confirmatory_cohorts_run_separately": true,
+    "publication_disclosure_required": "PlasFlow 1.1.0, Bioconda build py35_0, fits an unsmoothed TF-IDF transform on each complete submitted cohort. The frozen executable provides no batching interface, so each cohort was processed in one invocation without external sharding.",
+    "source_markers": {
+      "unsmoothed_tfidf": true,
+      "cohort_fit_transform": true,
+      "cached_transformed_matrix": false,
+      "cache_reuse_check": false,
+      "internal_frequency_chunking": false,
+      "batch_size_cli_argument": false
+    },
+    "native_batching_supported": false,
+    "full_cohort_loaded_for_kmer_counting": true,
+    "native_cache_files_produced": false
+  },
+  "input_contract": {
+    "format": "FASTA",
+    "canonical_identifier": "first whitespace-delimited header token",
+    "canonical_identifier_collisions": "reject",
+    "empty_sequences": "reject",
+    "input_sha256_recorded": true,
+    "input_sequence_count_recorded": true,
+    "input_base_count_recorded": true,
+    "input_record_order_preserved": true,
+    "cohort_role_recorded_in_provenance": true
+  },
+  "input_staging_contract": {
+    "original_input_modified": false,
+    "original_input_mounted_directly": false,
+    "byte_identical_copy_created_in_fresh_output": true,
+    "staged_input_name": "input.fasta",
+    "staged_input_sha256_must_match_original": true,
+    "reason": "A byte-identical copy confines the legacy executable and all generated outputs to a fresh manuscript-only run directory.",
+    "output_directory_must_be_new_or_empty": true
+  },
+  "decision_contract": {
+    "native_threshold": 0.7,
+    "native_final_label_preserved": true,
+    "adapter_reclassification_allowed": false,
+    "plasmid_mapping": "plasmid",
+    "chromosome_mapping": "non-plasmid",
+    "unclassified_mapping": "unclassified abstention",
+    "native_phage_class_available": false,
+    "three_class_comparison_allowed": false,
+    "binary_plasmid_detection_only": true
+  },
+  "output_contract": {
+    "required_files": [
+      "input.fasta",
+      "raw_predictions.tsv",
+      "raw_predictions.tsv_plasmids.fasta",
+      "raw_predictions.tsv_chromosomes.fasta",
+      "raw_predictions.tsv_unclassified.fasta",
+      "standardized_predictions.tsv",
+      "adapter_metadata.json",
+      "runner_provenance.json",
+      "command.json",
+      "stdout.log",
+      "stderr.log",
+      "resource_usage.txt",
+      "artifact_checksums.sha256"
+    ],
+    "complete_raw_output_required": true,
+    "complete_standardized_output_required": true,
+    "standardized_output_order": "input FASTA order",
+    "overwrite_existing_output": false,
+    "partial_artifacts_retained": true
+  },
+  "failure_contract": {
+    "nonzero_tool_return_code": "runner failure",
+    "timeout": "runner failure",
+    "adapter_failure": "runner failure",
+    "missing_raw_rows": "runner failure",
+    "extra_raw_rows": "runner failure",
+    "changed_image_identity": "runner failure",
+    "changed_adapter_identity": "runner failure",
+    "staged_input_hash_mismatch": "runner failure",
+    "failed_run_metric_semantics": "all missing predictions become abstentions",
+    "unsupported_native_cli_argument": "runner contract failure"
+  },
+  "signal_contract": {
+    "signals_target_process_group": true,
+    "timeout_signal_first": "SIGTERM",
+    "timeout_grace_seconds": 30,
+    "timeout_signal_final": "SIGKILL",
+    "container_cleanup_required": true
+  },
+  "resource_reporting": {
+    "wallclock_seconds": true,
+    "user_seconds": true,
+    "system_seconds": true,
+    "peak_memory_footprint_bytes_when_available": true,
+    "container_exit_code": true
+  },
+  "isolation_policy": {
+    "code_location": "scripts/benchmark",
+    "production_source_imports_allowed": false,
+    "production_cli_wiring_allowed": false,
+    "production_pipeline_wiring_allowed": false,
+    "production_dependency_changes_allowed": false
+  },
+  "known_limitations": [
+    "PlasFlow v1.1 has no native phage class and is evaluated only for binary plasmid detection.",
+    "The legacy linux/amd64 image runs under QEMU emulation on Apple Silicon and may require many hours.",
+    "PlasFlow 1.1.0 fits unsmoothed TF-IDF on each submitted cohort, so predictions may depend on cohort composition.",
+    "The frozen Bioconda py35_0 executable has no batch-size interface and processes the complete cohort in memory."
+  ],
+  "evidence_sha256": {
+    "adapter": "431b92f4d7150220cf42a14832ed5529ad930ad16fe4f095ef6a973906fb4236",
+    "evaluator": "33fea09029afead08c1135c4e1fca758cf918e49f7246c24f51a7aac70166a08",
+    "official_source": "76f19d1fd04e627946e530facb8c709a6019e44414af844035960e13ca4e68b6",
+    "adapter_contract_file": "5e10b6c08931215a429b7c21ce2ca0119c7fb6057fceea7eedf0fa87503ca77a",
+    "adapter_validation": "ddb7db57ef80902b6b2f1814bdf9c1d5ca166ca77cd6388af4822a78df6fdd7d",
+    "evaluator_validation": "13969739c3b9e9ef1fcec2c668947633e36d6d150c9729f3e702c726af919361",
+    "checkpoint_validation": "22deb0c12ed1a234b5f203246a42fe38501ed35e510c3caac81fd2e51256e37a",
+    "immutable_container_executable": "78f66cd77ad5614aaa45bbc876c1cc567682123a5405664fb2c8a76b929e55e9",
+    "packaging_provenance_correction": "a7ba675692879c084f835fbdfec7cfd3e21111ede49e27f3c69013f8306eb10f",
+    "failed_runner_provenance": "6570ec2cd4917aa327b2313781b69ac52db5b0256d7bb510b79554e955c05461"
+  },
+  "preprocessing_artifact_contract": {
+    "kmer_counts_retained": false,
+    "tfidf_arrays_retained": false,
+    "temporary_chunk_fastas_retained": false,
+    "native_cache_reuse_possible": false,
+    "full_cohort_processed_in_memory": true,
+    "memory_scaling_limitation_disclosed": true
+  },
+  "contract_correction": {
+    "previous_contract_sha256": "582444babab404f4c74b1563ec4e0f849fa07ceaeb5fad7acf8f9129cfa3d15e",
+    "trigger": "Synthetic runner smoke returned argparse status 2 because the frozen executable rejected --batch_size.",
+    "root_cause": "The previous runner contract conflated the later GitHub v1.1 executable with the PyPI 1.1.0 executable installed by Bioconda build py35_0.",
+    "models_deserialized_during_failure": false,
+    "predictions_generated_during_failure": false,
+    "threshold_changed": false,
+    "decision_semantics_changed": false,
+    "biological_labels_changed": false,
+    "external_sharding_allowed": false,
+    "image_source_sha256": "78f66cd77ad5614aaa45bbc876c1cc567682123a5405664fb2c8a76b929e55e9",
+    "packaging_report_sha256": "a7ba675692879c084f835fbdfec7cfd3e21111ede49e27f3c69013f8306eb10f"
+  },
+  "contract_sha256": "1a1666397b5a8aca209e34feabb2bb89cb2eaca6238dc2a281164195c6171f43"
+}

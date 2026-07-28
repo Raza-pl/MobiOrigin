@@ -34,11 +34,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-TOOLS = ["plasflow2", "genomad", "plasclass", "rfplasmid", "mobrecon"]
+TOOLS = ["plasflow2", "plasflow_v1", "genomad", "plasclass", "rfplasmid", "mobrecon"]
 
 # These parsers are expected to emit one row for essentially every input
 # contig.  Positive-only tools such as geNomad are intentionally excluded.
-FULL_COVERAGE_TOOLS = {"plasflow2", "plasclass", "rfplasmid", "mobrecon"}
+FULL_COVERAGE_TOOLS = {"plasflow2", "plasflow_v1", "plasclass", "rfplasmid", "mobrecon"}
 
 LENGTH_TIERS = ["<2 kb", "2-5 kb", "5-10 kb", "10-50 kb", ">50 kb"]
 
@@ -318,6 +318,191 @@ def _parse_plasclass(results_dir: Path) -> dict[str, str]:
     return output
 
 
+def _parse_plasflow_v1(
+    results_dir: Path,
+) -> dict[str, str]:
+    """Parse the frozen standardized PlasFlow v1.1 output."""
+
+    standardized = results_dir / "plasflow_v1" / "standardized_predictions.tsv"
+
+    if not standardized.exists():
+        return {}
+
+    output: dict[str, str] = {}
+    expected_statuses = {
+        "plasmid": {"called_plasmid"},
+        "non-plasmid": {"called_non_plasmid"},
+        "unclassified": {
+            "native_abstention",
+            "missing_output",
+        },
+    }
+    expected_digest = "sha256:e69acee3233010dbf5a5245620252bf5" "b9bde930ad5546473ec496992995a7da"
+
+    with standardized.open() as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        required = {
+            "contig_id",
+            "raw_label",
+            "predicted_label",
+            "prediction_status",
+            "plasmid_probability",
+            "chromosome_probability",
+            "max_class_probability",
+            "decision_threshold",
+            "source_tool",
+            "source_version",
+            "container_digest",
+        }
+        missing = required - set(reader.fieldnames or [])
+
+        if missing:
+            raise ValueError(
+                "PlasFlow v1 standardized output is missing "
+                "columns: " + ", ".join(sorted(missing))
+            )
+
+        for row in reader:
+            contig_id = (row.get("contig_id") or "").strip()
+            raw_label = (row.get("raw_label") or "").strip()
+            label = (row.get("predicted_label") or "").strip().lower()
+            prediction_status = (row.get("prediction_status") or "").strip()
+            threshold_text = (row.get("decision_threshold") or "").strip()
+            source_tool = (row.get("source_tool") or "").strip()
+            source_version = (row.get("source_version") or "").strip()
+            container_digest = (row.get("container_digest") or "").strip()
+
+            if not contig_id:
+                raise ValueError("PlasFlow v1 standardized output has " "an empty ID")
+
+            if contig_id in output:
+                raise ValueError("Duplicate PlasFlow v1 standardized " f"identifier: {contig_id}")
+
+            if label not in expected_statuses:
+                raise ValueError("Invalid PlasFlow v1 standardized label: " f"{label!r}")
+
+            if prediction_status not in expected_statuses[label]:
+                raise ValueError(
+                    "PlasFlow v1 prediction status is "
+                    "inconsistent with its label for "
+                    f"{contig_id}: {prediction_status!r} "
+                    f"versus {label!r}"
+                )
+
+            try:
+                decision_threshold = float(threshold_text)
+            except ValueError as error:
+                raise ValueError(
+                    "Invalid PlasFlow v1 threshold for " f"{contig_id}: {threshold_text!r}"
+                ) from error
+
+            if not math.isfinite(decision_threshold) or decision_threshold != 0.7:
+                raise ValueError(
+                    "PlasFlow v1 threshold must equal 0.7; "
+                    f"{contig_id} declares "
+                    f"{threshold_text!r}"
+                )
+
+            if source_tool != "PlasFlow":
+                raise ValueError(
+                    "Invalid PlasFlow v1 source_tool for " f"{contig_id}: {source_tool!r}"
+                )
+
+            if source_version != "1.1":
+                raise ValueError(
+                    "Invalid PlasFlow v1 source_version for " f"{contig_id}: {source_version!r}"
+                )
+
+            if container_digest != expected_digest:
+                raise ValueError(
+                    "Invalid PlasFlow v1 container digest "
+                    f"for {contig_id}: "
+                    f"{container_digest!r}"
+                )
+
+            score_fields = [
+                "plasmid_probability",
+                "chromosome_probability",
+                "max_class_probability",
+            ]
+            score_texts = {field: (row.get(field) or "").strip() for field in score_fields}
+
+            if prediction_status == "missing_output":
+                if raw_label:
+                    raise ValueError(
+                        "PlasFlow v1 missing output must not " f"contain a raw label: {contig_id}"
+                    )
+
+                if any(score_texts.values()):
+                    raise ValueError(
+                        "PlasFlow v1 missing output must not " f"contain probabilities: {contig_id}"
+                    )
+            else:
+                scores: dict[str, float] = {}
+
+                for field, text in score_texts.items():
+                    try:
+                        value = float(text)
+                    except ValueError as error:
+                        raise ValueError(
+                            "Invalid PlasFlow v1 score " f"{field!r} for {contig_id}: " f"{text!r}"
+                        ) from error
+
+                    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                        raise ValueError(
+                            "PlasFlow v1 score must be "
+                            "finite and within [0,1] for "
+                            f"{contig_id}: {field}={text!r}"
+                        )
+
+                    scores[field] = value
+
+                aggregate = scores["plasmid_probability"] + scores["chromosome_probability"]
+
+                if not math.isclose(
+                    aggregate,
+                    1.0,
+                    rel_tol=0.0,
+                    abs_tol=1e-5,
+                ):
+                    raise ValueError(
+                        "PlasFlow v1 aggregate "
+                        "probabilities do not sum to one "
+                        f"for {contig_id}: {aggregate}"
+                    )
+
+                if label == "plasmid" and not raw_label.startswith("plasmid."):
+                    raise ValueError(
+                        "PlasFlow v1 plasmid label is "
+                        "inconsistent with its native label "
+                        f"for {contig_id}: {raw_label!r}"
+                    )
+
+                if label == "non-plasmid" and not raw_label.startswith("chromosome."):
+                    raise ValueError(
+                        "PlasFlow v1 non-plasmid label is "
+                        "inconsistent with its native label "
+                        f"for {contig_id}: {raw_label!r}"
+                    )
+
+                if prediction_status == "native_abstention" and not raw_label.startswith(
+                    "unclassified."
+                ):
+                    raise ValueError(
+                        "PlasFlow v1 native abstention is "
+                        "inconsistent with its native label "
+                        f"for {contig_id}: {raw_label!r}"
+                    )
+
+            output[contig_id] = label
+
+    logger.info(
+        "plasflow_v1 adapter: %d predictions",
+        len(output),
+    )
+    return output
+
+
 def _parse_rfplasmid(results_dir: Path) -> dict[str, str]:
     """RFPlasmid: outputRFPlasmid.txt — columns: seqname, prediction, ...
 
@@ -411,6 +596,7 @@ def _parse_mobrecon(results_dir: Path) -> dict[str, str]:
 
 PARSERS = {
     "plasflow2": _parse_plasflow2,
+    "plasflow_v1": _parse_plasflow_v1,
     "genomad": _parse_genomad,
     "plasclass": _parse_plasclass,
     "rfplasmid": _parse_rfplasmid,

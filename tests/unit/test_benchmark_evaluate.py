@@ -12,6 +12,7 @@ from scripts.benchmark.evaluate import (
     _parse_mobrecon,
     _parse_plasclass,
     _parse_plasflow2,
+    _parse_plasflow_v1,
     _parse_rfplasmid,
     evaluate,
 )
@@ -429,3 +430,288 @@ def test_incomplete_standardized_plasclass_output_abstains(
     assert tool_status["plasclass"]["available"] == "false"
     assert tool_status["plasclass"]["included_in_metrics"] == "true"
     assert "incomplete output" in tool_status["plasclass"]["reason"]
+
+
+PLASFLOW_V1_DIGEST = "sha256:e69acee3233010dbf5a5245620252bf5" "b9bde930ad5546473ec496992995a7da"
+
+PLASFLOW_V1_FIELDS = [
+    "contig_id",
+    "raw_label",
+    "predicted_label",
+    "prediction_status",
+    "plasmid_probability",
+    "chromosome_probability",
+    "max_class_probability",
+    "decision_threshold",
+    "source_tool",
+    "source_version",
+    "container_digest",
+]
+
+
+def _write_plasflow_v1_standardized(
+    path: Path,
+    rows: list[dict[str, str]],
+) -> None:
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=PLASFLOW_V1_FIELDS,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _plasflow_v1_row(
+    contig_id: str,
+    raw_label: str,
+    label: str,
+    prediction_status: str,
+    plasmid_probability: str,
+    chromosome_probability: str,
+    max_class_probability: str,
+) -> dict[str, str]:
+    return {
+        "contig_id": contig_id,
+        "raw_label": raw_label,
+        "predicted_label": label,
+        "prediction_status": prediction_status,
+        "plasmid_probability": plasmid_probability,
+        "chromosome_probability": chromosome_probability,
+        "max_class_probability": max_class_probability,
+        "decision_threshold": "0.7",
+        "source_tool": "PlasFlow",
+        "source_version": "1.1",
+        "container_digest": PLASFLOW_V1_DIGEST,
+    }
+
+
+def test_plasflow_v1_standardized_output_preserves_native_semantics(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasflow_v1"
+    tool_dir.mkdir()
+
+    _write_plasflow_v1_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasflow_v1_row(
+                "p1",
+                "plasmid.Proteobacteria",
+                "plasmid",
+                "called_plasmid",
+                "0.9",
+                "0.1",
+                "0.8",
+            ),
+            _plasflow_v1_row(
+                "c1",
+                "chromosome.Firmicutes",
+                "non-plasmid",
+                "called_non_plasmid",
+                "0.1",
+                "0.9",
+                "0.8",
+            ),
+            _plasflow_v1_row(
+                "u1",
+                "unclassified.unclassified",
+                "unclassified",
+                "native_abstention",
+                "0.55",
+                "0.45",
+                "0.3",
+            ),
+            _plasflow_v1_row(
+                "m1",
+                "",
+                "unclassified",
+                "missing_output",
+                "",
+                "",
+                "",
+            ),
+        ],
+    )
+
+    assert _parse_plasflow_v1(tmp_path) == {
+        "p1": "plasmid",
+        "c1": "non-plasmid",
+        "u1": "unclassified",
+        "m1": "unclassified",
+    }
+
+
+def test_plasflow_v1_standardized_output_rejects_duplicates(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasflow_v1"
+    tool_dir.mkdir()
+    row = _plasflow_v1_row(
+        "p1",
+        "plasmid.Proteobacteria",
+        "plasmid",
+        "called_plasmid",
+        "0.9",
+        "0.1",
+        "0.8",
+    )
+
+    _write_plasflow_v1_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row, row],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Duplicate PlasFlow v1",
+    ):
+        _parse_plasflow_v1(tmp_path)
+
+
+def test_plasflow_v1_rejects_label_status_mismatch(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasflow_v1"
+    tool_dir.mkdir()
+
+    _write_plasflow_v1_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasflow_v1_row(
+                "p1",
+                "plasmid.Proteobacteria",
+                "plasmid",
+                "called_non_plasmid",
+                "0.9",
+                "0.1",
+                "0.8",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="status is inconsistent",
+    ):
+        _parse_plasflow_v1(tmp_path)
+
+
+def test_plasflow_v1_rejects_invalid_aggregate_probabilities(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasflow_v1"
+    tool_dir.mkdir()
+
+    _write_plasflow_v1_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasflow_v1_row(
+                "p1",
+                "plasmid.Proteobacteria",
+                "plasmid",
+                "called_plasmid",
+                "0.9",
+                "0.2",
+                "0.8",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="do not sum to one",
+    ):
+        _parse_plasflow_v1(tmp_path)
+
+
+def test_plasflow_v1_missing_output_rejects_scores(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasflow_v1"
+    tool_dir.mkdir()
+
+    _write_plasflow_v1_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasflow_v1_row(
+                "m1",
+                "",
+                "unclassified",
+                "missing_output",
+                "0.5",
+                "",
+                "",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="must not contain probabilities",
+    ):
+        _parse_plasflow_v1(tmp_path)
+
+
+def test_plasflow_v1_native_abstentions_remain_in_metrics(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    output = tmp_path / "evaluation"
+    labels = tmp_path / "labels.tsv"
+    tool_dir = results / "plasflow_v1"
+    tool_dir.mkdir(parents=True)
+    _write_labels(labels)
+
+    _write_plasflow_v1_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasflow_v1_row(
+                "p1",
+                "unclassified.unclassified",
+                "unclassified",
+                "native_abstention",
+                "0.6",
+                "0.4",
+                "0.3",
+            ),
+            _plasflow_v1_row(
+                "c1",
+                "chromosome.Firmicutes",
+                "non-plasmid",
+                "called_non_plasmid",
+                "0.1",
+                "0.9",
+                "0.8",
+            ),
+        ],
+    )
+    (results / "timing.tsv").write_text("tool\twallclock_sec\tstatus\n" "plasflow_v1\t1\tok\n")
+
+    evaluate(results, labels, output)
+
+    with (output / "metrics_overall.tsv").open() as handle:
+        metrics = list(csv.DictReader(handle, delimiter="\t"))
+
+    assert len(metrics) == 1
+    assert metrics[0]["tool"] == "plasflow_v1"
+    assert metrics[0]["fn"] == "1"
+    assert metrics[0]["tn"] == "1"
+    assert metrics[0]["n_unclassified"] == "1"
+    assert metrics[0]["prediction_coverage"] == "0.5"
+
+    with (output / "per_contig.tsv").open() as handle:
+        predictions = {
+            row["contig_id"]: row["pred_plasflow_v1"]
+            for row in csv.DictReader(
+                handle,
+                delimiter="\t",
+            )
+        }
+
+    assert predictions == {
+        "p1": "unclassified",
+        "c1": "non-plasmid",
+    }
