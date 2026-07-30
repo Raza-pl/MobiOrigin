@@ -34,11 +34,26 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-TOOLS = ["plasflow2", "plasflow_v1", "genomad", "plasclass", "rfplasmid", "mobrecon"]
+TOOLS = [
+    "plasflow2",
+    "plasflow_v1",
+    "genomad",
+    "plasclass",
+    "plasme",
+    "rfplasmid",
+    "mobrecon",
+]
 
 # These parsers are expected to emit one row for essentially every input
 # contig.  Positive-only tools such as geNomad are intentionally excluded.
-FULL_COVERAGE_TOOLS = {"plasflow2", "plasflow_v1", "plasclass", "rfplasmid", "mobrecon"}
+FULL_COVERAGE_TOOLS = {
+    "plasflow2",
+    "plasflow_v1",
+    "plasclass",
+    "plasme",
+    "rfplasmid",
+    "mobrecon",
+}
 
 LENGTH_TIERS = ["<2 kb", "2-5 kb", "5-10 kb", "10-50 kb", ">50 kb"]
 
@@ -280,7 +295,7 @@ def _parse_plasclass(results_dir: Path) -> dict[str, str]:
     )
 
     threshold = 0.5
-    output: dict[str, str] = {}
+    legacy_output: dict[str, str] = {}
 
     with legacy_scores.open() as handle:
         reader = csv.DictReader(handle)
@@ -291,7 +306,7 @@ def _parse_plasclass(results_dir: Path) -> dict[str, str]:
             if not contig_id:
                 raise ValueError("PlasClass legacy score output has an empty identifier")
 
-            if contig_id in output:
+            if contig_id in legacy_output:
                 raise ValueError("Duplicate PlasClass legacy identifier: " f"{contig_id}")
 
             score_text = (row.get("score") or row.get("plasmid_score") or "").strip()
@@ -309,12 +324,271 @@ def _parse_plasclass(results_dir: Path) -> dict[str, str]:
                     f"[0,1] for {contig_id}: {score_text!r}"
                 )
 
-            output[contig_id] = "plasmid" if score >= threshold else "non-plasmid"
+            legacy_output[contig_id] = "plasmid" if score >= threshold else "non-plasmid"
 
     logger.info(
         "plasclass legacy fallback: %d predictions",
-        len(output),
+        len(legacy_output),
     )
+    return legacy_output
+
+
+def _parse_plasme(results_dir: Path) -> dict[str, str]:
+    """Parse the frozen standardized PLASMe 1.1 binary output."""
+
+    standardized = results_dir / "plasme" / "standardized_predictions.tsv"
+
+    if not standardized.exists():
+        return {}
+
+    expected_source_commit = "ef0409bad9c8c9ee5d66d90812bf56b345d8dd1d"
+    expected_image_id = "sha256:fbc29e53cf4b331f328241da0e7a835c" "84a50e8aa51a6baf94931aa43559f9a7"
+    expected_status = {
+        "plasmid": "called_plasmid",
+        "non-plasmid": "called_non_plasmid",
+    }
+    output: dict[str, str] = {}
+
+    def parse_boolean(
+        raw_value: str,
+        *,
+        field: str,
+        contig_id: str,
+    ) -> bool:
+        value = raw_value.strip().lower()
+
+        if value not in {"true", "false"}:
+            raise ValueError(f"Invalid PLASMe {field} for {contig_id}: {raw_value!r}")
+
+        return value == "true"
+
+    def parse_finite(
+        raw_value: str,
+        *,
+        field: str,
+        contig_id: str,
+    ) -> float:
+        text = raw_value.strip()
+
+        try:
+            value = float(text)
+        except ValueError as error:
+            raise ValueError(f"Invalid PLASMe {field} for {contig_id}: {text!r}") from error
+
+        if not math.isfinite(value):
+            raise ValueError(f"Non-finite PLASMe {field} for {contig_id}: {text!r}")
+
+        return value
+
+    with standardized.open() as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        required = {
+            "contig_id",
+            "input_header",
+            "length",
+            "raw_candidate_present",
+            "raw_order",
+            "raw_identity",
+            "raw_coverage",
+            "raw_plasme_score",
+            "raw_overlap",
+            "raw_positive_fasta_present",
+            "predicted_label",
+            "prediction_status",
+            "identity_threshold",
+            "coverage_threshold",
+            "probability_threshold",
+            "source_tool",
+            "source_version",
+            "source_commit",
+            "container_image_id",
+        }
+        missing = required - set(reader.fieldnames or [])
+
+        if missing:
+            raise ValueError(
+                "PLASMe standardized output is missing columns: " + ", ".join(sorted(missing))
+            )
+
+        for row in reader:
+            contig_id = (row.get("contig_id") or "").strip()
+            label = (row.get("predicted_label") or "").strip().lower()
+            prediction_status = (row.get("prediction_status") or "").strip()
+            source_tool = (row.get("source_tool") or "").strip()
+            source_version = (row.get("source_version") or "").strip()
+            source_commit = (row.get("source_commit") or "").strip()
+            image_id = (row.get("container_image_id") or "").strip()
+
+            if not contig_id:
+                raise ValueError("PLASMe standardized output has an empty identifier")
+
+            if contig_id in output:
+                raise ValueError(f"Duplicate PLASMe standardized identifier: {contig_id}")
+
+            if label not in expected_status:
+                raise ValueError(
+                    "PLASMe standardized labels must remain binary; " f"{contig_id} has {label!r}"
+                )
+
+            if prediction_status != expected_status[label]:
+                raise ValueError(
+                    "PLASMe prediction status is inconsistent with its "
+                    f"binary label for {contig_id}: "
+                    f"{prediction_status!r} versus {label!r}"
+                )
+
+            if source_tool != "PLASMe":
+                raise ValueError(f"Invalid PLASMe source_tool for {contig_id}: " f"{source_tool!r}")
+
+            if source_version != "1.1":
+                raise ValueError(
+                    f"Invalid PLASMe source_version for {contig_id}: " f"{source_version!r}"
+                )
+
+            if source_commit != expected_source_commit:
+                raise ValueError(
+                    f"Invalid PLASMe source commit for {contig_id}: " f"{source_commit!r}"
+                )
+
+            if image_id != expected_image_id:
+                raise ValueError(
+                    f"Invalid PLASMe container image for {contig_id}: " f"{image_id!r}"
+                )
+
+            length_text = (row.get("length") or "").strip()
+
+            try:
+                length = int(length_text)
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid PLASMe sequence length for {contig_id}: " f"{length_text!r}"
+                ) from error
+
+            if length <= 0:
+                raise ValueError(f"PLASMe sequence length must be positive for {contig_id}")
+
+            identity_threshold = parse_finite(
+                row.get("identity_threshold") or "",
+                field="identity threshold",
+                contig_id=contig_id,
+            )
+            coverage_threshold = parse_finite(
+                row.get("coverage_threshold") or "",
+                field="coverage threshold",
+                contig_id=contig_id,
+            )
+            probability_threshold = parse_finite(
+                row.get("probability_threshold") or "",
+                field="probability threshold",
+                contig_id=contig_id,
+            )
+
+            if identity_threshold != 0.9:
+                raise ValueError(
+                    "PLASMe identity threshold must equal 0.9; "
+                    f"{contig_id} declares {identity_threshold}"
+                )
+
+            if coverage_threshold != 0.9:
+                raise ValueError(
+                    "PLASMe coverage threshold must equal 0.9; "
+                    f"{contig_id} declares {coverage_threshold}"
+                )
+
+            if probability_threshold != 0.5:
+                raise ValueError(
+                    "PLASMe probability threshold must equal 0.5; "
+                    f"{contig_id} declares {probability_threshold}"
+                )
+
+            candidate_present = parse_boolean(
+                row.get("raw_candidate_present") or "",
+                field="candidate-presence flag",
+                contig_id=contig_id,
+            )
+            official_positive = parse_boolean(
+                row.get("raw_positive_fasta_present") or "",
+                field="positive-FASTA flag",
+                contig_id=contig_id,
+            )
+
+            raw_order = (row.get("raw_order") or "").strip()
+            raw_identity = (row.get("raw_identity") or "").strip()
+            raw_coverage = (row.get("raw_coverage") or "").strip()
+            raw_score = (row.get("raw_plasme_score") or "").strip()
+            raw_overlap = (row.get("raw_overlap") or "").strip()
+
+            if candidate_present:
+                if not raw_order:
+                    raise ValueError(f"PLASMe candidate is missing order for {contig_id}")
+
+                identity = parse_finite(
+                    raw_identity,
+                    field="identity",
+                    contig_id=contig_id,
+                )
+                coverage = parse_finite(
+                    raw_coverage,
+                    field="coverage",
+                    contig_id=contig_id,
+                )
+                score = parse_finite(
+                    raw_score,
+                    field="transformer score",
+                    contig_id=contig_id,
+                )
+
+                if not 0.0 <= identity <= 1.0:
+                    raise ValueError(f"PLASMe identity is outside [0,1] for {contig_id}")
+
+                if not 0.0 <= coverage <= 1.0:
+                    raise ValueError(f"PLASMe coverage is outside [0,1] for {contig_id}")
+
+                if score != -1.0 and not 0.0 <= score <= 1.0:
+                    raise ValueError(
+                        "PLASMe transformer score must be -1 or within " f"[0,1] for {contig_id}"
+                    )
+
+                alignment_positive = (
+                    identity >= identity_threshold and coverage >= coverage_threshold
+                )
+                transformer_positive = score != -1.0 and score > probability_threshold
+                expected_positive = alignment_positive or transformer_positive
+            else:
+                if any(
+                    [
+                        raw_order,
+                        raw_identity,
+                        raw_coverage,
+                        raw_score,
+                        raw_overlap,
+                    ]
+                ):
+                    raise ValueError(
+                        "PLASMe row without a candidate contains raw "
+                        f"candidate values for {contig_id}"
+                    )
+
+                expected_positive = False
+
+            if official_positive != expected_positive:
+                raise ValueError(
+                    "PLASMe positive-FASTA flag disagrees with the frozen "
+                    f"balance decision for {contig_id}"
+                )
+
+            expected_label = "plasmid" if expected_positive else "non-plasmid"
+
+            if label != expected_label:
+                raise ValueError(
+                    "PLASMe binary label disagrees with the frozen balance "
+                    f"decision for {contig_id}: "
+                    f"{label!r} versus {expected_label!r}"
+                )
+
+            output[contig_id] = label
+
+    logger.info("plasme adapter: %d predictions", len(output))
     return output
 
 
@@ -599,6 +873,7 @@ PARSERS = {
     "plasflow_v1": _parse_plasflow_v1,
     "genomad": _parse_genomad,
     "plasclass": _parse_plasclass,
+    "plasme": _parse_plasme,
     "rfplasmid": _parse_rfplasmid,
     "mobrecon": _parse_mobrecon,
 }
@@ -738,8 +1013,8 @@ def evaluate(
     # Load ground truth
     labels: dict[str, dict] = {}
     with open(labels_tsv) as fh:
-        for row in csv.DictReader(fh, delimiter="\t"):
-            labels[row["contig_id"]] = row
+        for label_row in csv.DictReader(fh, delimiter="\t"):
+            labels[label_row["contig_id"]] = label_row
     logger.info("Loaded %d ground-truth labels", len(labels))
 
     # Load all tool predictions

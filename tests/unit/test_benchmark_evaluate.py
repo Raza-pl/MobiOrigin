@@ -13,6 +13,7 @@ from scripts.benchmark.evaluate import (
     _parse_plasclass,
     _parse_plasflow2,
     _parse_plasflow_v1,
+    _parse_plasme,
     _parse_rfplasmid,
     evaluate,
 )
@@ -715,3 +716,262 @@ def test_plasflow_v1_native_abstentions_remain_in_metrics(
         "p1": "unclassified",
         "c1": "non-plasmid",
     }
+
+
+PLASME_STANDARDIZED_FIELDS = [
+    "contig_id",
+    "input_header",
+    "length",
+    "raw_candidate_present",
+    "raw_order",
+    "raw_identity",
+    "raw_coverage",
+    "raw_plasme_score",
+    "raw_overlap",
+    "raw_positive_fasta_present",
+    "predicted_label",
+    "prediction_status",
+    "identity_threshold",
+    "coverage_threshold",
+    "probability_threshold",
+    "source_tool",
+    "source_version",
+    "source_commit",
+    "container_image_id",
+]
+
+
+def _plasme_standardized_row(
+    contig_id: str,
+    *,
+    label: str,
+    candidate_present: bool = True,
+    identity: str = "0.1",
+    coverage: str = "0.1",
+    score: str = "0.5",
+) -> dict[str, str]:
+    positive = label == "plasmid"
+
+    return {
+        "contig_id": contig_id,
+        "input_header": contig_id,
+        "length": "1000",
+        "raw_candidate_present": ("true" if candidate_present else "false"),
+        "raw_order": "1" if candidate_present else "",
+        "raw_identity": identity if candidate_present else "",
+        "raw_coverage": coverage if candidate_present else "",
+        "raw_plasme_score": score if candidate_present else "",
+        "raw_overlap": "0" if candidate_present else "",
+        "raw_positive_fasta_present": ("true" if positive else "false"),
+        "predicted_label": label,
+        "prediction_status": ("called_plasmid" if positive else "called_non_plasmid"),
+        "identity_threshold": "0.9",
+        "coverage_threshold": "0.9",
+        "probability_threshold": "0.5",
+        "source_tool": "PLASMe",
+        "source_version": "1.1",
+        "source_commit": ("ef0409bad9c8c9ee5d66d90812bf56b345d8dd1d"),
+        "container_image_id": (
+            "sha256:fbc29e53cf4b331f328241da0e7a835c" "84a50e8aa51a6baf94931aa43559f9a7"
+        ),
+    }
+
+
+def _write_plasme_standardized(
+    path: Path,
+    rows: list[dict[str, str]],
+) -> None:
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=PLASME_STANDARDIZED_FIELDS,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_plasme_standardized_output_preserves_binary_semantics(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasme"
+    tool_dir.mkdir()
+
+    _write_plasme_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasme_standardized_row(
+                "alignment_positive",
+                label="plasmid",
+                identity="0.9",
+                coverage="0.9",
+                score="-1",
+            ),
+            _plasme_standardized_row(
+                "transformer_positive",
+                label="plasmid",
+                identity="0.1",
+                coverage="0.1",
+                score="0.500001",
+            ),
+            _plasme_standardized_row(
+                "threshold_negative",
+                label="non-plasmid",
+                identity="0.899",
+                coverage="1",
+                score="0.5",
+            ),
+            _plasme_standardized_row(
+                "no_candidate",
+                label="non-plasmid",
+                candidate_present=False,
+            ),
+        ],
+    )
+
+    assert _parse_plasme(tmp_path) == {
+        "alignment_positive": "plasmid",
+        "transformer_positive": "plasmid",
+        "threshold_negative": "non-plasmid",
+        "no_candidate": "non-plasmid",
+    }
+
+
+def test_plasme_parser_rejects_duplicate_identifiers(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasme"
+    tool_dir.mkdir()
+    row = _plasme_standardized_row(
+        "duplicate",
+        label="non-plasmid",
+    )
+
+    _write_plasme_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row, row],
+    )
+
+    with pytest.raises(ValueError, match="Duplicate PLASMe"):
+        _parse_plasme(tmp_path)
+
+
+def test_plasme_parser_rejects_nonbinary_relabeling(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasme"
+    tool_dir.mkdir()
+    row = _plasme_standardized_row(
+        "contig",
+        label="non-plasmid",
+    )
+    row["predicted_label"] = "chromosome"
+
+    _write_plasme_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match="must remain binary"):
+        _parse_plasme(tmp_path)
+
+
+def test_plasme_parser_rejects_threshold_semantic_mismatch(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasme"
+    tool_dir.mkdir()
+
+    _write_plasme_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasme_standardized_row(
+                "threshold_boundary",
+                label="plasmid",
+                identity="0.1",
+                coverage="0.1",
+                score="0.5",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="positive-FASTA flag disagrees",
+    ):
+        _parse_plasme(tmp_path)
+
+
+def test_plasme_parser_rejects_frozen_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "plasme"
+    tool_dir.mkdir()
+    row = _plasme_standardized_row(
+        "contig",
+        label="non-plasmid",
+    )
+    row["source_version"] = "different"
+
+    _write_plasme_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match="source_version"):
+        _parse_plasme(tmp_path)
+
+
+def test_incomplete_plasme_output_is_retained_as_abstention(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    output = tmp_path / "evaluation"
+    labels = tmp_path / "labels.tsv"
+    tool_dir = results / "plasme"
+    tool_dir.mkdir(parents=True)
+    _write_labels(labels)
+
+    _write_plasme_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _plasme_standardized_row(
+                "p1",
+                label="plasmid",
+                identity="0.9",
+                coverage="0.9",
+                score="-1",
+            )
+        ],
+    )
+    (results / "timing.tsv").write_text("tool\twallclock_sec\tstatus\n" "plasme\t1\tok\n")
+
+    evaluate(results, labels, output)
+
+    with (output / "metrics_overall.tsv").open() as handle:
+        metrics = list(csv.DictReader(handle, delimiter="\t"))
+
+    assert len(metrics) == 1
+    assert metrics[0]["tool"] == "plasme"
+    assert metrics[0]["tp"] == "1"
+    assert metrics[0]["tn"] == "1"
+    assert metrics[0]["n_unclassified"] == "1"
+    assert metrics[0]["prediction_coverage"] == "0.5"
+
+    with (output / "per_contig.tsv").open() as handle:
+        predictions = {
+            row["contig_id"]: row["pred_plasme"] for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+    assert predictions == {
+        "p1": "plasmid",
+        "c1": "unclassified",
+    }
+
+    with (output / "tool_status.tsv").open() as handle:
+        statuses = {row["tool"]: row for row in csv.DictReader(handle, delimiter="\t")}
+
+    assert statuses["plasme"]["available"] == "false"
+    assert statuses["plasme"]["included_in_metrics"] == "true"
+    assert "incomplete output" in statuses["plasme"]["reason"]
