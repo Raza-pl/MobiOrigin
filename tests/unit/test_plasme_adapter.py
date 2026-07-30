@@ -21,12 +21,13 @@ from scripts.benchmark.adapters.plasme import (
     adapt_plasme,
     canonical_id,
     load_candidate_rows,
+    parse_nonnegative,
     parse_plasme_score,
     parse_unit_interval,
     recomputed_positive,
 )
 
-EXPECTED_CONTRACT_SHA256 = "735407cb3b7d91200ec9ca9643336c981060c735fae89d0db08fb1fa2bcc98fc"
+EXPECTED_CONTRACT_SHA256 = "c852f1c16aee4cf2fb7e0f46a5f95ebe3ccd7b3c44d2c1940e4e4e014c28bbaa"
 EXPECTED_IMAGE_ID = "sha256:fbc29e53cf4b331f328241da0e7a835c84a50e8aa51a6baf94931aa43559f9a7"
 EXPECTED_SOURCE_COMMIT = "ef0409bad9c8c9ee5d66d90812bf56b345d8dd1d"
 
@@ -247,6 +248,37 @@ def test_alignment_fails_below_either_threshold(
     )
 
 
+def test_adapter_preserves_official_coverage_above_one(
+    tmp_path: Path,
+) -> None:
+    input_fasta, positive_fasta, candidates, output, metadata_path = prepare_paths(tmp_path)
+    write_fasta(input_fasta, [("plasmid", "AAAA")])
+    write_fasta(positive_fasta, [("plasmid", "AAAA")])
+    write_candidates(
+        candidates,
+        [
+            candidate(
+                "plasmid",
+                identity=0.95,
+                coverage=1.0226032735775525,
+                plasme_score=-1,
+            )
+        ],
+    )
+
+    adapt_plasme(
+        input_fasta=input_fasta,
+        positive_fasta=positive_fasta,
+        candidate_csv=candidates,
+        output_path=output,
+        metadata_output=metadata_path,
+    )
+
+    rows = read_tsv(output)
+    assert float(rows[0]["raw_coverage"]) == 1.0226032735775525
+    assert rows[0]["predicted_label"] == "plasmid"
+
+
 def test_empty_positive_fasta_is_valid(tmp_path: Path) -> None:
     input_fasta, positive_fasta, candidates, output, metadata_path = prepare_paths(tmp_path)
     write_fasta(input_fasta, [("negative", "AAAA")])
@@ -293,6 +325,27 @@ def test_unit_interval_rejects_invalid_values(value: str) -> None:
         parse_unit_interval(
             value,
             field="identity",
+            raw_identifier="contig",
+        )
+
+
+def test_nonnegative_coverage_accepts_values_above_one() -> None:
+    assert (
+        parse_nonnegative(
+            "1.0226032735775525",
+            field="coverage",
+            raw_identifier="contig",
+        )
+        == 1.0226032735775525
+    )
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-0.1"])
+def test_nonnegative_coverage_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(ValueError):
+        parse_nonnegative(
+            value,
+            field="coverage",
             raw_identifier="contig",
         )
 

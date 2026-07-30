@@ -21,7 +21,7 @@ TOOL_VERSION = "1.1"
 SOURCE_COMMIT = "ef0409bad9c8c9ee5d66d90812bf56b345d8dd1d"
 CONTAINER_IMAGE_ID = "sha256:fbc29e53cf4b331f328241da0e7a835c" "84a50e8aa51a6baf94931aa43559f9a7"
 SCHEMA_VERSION = "nar-comparator-adapter-v1"
-CONTRACT_SHA256 = "735407cb3b7d91200ec9ca9643336c981" "060c735fae89d0db08fb1fa2bcc98fc"
+CONTRACT_SHA256 = "c852f1c16aee4cf2fb7e0f46a5f95ebe3ccd7b3c44d2c1940e4e4e014c28bbaa"
 
 IDENTITY_THRESHOLD = 0.9
 COVERAGE_THRESHOLD = 0.9
@@ -194,6 +194,30 @@ def parse_unit_interval(
     return value
 
 
+def parse_nonnegative(
+    raw_value: str,
+    *,
+    field: str,
+    raw_identifier: str,
+) -> float:
+    """Parse a finite non-negative numeric value."""
+
+    text = raw_value.strip()
+
+    try:
+        value = float(text)
+    except ValueError as error:
+        raise ValueError(f"Invalid PLASMe {field} for {raw_identifier!r}: {text!r}") from error
+
+    if not math.isfinite(value):
+        raise ValueError(f"Non-finite PLASMe {field} for {raw_identifier!r}: {text!r}")
+
+    if value < 0.0:
+        raise ValueError(f"Negative PLASMe {field} for {raw_identifier!r}: {text!r}")
+
+    return value
+
+
 def parse_plasme_score(
     raw_value: str,
     *,
@@ -278,7 +302,7 @@ def load_candidate_rows(
                 field="identity",
                 raw_identifier=raw_identifier,
             )
-            coverage = parse_unit_interval(
+            coverage = parse_nonnegative(
                 raw_row.get("coverage") or "",
                 field="coverage",
                 raw_identifier=raw_identifier,

@@ -29,9 +29,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.benchmark.adapters.plasme import adapt_plasme  # noqa: E402
 
-RUNNER_CONTRACT_SHA256 = "466371613c5bac7469769779be1a9c62e7d5708bc519a7bcd89804dd3ad89e24"
-ADAPTER_CONTRACT_SHA256 = "735407cb3b7d91200ec9ca9643336c981060c735fae89d0db08fb1fa2bcc98fc"
-ADAPTER_SHA256 = "73aba06122594bfa5f385bf19a15a6ea8eeeb1a2d48bc0e60042f4e2f73d97df"
+RUNNER_CONTRACT_SHA256 = "af79ce9f8947f4c5855ecdff74bafb61959184503f2a02abbfec273231ef0dd8"
+ADAPTER_CONTRACT_SHA256 = "c852f1c16aee4cf2fb7e0f46a5f95ebe3ccd7b3c44d2c1940e4e4e014c28bbaa"
+ADAPTER_SHA256 = "c496d08ab002a526431fb819bb6c3e308e2c1d0765461cda674e3cf26e44b800"
 IMAGE_TAG = "plasme-nar:v1.1-env-ef0409b-execstack-cleared"
 IMAGE_ID = "sha256:fbc29e53cf4b331f328241da0e7a835c" "84a50e8aa51a6baf94931aa43559f9a7"
 DOCKER_CONTEXT = "colima-plasflow1-nar"

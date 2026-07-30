@@ -1,9 +1,9 @@
 {
   "adapter_contract": {
-    "adapter_sha256": "73aba06122594bfa5f385bf19a15a6ea8eeeb1a2d48bc0e60042f4e2f73d97df",
-    "contract_file_sha256": "da798b36f8025d2d129b4f2cf55479bbd44daf25a6e005fe4c9681169c07aa38",
-    "contract_path": "evaluation/release_audit/nar_benchmark_20260727/130_plasme_adapter_contract/plasme_adapter_contract.json",
-    "contract_sha256": "735407cb3b7d91200ec9ca9643336c981060c735fae89d0db08fb1fa2bcc98fc",
+    "adapter_sha256": "c496d08ab002a526431fb819bb6c3e308e2c1d0765461cda674e3cf26e44b800",
+    "contract_file_sha256": "dd3268c51ca01ec0a50f224319cdca269c7c34d609c6eb508de03877aeab5a1f",
+    "contract_path": "evaluation/release_audit/nar_benchmark_20260727/150_plasme_coverage_contract_correction/plasme_adapter_contract_v1_1.json",
+    "contract_sha256": "c852f1c16aee4cf2fb7e0f46a5f95ebe3ccd7b3c44d2c1940e4e4e014c28bbaa",
     "path": "scripts/benchmark/adapters/plasme.py"
   },
   "command_contract": {
@@ -50,7 +50,7 @@
     "runtime_python_version": "3.9.15",
     "working_directory": "/opt/plasme"
   },
-  "contract_sha256": "466371613c5bac7469769779be1a9c62e7d5708bc519a7bcd89804dd3ad89e24",
+  "contract_sha256": "af79ce9f8947f4c5855ecdff74bafb61959184503f2a02abbfec273231ef0dd8",
   "database_contract": {
     "archive_bytes": 13632339031,
     "archive_filename": "DB.zip",
@@ -91,6 +91,18 @@
   },
   "evidence": {
     "confirmatory_data_accessed": false,
+    "coverage_range_correction": {
+      "adapter_preserves_raw_coverage": true,
+      "biological_semantics_changed": false,
+      "candidate_rows": 703,
+      "confirmatory_data_accessed": false,
+      "coverage_values_above_one": 35,
+      "maximum_observed_coverage": 1.0226032735775525,
+      "official_source_formula": "alignment_length / query_length",
+      "official_tool_return_code": 0,
+      "source_run": "evaluation/release_audit/nar_benchmark_20260727/149_plasme_representative_smoke",
+      "thresholds_changed": false
+    },
     "deterministic_smoke_gate": "evaluation/release_audit/nar_benchmark_20260727/129_plasme_end_to_end_smoke",
     "deterministic_smoke_runs": 2,
     "model_loading_gate": "evaluation/release_audit/nar_benchmark_20260727/128_plasme_model_loading_smoke",
@@ -204,7 +216,7 @@
       "--cohort-role"
     ]
   },
-  "schema_version": "nar-plasme-runner-contract-v1.1",
+  "schema_version": "nar-plasme-runner-contract-v1.2",
   "scope": "manuscript-only comparative benchmarking",
   "signal_contract": {
     "signals_target_process_group": true,
