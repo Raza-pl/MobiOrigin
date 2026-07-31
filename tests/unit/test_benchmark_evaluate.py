@@ -14,6 +14,7 @@ from scripts.benchmark.evaluate import (
     _parse_plasflow2,
     _parse_plasflow_v1,
     _parse_plasme,
+    _parse_platon,
     _parse_rfplasmid,
     evaluate,
 )
@@ -975,3 +976,315 @@ def test_incomplete_plasme_output_is_retained_as_abstention(
     assert statuses["plasme"]["available"] == "false"
     assert statuses["plasme"]["included_in_metrics"] == "true"
     assert "incomplete output" in statuses["plasme"]["reason"]
+
+
+PLATON_STANDARDIZED_FIELDS = [
+    "contig_id",
+    "input_header",
+    "length",
+    "raw_tool_contig_id",
+    "raw_native_label",
+    "predicted_label",
+    "prediction_status",
+    "plasmid_score",
+    "decision_threshold",
+    "rds",
+    "is_circular",
+    "inc_types",
+    "replication_hit_count",
+    "mobilization_hit_count",
+    "orit_hit_count",
+    "conjugation_hit_count",
+    "amr_hit_count",
+    "rrna_hit_count",
+    "reference_plasmid_hit_count",
+    "source_tool",
+    "source_version",
+    "mode",
+    "metagenome_mode",
+]
+
+
+def _platon_standardized_row(
+    contig_id: str,
+    *,
+    label: str,
+    prediction_status: str | None = None,
+    length: int = 1_500,
+) -> dict[str, str]:
+    if prediction_status is None:
+        prediction_status = {
+            "plasmid": "called_plasmid",
+            "non-plasmid": "called_non_plasmid",
+            "unclassified": "missing_output",
+        }[label]
+
+    row = {field: "" for field in PLATON_STANDARDIZED_FIELDS}
+    row.update(
+        {
+            "contig_id": contig_id,
+            "input_header": contig_id,
+            "length": str(length),
+            "predicted_label": label,
+            "prediction_status": prediction_status,
+            "source_tool": "Platon",
+            "source_version": "1.7",
+            "mode": "accuracy",
+            "metagenome_mode": "true",
+        }
+    )
+
+    if prediction_status == "called_plasmid":
+        row.update(
+            {
+                "raw_tool_contig_id": contig_id,
+                "raw_native_label": "plasmid",
+                "rds": "1.25",
+                "is_circular": "false",
+                "inc_types": "[]",
+                "replication_hit_count": "0",
+                "mobilization_hit_count": "0",
+                "orit_hit_count": "0",
+                "conjugation_hit_count": "0",
+                "amr_hit_count": "0",
+                "rrna_hit_count": "0",
+                "reference_plasmid_hit_count": "0",
+            }
+        )
+    elif prediction_status == "called_non_plasmid":
+        row.update(
+            {
+                "raw_tool_contig_id": contig_id,
+                "raw_native_label": "chromosome",
+            }
+        )
+
+    return row
+
+
+def _write_platon_standardized(
+    path: Path,
+    rows: list[dict[str, str]],
+) -> None:
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=PLATON_STANDARDIZED_FIELDS,
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_platon_parser_preserves_binary_and_abstention_semantics(
+    tmp_path: Path,
+) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [
+            _platon_standardized_row("p1", label="plasmid"),
+            _platon_standardized_row("c1", label="non-plasmid"),
+            _platon_standardized_row(
+                "short",
+                label="unclassified",
+                prediction_status="unsupported_length",
+                length=999,
+            ),
+            _platon_standardized_row(
+                "missing",
+                label="unclassified",
+                prediction_status="missing_output",
+            ),
+        ],
+    )
+
+    assert _parse_platon(tmp_path) == {
+        "p1": "plasmid",
+        "c1": "non-plasmid",
+        "short": "unclassified",
+        "missing": "unclassified",
+    }
+
+
+def test_platon_parser_rejects_duplicate_identifiers(tmp_path: Path) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    row = _platon_standardized_row("duplicate", label="plasmid")
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row, row],
+    )
+
+    with pytest.raises(ValueError, match="Duplicate Platon"):
+        _parse_platon(tmp_path)
+
+
+@pytest.mark.parametrize("invalid_label", ["chromosome", "phage"])
+def test_platon_parser_rejects_nonbinary_relabeling(
+    tmp_path: Path,
+    invalid_label: str,
+) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    row = _platon_standardized_row("contig", label="non-plasmid")
+    row["predicted_label"] = invalid_label
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match="predicted_label"):
+        _parse_platon(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_tool", "Different"),
+        ("source_version", "1.6"),
+        ("mode", "sensitivity"),
+        ("metagenome_mode", "false"),
+    ],
+)
+def test_platon_parser_rejects_frozen_identity_mismatch(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    row = _platon_standardized_row("contig", label="plasmid")
+    row[field] = value
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match=field):
+        _parse_platon(tmp_path)
+
+
+@pytest.mark.parametrize("field", ["plasmid_score", "decision_threshold"])
+def test_platon_parser_rejects_probability_or_adapter_threshold(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    row = _platon_standardized_row("contig", label="plasmid")
+    row[field] = "0.5"
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match="calibrated plasmid probability"):
+        _parse_platon(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("label", "field", "value", "message"),
+    [
+        ("plasmid", "rds", "", "RDS required"),
+        ("non-plasmid", "rds", "1.0", "evidence must be blank"),
+    ],
+)
+def test_platon_parser_rejects_invalid_evidence_semantics(
+    tmp_path: Path,
+    label: str,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    row = _platon_standardized_row("contig", label=label)
+    row[field] = value
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _parse_platon(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _platon_standardized_row(
+            "supported",
+            label="unclassified",
+            prediction_status="unsupported_length",
+            length=1_500,
+        ),
+        _platon_standardized_row(
+            "too_long",
+            label="plasmid",
+            prediction_status="called_plasmid",
+            length=500_001,
+        ),
+    ],
+)
+def test_platon_parser_rejects_length_status_mismatch(
+    tmp_path: Path,
+    row: dict[str, str],
+) -> None:
+    tool_dir = tmp_path / "platon"
+    tool_dir.mkdir()
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [row],
+    )
+
+    with pytest.raises(ValueError, match="unsupported-length semantics"):
+        _parse_platon(tmp_path)
+
+
+def test_incomplete_platon_output_is_retained_as_abstention(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    output = tmp_path / "evaluation"
+    labels = tmp_path / "labels.tsv"
+    tool_dir = results / "platon"
+    tool_dir.mkdir(parents=True)
+    _write_labels(labels)
+
+    _write_platon_standardized(
+        tool_dir / "standardized_predictions.tsv",
+        [_platon_standardized_row("p1", label="plasmid", length=5_000)],
+    )
+    (results / "timing.tsv").write_text("tool\twallclock_sec\tstatus\nplaton\t1\tok\n")
+
+    evaluate(results, labels, output)
+
+    with (output / "metrics_overall.tsv").open() as handle:
+        metrics = list(csv.DictReader(handle, delimiter="\t"))
+
+    assert len(metrics) == 1
+    assert metrics[0]["tool"] == "platon"
+    assert metrics[0]["tp"] == "1"
+    assert metrics[0]["tn"] == "1"
+    assert metrics[0]["n_unclassified"] == "1"
+    assert metrics[0]["prediction_coverage"] == "0.5"
+
+    with (output / "per_contig.tsv").open() as handle:
+        predictions = {
+            row["contig_id"]: row["pred_platon"] for row in csv.DictReader(handle, delimiter="\t")
+        }
+
+    assert predictions == {
+        "p1": "plasmid",
+        "c1": "unclassified",
+    }
+
+    with (output / "tool_status.tsv").open() as handle:
+        statuses = {row["tool"]: row for row in csv.DictReader(handle, delimiter="\t")}
+
+    assert statuses["platon"]["available"] == "false"
+    assert statuses["platon"]["included_in_metrics"] == "true"
+    assert "incomplete output" in statuses["platon"]["reason"]

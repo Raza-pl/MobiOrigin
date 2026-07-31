@@ -792,5 +792,6 @@ def test_runner_help_works_by_direct_path_from_external_directory(
 
     assert completed.returncode == 0
     assert "manuscript-only geNomad comparator" in completed.stdout
-    assert "not part of the PlasFlow2 prediction workflow" in (completed.stdout)
+    normalized_help = " ".join(completed.stdout.split())
+    assert "not part of the PlasFlow2 prediction workflow" in normalized_help
     assert completed.stderr == ""

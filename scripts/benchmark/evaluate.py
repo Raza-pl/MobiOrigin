@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import math
 from pathlib import Path
@@ -40,6 +41,7 @@ TOOLS = [
     "genomad",
     "plasclass",
     "plasme",
+    "platon",
     "rfplasmid",
     "mobrecon",
 ]
@@ -51,6 +53,7 @@ FULL_COVERAGE_TOOLS = {
     "plasflow_v1",
     "plasclass",
     "plasme",
+    "platon",
     "rfplasmid",
     "mobrecon",
 }
@@ -592,6 +595,176 @@ def _parse_plasme(results_dir: Path) -> dict[str, str]:
     return output
 
 
+def _parse_platon(results_dir: Path) -> dict[str, str]:
+    """Parse the frozen standardized Platon 1.7 binary output."""
+
+    standardized = results_dir / "platon" / "standardized_predictions.tsv"
+    if not standardized.exists():
+        logger.warning("platon: %s not found", standardized)
+        return {}
+
+    required = {
+        "contig_id",
+        "input_header",
+        "length",
+        "raw_tool_contig_id",
+        "raw_native_label",
+        "predicted_label",
+        "prediction_status",
+        "plasmid_score",
+        "decision_threshold",
+        "rds",
+        "is_circular",
+        "inc_types",
+        "replication_hit_count",
+        "mobilization_hit_count",
+        "orit_hit_count",
+        "conjugation_hit_count",
+        "amr_hit_count",
+        "rrna_hit_count",
+        "reference_plasmid_hit_count",
+        "source_tool",
+        "source_version",
+        "mode",
+        "metagenome_mode",
+    }
+    allowed_statuses = {
+        "plasmid": {"called_plasmid"},
+        "non-plasmid": {"called_non_plasmid"},
+        "unclassified": {"unsupported_length", "missing_output"},
+    }
+    count_fields = (
+        "replication_hit_count",
+        "mobilization_hit_count",
+        "orit_hit_count",
+        "conjugation_hit_count",
+        "amr_hit_count",
+        "rrna_hit_count",
+        "reference_plasmid_hit_count",
+    )
+    evidence_fields = ("rds", "is_circular", "inc_types", *count_fields)
+
+    output: dict[str, str] = {}
+
+    with standardized.open(newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(
+                "Platon standardized output is missing columns: " + ", ".join(sorted(missing))
+            )
+
+        for row in reader:
+            contig_id = (row.get("contig_id") or "").strip()
+            if not contig_id:
+                raise ValueError("Platon standardized output has an empty contig ID")
+            if contig_id in output:
+                raise ValueError(f"Duplicate Platon standardized identifier: {contig_id}")
+            if not (row.get("input_header") or "").strip():
+                raise ValueError(f"Platon input_header is empty for {contig_id!r}")
+
+            label = (row.get("predicted_label") or "").strip().lower()
+            prediction_status = (row.get("prediction_status") or "").strip().lower()
+            if label not in allowed_statuses or prediction_status not in allowed_statuses[label]:
+                raise ValueError(
+                    "Invalid Platon predicted_label/prediction_status pair "
+                    f"for {contig_id!r}: {label!r}/{prediction_status!r}"
+                )
+
+            frozen_identity = {
+                "source_tool": "Platon",
+                "source_version": "1.7",
+                "mode": "accuracy",
+                "metagenome_mode": "true",
+            }
+            for field, expected in frozen_identity.items():
+                actual = (row.get(field) or "").strip()
+                comparison = actual.lower() if field == "metagenome_mode" else actual
+                if comparison != expected:
+                    raise ValueError(
+                        f"Platon {field} mismatch for {contig_id!r}: " f"{actual!r} != {expected!r}"
+                    )
+
+            try:
+                length = int((row.get("length") or "").strip())
+            except ValueError as error:
+                raise ValueError(f"Invalid Platon length for {contig_id!r}") from error
+            if length <= 0:
+                raise ValueError(f"Invalid Platon length for {contig_id!r}: {length}")
+
+            supported = 1_000 <= length <= 500_000
+            if supported and prediction_status == "unsupported_length":
+                raise ValueError(f"Invalid Platon unsupported-length semantics for {contig_id!r}")
+            if not supported and prediction_status != "unsupported_length":
+                raise ValueError(f"Invalid Platon unsupported-length semantics for {contig_id!r}")
+
+            if (row.get("plasmid_score") or "").strip() or (
+                row.get("decision_threshold") or ""
+            ).strip():
+                raise ValueError(
+                    "Platon does not provide a calibrated plasmid probability "
+                    f"or adapter decision threshold for {contig_id!r}"
+                )
+
+            raw_id = (row.get("raw_tool_contig_id") or "").strip()
+            raw_label = (row.get("raw_native_label") or "").strip().lower()
+
+            if prediction_status == "called_plasmid":
+                if raw_id != contig_id or raw_label != "plasmid":
+                    raise ValueError(f"Invalid native Platon plasmid identity for {contig_id!r}")
+
+                rds_text = (row.get("rds") or "").strip()
+                try:
+                    rds = float(rds_text)
+                except ValueError as error:
+                    raise ValueError(f"Finite Platon RDS required for {contig_id!r}") from error
+                if not math.isfinite(rds):
+                    raise ValueError(f"Finite Platon RDS required for {contig_id!r}")
+
+                circular = (row.get("is_circular") or "").strip().lower()
+                if circular not in {"true", "false"}:
+                    raise ValueError(f"Invalid Platon circularity for {contig_id!r}")
+
+                try:
+                    inc_types = json.loads((row.get("inc_types") or "").strip())
+                except json.JSONDecodeError as error:
+                    raise ValueError(f"Invalid Platon inc_types JSON for {contig_id!r}") from error
+                if not isinstance(inc_types, list) or any(
+                    not isinstance(value, str) for value in inc_types
+                ):
+                    raise ValueError(f"Invalid Platon inc_types list for {contig_id!r}")
+
+                for field in count_fields:
+                    text = (row.get(field) or "").strip()
+                    try:
+                        value = int(text)
+                    except ValueError as error:
+                        raise ValueError(f"Invalid Platon {field} for {contig_id!r}") from error
+                    if value < 0:
+                        raise ValueError(f"Invalid Platon {field} for {contig_id!r}")
+
+            elif prediction_status == "called_non_plasmid":
+                if raw_id != contig_id or raw_label != "chromosome":
+                    raise ValueError(f"Invalid native Platon chromosome identity for {contig_id!r}")
+                if any((row.get(field) or "").strip() for field in evidence_fields):
+                    raise ValueError(
+                        f"Platon negative-call evidence must be blank for {contig_id!r}"
+                    )
+
+            else:
+                if raw_id or raw_label:
+                    raise ValueError(
+                        f"Platon abstention native identity must be blank for {contig_id!r}"
+                    )
+                if any((row.get(field) or "").strip() for field in evidence_fields):
+                    raise ValueError(f"Platon abstention evidence must be blank for {contig_id!r}")
+
+            output[contig_id] = label
+
+    logger.info("platon adapter: %d predictions", len(output))
+    return output
+
+
 def _parse_plasflow_v1(
     results_dir: Path,
 ) -> dict[str, str]:
@@ -874,6 +1047,7 @@ PARSERS = {
     "genomad": _parse_genomad,
     "plasclass": _parse_plasclass,
     "plasme": _parse_plasme,
+    "platon": _parse_platon,
     "rfplasmid": _parse_rfplasmid,
     "mobrecon": _parse_mobrecon,
 }
