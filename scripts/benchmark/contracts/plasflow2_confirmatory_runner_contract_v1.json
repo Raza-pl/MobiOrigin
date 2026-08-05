@@ -1,0 +1,254 @@
+{
+  "authorization": {
+    "confirmatory_predictions_authorized": false,
+    "contract_creation_generates_predictions": false,
+    "ground_truth_performance_label_release_authorized": false
+  },
+  "command_contract": {
+    "arguments": [
+      "/Users/shahbazraza/miniconda3/envs/plasflow2/bin/plasflow2",
+      "classify",
+      "--input",
+      "{input_fasta}",
+      "--output",
+      "{raw_predictions_tsv}",
+      "--model",
+      "/Users/shahbazraza/Documents/Claude/Projects/Plasflow/data/models/mlp_v2.pt",
+      "--profile",
+      "balanced",
+      "--min-length",
+      "1000",
+      "--threads",
+      "4",
+      "--no-marker-model"
+    ],
+    "environment": {
+      "CUDA_VISIBLE_DEVICES": "",
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PLASFLOW_USE_MPS": "0",
+      "PYTHONHASHSEED": "0",
+      "PYTHONNOUSERSITE": "1",
+      "VECLIB_MAXIMUM_THREADS": "1"
+    },
+    "forbidden_arguments": [
+      "--threshold",
+      "--plasmid-threshold",
+      "--marker-model",
+      "--annotation-tsv",
+      "--compass-sketch",
+      "--allow-unverified-custom-model"
+    ],
+    "launcher_prefix": [
+      "/usr/bin/caffeinate",
+      "-i",
+      "/usr/bin/time",
+      "-l"
+    ],
+    "network_required": false,
+    "process_group_required": true,
+    "shell_execution_allowed": false
+  },
+  "contract_sha256": "4317560cc67b2155ede9689b8e2d0256419b2cb1e01e3e45a225c5deeee0e8db",
+  "decision_contract": {
+    "adapter_reclassification_allowed": false,
+    "binary_endpoint": {
+      "eligible": true,
+      "negative_mapping": [
+        "chromosome",
+        "phage"
+      ],
+      "positive": "plasmid",
+      "unclassified": "abstention retained in denominator"
+    },
+    "native_label_preserved": true,
+    "native_labels": [
+      "plasmid",
+      "chromosome",
+      "phage",
+      "unclassified"
+    ],
+    "scores": {
+      "chromosome_score": "native calibrated class score",
+      "phage_score": "native calibrated class score",
+      "plasmid_score": "native calibrated class score",
+      "probabilities_sum_to_one_tolerance": 0.001,
+      "scores_may_not_reclassify_native_label": true
+    },
+    "three_class_endpoint": {
+      "eligible": true,
+      "labels": [
+        "plasmid",
+        "chromosome",
+        "phage"
+      ],
+      "unclassified": "abstention retained in denominator"
+    }
+  },
+  "evaluation_contract": {
+    "labels_may_be_opened_by_runner": false,
+    "path": "scripts/benchmark/evaluate.py",
+    "performance_metrics_may_be_calculated_by_runner": false,
+    "prediction_outputs_frozen_before_label_release": true,
+    "sha256": "997d11d4cbe89e43946a95caeb5301c9246477ee8f223ffdb7511b863c370c71"
+  },
+  "failure_contract": {
+    "changed_environment_identity": "runner failure",
+    "changed_model_identity": "runner failure",
+    "changed_source_identity": "runner failure",
+    "duplicate_or_unknown_identifier": "runner failure",
+    "failed_or_missing_prediction_metric_semantics": "unclassified abstention retained in denominator",
+    "input_identity_mismatch": "runner failure",
+    "invalid_label_or_score": "runner failure",
+    "missing_or_extra_output": "runner failure",
+    "nonzero_tool_return_code": "runner failure",
+    "signal": "runner failure",
+    "timeout": "runner failure"
+  },
+  "input_contract": {
+    "bases": 186076925,
+    "canonical_identifier": "first whitespace-delimited header token",
+    "canonical_identifier_collisions": "reject",
+    "cohort_role": "confirmatory",
+    "empty_sequences": "reject",
+    "external_cohort_sharding_allowed": false,
+    "format": "FASTA",
+    "input_order_preserved": true,
+    "maximum_length_bp": 500000,
+    "minimum_length_bp": 1000,
+    "one_complete_cohort_invocation_required": true,
+    "opaque_identifiers_required": true,
+    "path": "evaluation/release_audit/nar_benchmark_20260727/237_final_confirmatory_cohort_assembly_freeze/final_confirmatory_cohort_3000.fasta",
+    "records": 3000,
+    "sha256": "6edf2e3b55b672baebbd833e588ed2ce0a507fb300b4b76d6aa85d3209e7d556"
+  },
+  "model_contract": {
+    "calibration_id": "rev5-temperature-1.5470323867-zero-phage-proxy-202607",
+    "classes": [
+      "plasmid",
+      "chromosome",
+      "phage"
+    ],
+    "input_dimension": 9557,
+    "manifest_file_sha256": "27c2a329b96a00847bd6d793700735819d3b5e3f6e99a98ba1d2092f6f5405d0",
+    "manifest_path": "data/models/mlp_v2.pt.manifest.json",
+    "model_deserialization_allowed_during_identity_check": false,
+    "model_id": "plasflow-rev5-general-production-20260724",
+    "model_identity_verified_before_and_after": true,
+    "path": "data/models/mlp_v2.pt",
+    "sha256": "3564913c14eaad068a217572f9641907fa8c86b1527abbb2f855b0df4bf3cb23"
+  },
+  "output_contract": {
+    "complete_raw_output_required": true,
+    "complete_standardized_output_required": true,
+    "output_directory_must_be_new": true,
+    "output_order": "input FASTA order",
+    "overwrite_existing_output": false,
+    "partial_failure_artifacts_retained": true,
+    "raw_columns": [
+      "contig_id",
+      "label",
+      "confidence",
+      "plasmid_score",
+      "chromosome_score",
+      "phage_score"
+    ],
+    "raw_predictions": "all_predictions.tsv",
+    "required_files": [
+      "all_predictions.tsv",
+      "standardized_predictions.tsv",
+      "runner_provenance.json",
+      "command.json",
+      "stdout.log",
+      "stderr.log",
+      "resource_usage.json",
+      "artifact_checksums.sha256"
+    ]
+  },
+  "production_workflow_component": false,
+  "publication_parameters": {
+    "argmax_fallback": false,
+    "compass_filter": false,
+    "confirmatory_tuning_allowed": false,
+    "explicit_threshold_overrides_allowed": false,
+    "hallmark_gate": false,
+    "internal_batching_changes_decisions": false,
+    "internal_inference_batch_size": 512,
+    "marker_fusion": false,
+    "prior_correction_changes_scores": false,
+    "profile": "balanced",
+    "source_context": "unspecified",
+    "threads": 4,
+    "threshold_policy": "rev5-balanced-p080-20260724-v1",
+    "threshold_tiers": [
+      {
+        "chromosome": 0.7,
+        "maximum_length_bp": 2000,
+        "phage": 0.855,
+        "plasmid": 0.8
+      },
+      {
+        "chromosome": 0.68,
+        "maximum_length_bp": 4999,
+        "phage": 0.85,
+        "plasmid": 0.8
+      },
+      {
+        "chromosome": 0.65,
+        "maximum_length_bp": 9999,
+        "phage": 0.845,
+        "plasmid": 0.8
+      },
+      {
+        "chromosome": 0.63,
+        "maximum_length_bp": 19999,
+        "phage": 0.835,
+        "plasmid": 0.8
+      },
+      {
+        "chromosome": 0.62,
+        "maximum_length_bp": null,
+        "phage": 0.75,
+        "plasmid": 0.8
+      }
+    ],
+    "timeout_seconds": 86400
+  },
+  "schema_version": "nar-plasflow2-confirmatory-runner-contract-v1.0",
+  "scope": "manuscript-only comparative benchmarking",
+  "status": "FROZEN",
+  "tool": {
+    "cli_executable": "/Users/shahbazraza/miniconda3/envs/plasflow2/bin/plasflow2",
+    "cli_executable_sha256": "fba6a9a76daca9c405b96cf61569fd0f9541e5401763fc8551a4598d47090d7e",
+    "environment_prefix": "/Users/shahbazraza/miniconda3/envs/plasflow2",
+    "git_branch": "codex/nar-benchmark-suite",
+    "name": "PlasFlow2",
+    "python_executable": "/Users/shahbazraza/miniconda3/envs/plasflow2/bin/python",
+    "python_executable_sha256": "b1a10a21e3fb3826c904b824bc0cee7813502cfb9bb18a3739082dd4855e5c09",
+    "role": "target method",
+    "source_commit": "4d878b7ea5c5b9ebeb5f5160973e9f32407a805d",
+    "source_identities": {
+      "cli_source": "645a7e71ae3f12eb8cc523b29c6c585f6ea22de7b2425e1ed37529633aadd6b6",
+      "device_source": "6bbf65719a59e3d141382e4bd151103a2a88f8c254d0f64bff1d971978a5f9e4",
+      "fasta_source": "5bbfd30f7da7a0340de77abf2631437f29eabe80f7a4d556f91851f546a11b85",
+      "features_source": "63c3089bfeb0a6935f1fe7b94c57d2eaf9916d8098d4fe9a42d4ed187add2281",
+      "model_contract_source": "3ee586ca7cedd4659a23385e5b5124446218c9fd49cbfe6359a0d23b10ee20a0",
+      "model_source": "e527ab40cc45ecd6c2923ea595bf941e9bcafd1a7d93fd81458ed25c4f357a71",
+      "package_init": "ead871e8912a604035d1d31660e0f8c978fa6777ef586aa964a27c14594bc886",
+      "predict_source": "3940ae26892984e98f5e28564a5cc21ce7a5faec1b4d25bfe490283f1b6d564f",
+      "pyproject": "407c6d2afb33573aaa53c14f6897c5440cc04d3f461d4d50a9f4dabe7a3cd238",
+      "threshold_policy_source": "b8e5543a0c006d1cfba6aca6d8065d46e82916e78de886d11e318179d099d7af"
+    },
+    "version": "2.1.2"
+  },
+  "upstream_contracts": {
+    "cohort_contract_path": "evaluation/release_audit/nar_benchmark_20260727/237_final_confirmatory_cohort_assembly_freeze/final_confirmatory_cohort_contract.json",
+    "cohort_contract_sha256": "15636187fd77f105e4b46b107f840553e90ef5ff7d738e00a85e65098a2e09ba",
+    "endpoint_policy_contract_sha256": "20110ff24d9652546f58e1e2f2ec52e2ce3a4a5fcc64ab5e4cb034f8bad10ede",
+    "endpoint_policy_path": "evaluation/release_audit/nar_benchmark_20260727/238_final_endpoint_policy_correction/final_comparator_inclusion_contract_v1_1.json",
+    "protocol_file_sha256": "7fd83315bef38701a40aecd0e1e8106c1260b0fbb563184316034ba43fc838c0",
+    "protocol_path": "docs/benchmark_protocols/nar_confirmatory_cohort_design.json"
+  }
+}
