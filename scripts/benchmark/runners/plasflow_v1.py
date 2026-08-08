@@ -957,11 +957,11 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Run the frozen manuscript-only PlasFlow v1.1 "
-            "comparator on one complete cohort. The cohort is "
+            "This command is not part of the PlasFlow2 prediction workflow. "
+            "Run the frozen manuscript-only PlasFlow v1.1 comparator on one "
+            "complete cohort. The cohort is "
             "never externally sharded because native TF-IDF "
-            "preprocessing is cohort dependent. This command "
-            "is not part of the PlasFlow2 prediction workflow."
+            "preprocessing is cohort dependent."
         )
     )
     parser.add_argument(
