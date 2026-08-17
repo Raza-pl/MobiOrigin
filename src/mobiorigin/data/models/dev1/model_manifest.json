@@ -1,0 +1,49 @@
+{
+  "artifacts": [
+    {
+      "bytes": 40361658,
+      "filename": "seed_20260810.pt",
+      "kind": "model_state",
+      "name": "20260810",
+      "sha256": "2ed9a2ae4cbe00213504c27ef705b6af965aae97a8e33259661cb2c630a495c3"
+    },
+    {
+      "bytes": 40361658,
+      "filename": "seed_20260811.pt",
+      "kind": "model_state",
+      "name": "20260811",
+      "sha256": "9270b5d2213ac95cae2821d26d6840974105905eb080ee39a178fe945140037d"
+    },
+    {
+      "bytes": 40361658,
+      "filename": "seed_20260812.pt",
+      "kind": "model_state",
+      "name": "20260812",
+      "sha256": "085608214f4aac424e841cfd57b39c7b968deedebed943a626695fe815fe1c0f"
+    },
+    {
+      "bytes": 264,
+      "filename": "marker_normalization.npy",
+      "kind": "normalization",
+      "name": "marker_normalization",
+      "sha256": "cb93c881032356f970bc0963969f852f88ab3a9a3a4a3d6c391437e11a4cd8bc"
+    }
+  ],
+  "candidate_contract_sha256": "dc05283b52f9a43e80884892f6644a5db07225f8b3cc0a51eed6d7ffed5172b4",
+  "candidate_name": "mobiorigin-dev1-mob-selective-v1",
+  "ensemble": "equal-weight arithmetic mean of three softmax vectors",
+  "final_disposition_sha256": "6f0ca661ddad0c4d6260186e2ce853bfaf3c891b52d0f5c840b9a45c56812469",
+  "manifest_sha256": "9b42183f38cb0bc8d817bda62387e261b8184a169da778dfc3929e118710aa8b",
+  "marker_feature_dimensions": 17,
+  "model_input_dimensions": 9574,
+  "package_implementation_freeze_sha256": "cb0673f9d47f79447a349e3b69cb4d42fb16bcd3d882377649a3816b033c19ee",
+  "probability_order": [
+    "chromosome",
+    "plasmid",
+    "phage"
+  ],
+  "schema_version": "mobiorigin-qualified-model-manifest-v1",
+  "selective_threshold": 0.19835489988327026,
+  "sequence_feature_dimensions": 9557,
+  "third_party_databases_bundled": false
+}

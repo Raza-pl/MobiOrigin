@@ -128,3 +128,11 @@ Icon
 *.log
 *.tmp
 *.bak
+
+# Qualified MobiOrigin production model artifacts (explicitly tracked)
+!src/mobiorigin/data/
+!src/mobiorigin/data/models/
+!src/mobiorigin/data/models/dev1/
+!src/mobiorigin/data/models/dev1/*.pt
+!src/mobiorigin/data/models/dev1/*.npy
+!src/mobiorigin/data/models/dev1/model_manifest.json
