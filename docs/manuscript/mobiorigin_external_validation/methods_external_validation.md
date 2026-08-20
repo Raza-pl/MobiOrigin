@@ -1,0 +1,5 @@
+# Prospective external validation methods
+
+The final class-balanced external cohort contained 3,000 fragments from 3,000 distinct versioned source accessions, with 1,000 chromosome, plasmid, and phage fragments and 200 records per class and prospectively defined length bin. Exact matches and cross-split high-similarity relationships were screened before prediction. MobiOrigin dev1 and geNomad 1.12.0 (database 1.9) received identical class-hidden FASTA bytes in identical order. Both prediction inventories were frozen before the sealed label map was released.
+
+The co-primary endpoints were three-class macro-F1 and plasmid-versus-non-plasmid F1. Uncertainty used 10,000 paired bootstrap replicates over `source_accession` with seed 20260818 and two-sided percentile 95% intervals. Holm correction was applied across the two co-primary comparisons. Differences are MobiOrigin minus geNomad. Length-bin results and precision, sensitivity, coverage, balanced accuracy, accuracy, and MCC are descriptive unless explicitly identified as co-primary.

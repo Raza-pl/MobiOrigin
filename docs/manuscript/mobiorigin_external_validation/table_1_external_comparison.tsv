@@ -1,0 +1,7 @@
+metric	endpoint	mobiorigin	genomad	difference	inferential_status
+Macro-F1	three_class	0.788901673021	0.757378646393	0.031523026628	co-primary
+Balanced accuracy	three_class	0.779666666667	0.757	0.022666666667	descriptive
+Plasmid F1	plasmid_binary	0.745335350479	0.687576875769	0.05775847471	co-primary
+Plasmid precision	plasmid_binary	0.751780264496	0.892971246006	-0.14119098151	descriptive
+Plasmid sensitivity	plasmid_binary	0.739	0.559	0.18	descriptive
+Coverage	three_class	0.973666666667	0.999333333333	-0.025666666666	descriptive
