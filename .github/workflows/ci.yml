@@ -59,14 +59,6 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           poetry install --no-interaction --with dev
 
-      - name: Run legacy PlasFlow2 unit suite
-        if: matrix.python-version == '3.10'
-        env:
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-        run: pytest tests/unit -q --cov=plasflow2 --cov-report=xml
-
       - name: Enforce MobiOrigin critical-core coverage
         env:
           OMP_NUM_THREADS: "1"
@@ -76,9 +68,30 @@ jobs:
           pytest tests/unit/test_mobiorigin_production.py -q -o addopts=""
           --cov=mobiorigin --cov-report=term --cov-fail-under=80
 
-      - name: Upload coverage
-        if: matrix.python-version == '3.10'
-        uses: codecov/codecov-action@v4
+  legacy-test:
+    name: Legacy PlasFlow2 regression signal (Python 3.10)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
         with:
-          file: ./coverage.xml
-        continue-on-error: true  # don't fail build if codecov is unreachable
+          python-version: "3.10"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.create false
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          poetry install --no-interaction --with dev
+
+      - name: Run historical regression suite
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+        run: pytest tests/unit -q --cov=plasflow2 --cov-report=term
