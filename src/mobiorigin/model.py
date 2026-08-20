@@ -10,7 +10,7 @@ from torch import nn
 
 INPUT_DIM = 9_574
 NUM_CLASSES = 3
-HIDDEN_DIMS = (2_048, 512, 128)
+HIDDEN_DIMS = (1_024, 256, 64)
 
 
 class MobiOriginMLP(nn.Module):
@@ -74,6 +74,7 @@ def load_model(path: Path, *, input_dim: int = INPUT_DIM) -> MobiOriginMLP:
     if (
         int(observed_input) != input_dim
         or int(classes) != NUM_CLASSES
+        or (int(hidden_1), int(hidden_2), int(hidden_3)) != HIDDEN_DIMS
         or second_input != hidden_1
         or third_input != hidden_2
         or output_input != hidden_3
@@ -82,7 +83,7 @@ def load_model(path: Path, *, input_dim: int = INPUT_DIM) -> MobiOriginMLP:
     model = MobiOriginMLP(
         input_dim=input_dim,
         num_classes=NUM_CLASSES,
-        hidden_dims=(int(hidden_1), int(hidden_2), int(hidden_3)),
+        hidden_dims=HIDDEN_DIMS,
     )
     try:
         model.load_state_dict(state, strict=True)

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "codex/**"]
   pull_request:
     branches: [main]
 
@@ -29,7 +29,9 @@ jobs:
         run: ruff check src/ tests/
 
       - name: mypy
-        run: mypy src/plasflow2/ --ignore-missing-imports
+        run: |
+          mypy src/mobiorigin/ --ignore-missing-imports
+          mypy src/plasflow2/ --ignore-missing-imports
 
   test:
     name: Tests (Python ${{ matrix.python-version }})
@@ -53,11 +55,24 @@ jobs:
         run: |
           # Install CPU-only torch to avoid large downloads in CI
           poetry config virtualenvs.create false
-          poetry install --no-interaction --with dev
           pip install torch --index-url https://download.pytorch.org/whl/cpu
+          poetry install --no-interaction --with dev
 
-      - name: Run tests
-        run: pytest tests/ -v --cov=plasflow2 --cov-report=xml
+      - name: Run full unit suite
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+        run: pytest tests/unit -q --cov=plasflow2 --cov-report=xml
+
+      - name: Enforce MobiOrigin critical-core coverage
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+        run: >-
+          pytest tests/unit/test_mobiorigin_production.py -q -o addopts=""
+          --cov=mobiorigin --cov-report=term --cov-fail-under=80
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

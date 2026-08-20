@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import torch
 from mobiorigin import cli
+from mobiorigin.database_setup import DATABASE_FILENAMES, MANIFEST_NAME, setup_databases
 from mobiorigin.fasta import FastaRecord, read_fasta
 from mobiorigin.marker_features import (
     DATABASE_SHA256,
@@ -26,6 +27,7 @@ from mobiorigin.marker_features import (
 from mobiorigin.model import MobiOriginMLP, ModelLoadError, load_model
 from mobiorigin.predict import (
     _write_predictions,
+    configure_runtime,
     ensemble_probabilities,
     fuse_features,
     predict,
@@ -126,8 +128,37 @@ def test_database_manifest_rejects_missing_or_changed_payload(tmp_path: Path) ->
         load_database_manifest(tmp_path)
 
 
+def test_database_setup_is_atomic_and_identity_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    hashes: dict[str, str] = {}
+    for family, filename in DATABASE_FILENAMES.items():
+        path = write(source / filename, f"{family}-database\n")
+        hashes[family] = sha256_file(path)
+    monkeypatch.setattr("mobiorigin.database_setup.DATABASE_SHA256", hashes)
+    monkeypatch.setattr("mobiorigin.marker_features.DATABASE_SHA256", hashes)
+    output = tmp_path / "installed"
+    setup_databases(output, source_dir=source)
+    assert load_database_manifest(output) == {
+        family: output / filename for family, filename in DATABASE_FILENAMES.items()
+    }
+    manifest = json.loads((output / MANIFEST_NAME).read_text())
+    assert manifest["network_accessed"] is False
+    assert (output / "THIRD_PARTY_DATABASE_NOTICE.txt").is_file()
+    with pytest.raises(FileExistsError):
+        setup_databases(output, source_dir=source)
+    (source / DATABASE_FILENAMES["rep"]).write_text("changed\n", encoding="ascii")
+    failed = tmp_path / "failed"
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        setup_databases(failed, source_dir=source)
+    assert not failed.exists()
+
+
 def test_model_round_trip_and_rejections(tmp_path: Path) -> None:
-    model = MobiOriginMLP(input_dim=8, hidden_dims=(16, 8, 4))
+    configure_runtime()
+    model = MobiOriginMLP(input_dim=8)
     path = tmp_path / "model.pt"
     torch.save(model.state_dict(), path)
     loaded = load_model(path, input_dim=8)
@@ -140,6 +171,13 @@ def test_model_round_trip_and_rejections(tmp_path: Path) -> None:
     torch.save({"bad": "not a tensor"}, unsafe)
     with pytest.raises(ModelLoadError):
         load_model(unsafe, input_dim=8)
+    other_architecture = tmp_path / "other_architecture.pt"
+    torch.save(
+        MobiOriginMLP(input_dim=8, hidden_dims=(512, 128, 32)).state_dict(),
+        other_architecture,
+    )
+    with pytest.raises(ModelLoadError, match="architecture"):
+        load_model(other_architecture, input_dim=8)
 
 
 def test_fusion_and_selective_policy() -> None:
@@ -296,3 +334,10 @@ def test_cli_dispatches_predict(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         ]
     )
     assert observed["threads"] == 4
+
+
+def test_cli_dispatches_database_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(cli, "setup_databases", lambda **kwargs: observed.update(kwargs))
+    cli.main(["setup-databases", "--output-dir", str(tmp_path / "db")])
+    assert observed == {"output_dir": tmp_path / "db", "source_dir": None}

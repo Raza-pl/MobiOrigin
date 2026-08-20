@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
+from mobiorigin.database_setup import setup_databases
 from mobiorigin.predict import predict
 
 
@@ -20,6 +21,15 @@ def parser() -> argparse.ArgumentParser:
     predict_parser.add_argument("--output-dir", type=Path, required=True)
     predict_parser.add_argument("--database-dir", type=Path, required=True)
     predict_parser.add_argument("--threads", type=int, default=1)
+    setup_parser = subparsers.add_parser(
+        "setup-databases", help="retrieve and verify the frozen MOB marker databases"
+    )
+    setup_parser.add_argument("--output-dir", type=Path, required=True)
+    setup_parser.add_argument(
+        "--source-dir",
+        type=Path,
+        help="copy exact databases from a local directory instead of downloading",
+    )
     return value
 
 
@@ -32,3 +42,5 @@ def main(argv: Sequence[str] | None = None) -> None:
             database_dir=args.database_dir,
             threads=args.threads,
         )
+    elif args.command == "setup-databases":
+        setup_databases(output_dir=args.output_dir, source_dir=args.source_dir)

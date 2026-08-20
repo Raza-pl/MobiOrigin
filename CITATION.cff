@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use MobiOrigin, please cite this software and the associated manuscript."
+title: "MobiOrigin: sequence-and-marker classification of bacterial replicons"
+type: software
+authors:
+  - family-names: Raza
+    given-names: Shahbaz
+    email: shahbaz.invincible3182@gmail.com
+repository-code: "https://github.com/Raza-pl/plasflow2.0"
+url: "https://github.com/Raza-pl/plasflow2.0"
+version: 0.1.0
+date-released: 2026-08-21
+license: GPL-3.0-only
+keywords:
+  - bioinformatics
+  - plasmid
+  - phage
+  - chromosome
+  - replicon classification
+  - machine learning
+abstract: >-
+  MobiOrigin is a CPU-oriented sequence-and-marker classifier that assigns
+  bacterial DNA fragments to chromosome, plasmid, phage, or an explicit
+  unclassified state. Version 0.1.0 packages the frozen three-seed dev1 model
+  evaluated in a prospective external comparison with geNomad.
