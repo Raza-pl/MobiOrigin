@@ -13,7 +13,7 @@ Correctly distinguishing chromosomal, plasmid, and phage-derived sequence fragme
 
 Plasmids and bacteriophages are major vehicles of horizontal gene transfer, but assembled microbial sequences often lack an immediately observable replicon identity. Classification is especially difficult for short fragments, divergent elements, and integrated or compositionally host-adapted sequences. Alignment-free nucleotide models can generalize beyond known reference entries, whereas gene-marker approaches provide interpretable biological evidence when recognizable proteins are present.
 
-PlasFlow introduced a neural genome-signature approach for plasmid prediction from metagenomic fragments [1]. geNomad subsequently combined sequence and extensive gene-marker evidence for virus and plasmid identification [2]. These methods motivate a compact fusion strategy that retains an alignment-free sequence backbone while incorporating a narrowly scoped, locally executable marker panel. MobiOrigin was developed as a standalone successor classifier rather than as a relabeling of the broader PlasFlow2 annotation workflow.
+geNomad combines sequence and extensive gene-marker evidence for virus and plasmid identification [1]. This approach motivates a compact fusion strategy that retains an alignment-free sequence backbone while incorporating a narrowly scoped, locally executable marker panel.
 
 Our objectives were to: (i) build a balanced, source-cluster-disjoint development corpus with exact and high-similarity firewalls; (ii) prospectively freeze a compact CPU-trainable model and abstention policy; (iii) qualify the final candidate without retrospective locked-test tuning; and (iv) compare the frozen candidate with geNomad on a newly assembled, label-sealed external cohort. We report both the co-primary comparisons and the precision–sensitivity–coverage trade-offs required to interpret them.
 
@@ -27,7 +27,7 @@ The final development dataset contained 66,000 fragments: 22,000 per class, with
 
 ### Sequence and marker features
 
-Each fragment was represented by a frozen 9,557-dimensional sequence vector containing normalized nucleotide-composition and canonical *k*-mer features. Protein-coding sequences were predicted in metagenomic mode with Pyrodigal, restricted to translation table 11 and deterministic IUPAC ambiguity masking [3,4]. Predicted proteins were searched with DIAMOND against three MOB-suite-derived protein panels representing replication, relaxase/mobilization, and mating-pair formation [5,6]. Family-specific hit summaries and ORF-composition summaries formed a 17-dimensional marker vector. Marker features were standardized using training rows only and concatenated with the sequence vector. geNomad output, known-plasmid containment, hard class overrides, and probability-mass transfer were prohibited.
+Each fragment was represented by a frozen 9,557-dimensional sequence vector containing normalized nucleotide-composition and canonical *k*-mer features. Protein-coding sequences were predicted in metagenomic mode with Pyrodigal, restricted to translation table 11 and deterministic IUPAC ambiguity masking [2,3]. Predicted proteins were searched with DIAMOND against three MOB-suite-derived protein panels representing replication, relaxase/mobilization, and mating-pair formation [4,5]. Family-specific hit summaries and ORF-composition summaries formed a 17-dimensional marker vector. Marker features were standardized using training rows only and concatenated with the sequence vector. geNomad output, known-plasmid containment, hard class overrides, and probability-mass transfer were prohibited.
 
 ### Model training and candidate freeze
 
@@ -86,9 +86,8 @@ Source code, frozen model artifacts, user documentation, and aggregate publicati
 
 ## References
 
-1. Krawczyk PS, Lipinski L, Dziembowski A. PlasFlow: predicting plasmid sequences in metagenomic data using genome signatures. *Nucleic Acids Research*. 2018;46:e35. doi:10.1093/nar/gky044.
-2. Camargo AP, Roux S, Schulz F, et al. Identification of mobile genetic elements with geNomad. *Nature Biotechnology*. 2024;42:1303–1312. doi:10.1038/s41587-023-01953-y.
-3. Larralde M. Pyrodigal: Python bindings and interface to Prodigal, an efficient method for gene prediction in prokaryotes. *Journal of Open Source Software*. 2022;7:4296. doi:10.21105/joss.04296.
-4. Hyatt D, Chen G-L, LoCascio PF, Land ML, Larimer FW, Hauser LJ. Prodigal: prokaryotic gene recognition and translation initiation site identification. *BMC Bioinformatics*. 2010;11:119. doi:10.1186/1471-2105-11-119.
-5. Robertson J, Nash JHE. MOB-suite: software tools for clustering, reconstruction and typing of plasmids from draft assemblies. *Microbial Genomics*. 2018;4:e000206. doi:10.1099/mgen.0.000206.
-6. Buchfink B, Reuter K, Drost H-G. Sensitive protein alignments at tree-of-life scale using DIAMOND. *Nature Methods*. 2021;18:366–368. doi:10.1038/s41592-021-01101-x.
+1. Camargo AP, Roux S, Schulz F, et al. Identification of mobile genetic elements with geNomad. *Nature Biotechnology*. 2024;42:1303–1312. doi:10.1038/s41587-023-01953-y.
+2. Larralde M. Pyrodigal: Python bindings and interface to Prodigal, an efficient method for gene prediction in prokaryotes. *Journal of Open Source Software*. 2022;7:4296. doi:10.21105/joss.04296.
+3. Hyatt D, Chen G-L, LoCascio PF, Land ML, Larimer FW, Hauser LJ. Prodigal: prokaryotic gene recognition and translation initiation site identification. *BMC Bioinformatics*. 2010;11:119. doi:10.1186/1471-2105-11-119.
+4. Robertson J, Nash JHE. MOB-suite: software tools for clustering, reconstruction and typing of plasmids from draft assemblies. *Microbial Genomics*. 2018;4:e000206. doi:10.1099/mgen.0.000206.
+5. Buchfink B, Reuter K, Drost H-G. Sensitive protein alignments at tree-of-life scale using DIAMOND. *Nature Methods*. 2021;18:366–368. doi:10.1038/s41592-021-01101-x.

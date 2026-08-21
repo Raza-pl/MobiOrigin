@@ -24,7 +24,3 @@ Initial research release of the frozen `mobiorigin-dev1-mob-selective-v1` candid
 - geNomad outputs are not model features or training targets.
 - MobiOrigin does not use hard biological overrides or post-hoc probability transfer.
 - Third-party biological database records are retrieved for local use and are not bundled in the Python distribution.
-
-### Historical compatibility
-
-- The historical broader `plasflow2` source remains in the repository, but the MobiOrigin distribution intentionally installs only the standalone `mobiorigin` command.

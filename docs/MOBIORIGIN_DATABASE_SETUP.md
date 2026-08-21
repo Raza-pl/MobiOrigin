@@ -29,7 +29,7 @@ After installing MobiOrigin, run:
 mobiorigin setup-databases --output-dir mobiorigin_mob_databases
 ```
 
-The command downloads the three database files from the versioned PlasFlow 2.0.0 release assets, verifies the frozen SHA-256 identity of every file, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if a download is interrupted or any identity differs. Existing output directories are never overwritten.
+The command downloads the three database files from the versioned MobiOrigin database release, verifies the frozen SHA-256 identity of every file, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if a download is interrupted or any identity differs. Existing output directories are never overwritten.
 
 For an offline or institutionally mirrored installation, first place the three exact `.dmnd` files in one source directory and run:
 

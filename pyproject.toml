@@ -14,7 +14,6 @@ include = [
     { path = "CHANGELOG.md", format = ["sdist"] },
     { path = "docs/MOBIORIGIN_DATABASE_SETUP.md", format = ["sdist"] },
     { path = "docs/MOBIORIGIN_OUTPUT_SCHEMA.md", format = ["sdist"] },
-    { path = "docs/MOBIORIGIN_MIGRATION.md", format = ["sdist"] },
     { path = "docs/PUBLICATION_AND_RELEASE_CHECKLIST.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.0.md", format = ["sdist"] },
     { path = "docs/manuscript/MOBIORIGIN_MANUSCRIPT_DRAFT.md", format = ["sdist"] },
@@ -53,18 +52,6 @@ black = ">=24.0.0"
 ruff = ">=0.1.0"
 mypy = ">=1.8.0"
 pre-commit = ">=3.6.0"
-ipykernel = ">=6.29.0"
-# Historical PlasFlow2 source-tree tests; excluded from the MobiOrigin wheel.
-scikit-learn = ">=1.5.0"
-scipy = ">=1.11.0"
-biopython = ">=1.82"
-click = ">=8.1.0"
-tqdm = ">=4.66.0"
-plotly = ">=5.18.0"
-jinja2 = ">=3.1.0"
-pandas = ">=2.1.0"
-h5py = ">=3.10.0"
-xgboost = ">=2.0.0"
 
 [tool.poetry.scripts]
 mobiorigin = "mobiorigin.cli:main"
@@ -94,22 +81,7 @@ ignore_missing_imports = true
 strict = false
 warn_return_any = false
 warn_unused_configs = true
-# Pipeline and CLI have many pre-existing type issues from optional chaining
-# and dynamic field access; suppress until a dedicated type-annotation pass
-[[tool.mypy.overrides]]
-module = [
-    "plasflow2.pipeline",
-    "plasflow2.cli",
-    "plasflow2.classify.predict",
-    "plasflow2.classify.features",
-    "plasflow2.classify.marker_classifier",
-    "plasflow2.annotate.topology",
-    "plasflow2.annotate.args",
-    "plasflow2.annotate.mobility",
-    "plasflow2.report.generator",
-]
-ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=plasflow2 --cov-report=term-missing --cov-fail-under=0"
+addopts = "--cov=mobiorigin --cov-report=term-missing --cov-fail-under=80"

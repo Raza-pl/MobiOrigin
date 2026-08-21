@@ -6,7 +6,7 @@
 - Source-disjoint development, calibration, locked-test, and prospective external evaluations.
 - Prospective external MobiOrigin-versus-geNomad comparison with paired source-level inference.
 - Aggregate publication tables, editable vector figure, methods, and claim boundaries.
-- Top-level MobiOrigin user documentation, legacy PlasFlow2 preservation, output schema, and migration guide.
+- Top-level MobiOrigin user documentation, database setup, output schema, and release notes.
 - Atomic exact-hash marker-database setup command; databases remain unbundled.
 - Versioned citation metadata and changelog.
 - Manuscript draft with frozen aggregate results and explicit limitations.

@@ -1,107 +1,33 @@
-# PlasFlow v2 — Multi-stage Docker image
-#
-# Stage 1 (builder): install Python deps via Poetry into a venv
-# Stage 2 (runtime): copy venv + install system tools (DIAMOND, MOB-suite)
-#
-# Usage:
-#   docker build -t plasflow2 .
-#   docker run --rm \
-#     -v /path/to/data:/data \
-#     -v /path/to/results:/results \
-#     plasflow2 run \
-#       --input   /data/assembly.fasta \
-#       --output  /results/ \
-#       --card-db /data/databases/card/card.dmnd \
-#       --aro-index /data/databases/card/aro_index.tsv \
-#       --threads 8
-#
-# To print the setup guide inside the container:
-#   docker run --rm plasflow2 setup
-
-# ─── Stage 1: Python dependency builder ──────────────────────────────────────
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
-
-# Install build tools needed by some Python packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        curl \
-        git \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry (no virtualenvs inside container — we'll copy the venv out)
-ENV POETRY_VERSION=1.8.2 \
-    POETRY_HOME=/opt/poetry \
-    POETRY_VIRTUALENVS_IN_PROJECT=true \
-    POETRY_NO_INTERACTION=1
-
-RUN curl -sSL https://install.python-poetry.org | python3 -
-ENV PATH="$POETRY_HOME/bin:$PATH"
-
-# Copy only dependency files first (layer-cache friendly)
-COPY pyproject.toml poetry.lock* ./
-
-# Install runtime dependencies (no dev extras)
-RUN poetry install --only main --no-root
-
-# Copy source and install the package itself
+COPY pyproject.toml poetry.lock ./
+COPY README.md LICENSE CITATION.cff CHANGELOG.md ./
+COPY docs/ docs/
 COPY src/ src/
-RUN poetry install --only main
+RUN python -m pip install --no-cache-dir build \
+    && python -m build --wheel
 
-
-# ─── Stage 2: Runtime image ──────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
 
-LABEL maintainer="Raza <shahbaz.invincible3182@gmail.com>"
-LABEL description="PlasFlow v2 — metagenomic contig classifier and AMR risk scorer"
+LABEL org.opencontainers.image.title="MobiOrigin"
+LABEL org.opencontainers.image.description="Sequence-and-marker classification of bacterial replicons"
 LABEL org.opencontainers.image.source="https://github.com/Raza-pl/MobiOrigin"
 
-# System packages:
-#   - DIAMOND (bioinformatics aligner)
-#   - mob_suite (plasmid mobility typing) — installed via pip inside conda;
-#     here we install its Python deps and the binary separately
-#   - libgomp1: OpenMP for DIAMOND multithreading
-#   - wget / curl: for plasflow2 setup downloads
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgomp1 \
-        wget \
-        curl \
-        procps \
-    && rm -rf /var/lib/apt/lists/*
-
-# ── Install DIAMOND ───────────────────────────────────────────────────────────
 ARG DIAMOND_VERSION=2.1.9
-RUN wget -q "https://github.com/bbuchfink/diamond/releases/download/v${DIAMOND_VERSION}/diamond-linux64.tar.gz" \
-    -O /tmp/diamond.tar.gz \
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 wget \
+    && wget -q "https://github.com/bbuchfink/diamond/releases/download/v${DIAMOND_VERSION}/diamond-linux64.tar.gz" -O /tmp/diamond.tar.gz \
     && tar -xzf /tmp/diamond.tar.gz -C /usr/local/bin diamond \
     && rm /tmp/diamond.tar.gz \
-    && diamond --version
+    && rm -rf /var/lib/apt/lists/*
 
-# ── Install MOB-suite via pip ────────────────────────────────────────────────
-# MOB-suite has a pip package but requires some system dependencies
-RUN pip install --no-cache-dir mob_suite==3.1.9
+COPY --from=builder /build/dist/*.whl /tmp/mobiorigin.whl
+RUN python -m pip install --no-cache-dir /tmp/mobiorigin.whl \
+    && rm /tmp/mobiorigin.whl
 
-# ── Copy Python venv from builder ────────────────────────────────────────────
-COPY --from=builder /build/.venv /opt/plasflow2-venv
-ENV PATH="/opt/plasflow2-venv/bin:$PATH"
-ENV VIRTUAL_ENV="/opt/plasflow2-venv"
-
-# ── Copy application source ──────────────────────────────────────────────────
-WORKDIR /app
-COPY src/ src/
-
-# ── Runtime defaults ─────────────────────────────────────────────────────────
-# Volumes the user must mount:
-#   /data/databases/  — model weights + annotation databases (read-only)
-#                       Run scripts/setup_databases.sh on the host first,
-#                       then mount the resulting data/ directory here.
-#   /data/input/      — input FASTA files (read-only)
-#   /results/         — output directory (read-write)
-VOLUME ["/data", "/results"]
-
-# Make plasflow2 accessible
-ENV PYTHONPATH="/app/src"
-
-ENTRYPOINT ["plasflow2"]
+WORKDIR /work
+ENTRYPOINT ["mobiorigin"]
 CMD ["--help"]

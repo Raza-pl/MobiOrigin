@@ -1,8 +1,0 @@
-Runtime comparison on W1.contigs.fa (205,645 contigs, WWTP metagenome assembly)
-Apple Silicon CPU, 8 threads
-
-Tool            | Wall time | Peak RAM | Plasmid | Chromosome | Phage/virus | Unclassified
-----------------|-----------|----------|---------|------------|-------------|-------------
-plasflow_v2     | 00:06:40  | 3108     | 2747    | 145498     | 6345        | 51055
-plasflow_v1     | N/A       | N/A      | N/A     | N/A        | N/A         | N/A
-genomad         | 03:02:20  | ?        | 1179    | 199943     | 4523        | 0

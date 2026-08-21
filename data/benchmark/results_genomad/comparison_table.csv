@@ -1,4 +1,0 @@
-tool,plasmid_p,plasmid_r,plasmid_f1,chr_f1,macro_f1,tp,fp,fn
-PlasFlow v1 (kmer7),0.014,0.198,0.025,0.947,0.486,78,5689,316
-geNomad v1.12 (thr=0.7),0.06,0.876,0.112,0.952,0.532,345,5417,49
-PlasFlow v2 (this work),0.543,0.673,0.601,0.997,0.799,265,223,129

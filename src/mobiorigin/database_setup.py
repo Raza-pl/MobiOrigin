@@ -18,7 +18,7 @@ DATABASE_FILENAMES = {
     "mob": "mob_proteins.dmnd",
     "mpf": "mpf_proteins.dmnd",
 }
-DEFAULT_BASE_URL = "https://github.com/Raza-pl/MobiOrigin/releases/download/v2.0.0"
+DEFAULT_BASE_URL = "https://github.com/Raza-pl/MobiOrigin/releases/download/databases-v1"
 ARCHIVE_DOI = "https://doi.org/10.5281/zenodo.10304948"
 MANIFEST_NAME = "mobiorigin_mob_suite_database_manifest.json"
 NOTICE = """MobiOrigin marker-database notice

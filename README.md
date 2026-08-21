@@ -5,8 +5,6 @@
 
 MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacterial DNA fragments to chromosome, plasmid, phage, or an explicit unclassified state. The frozen dev1 candidate combines 9,557 sequence features with 17 MOB-suite-derived protein-marker features and an equal-weight ensemble of three independently trained neural networks.
 
-MobiOrigin is the successor research classifier developed from the PlasFlow2 project. Historical PlasFlow2 pipeline documentation is preserved in [`docs/PLASFLOW2_LEGACY_README.md`](docs/PLASFLOW2_LEGACY_README.md); it is not the usage guide for the standalone MobiOrigin classifier.
-
 ## Status
 
 - Package version: `0.1.0` (initial research release of the frozen dev1 candidate).
@@ -26,8 +24,6 @@ cd MobiOrigin
 python -m pip install .
 mobiorigin --help
 ```
-
-The repository URL retains its historical name until a separately authorized remote rename. The installed package and primary command are `mobiorigin`.
 
 ## Prepare marker databases
 
@@ -76,6 +72,10 @@ The result supports higher macro-F1 and plasmid binary F1 on this frozen cohort.
 
 Publication-facing aggregate tables, methods, figure data, and frozen claim boundaries are in [`docs/manuscript/mobiorigin_external_validation`](docs/manuscript/mobiorigin_external_validation/README.md).
 
+### Comparator scope
+
+The prospective MobiOrigin evaluation used geNomad as the preregistered comparator. Earlier local experiments involving PlasClass, PLASMe, and Platon evaluated a different predecessor model and cohort. Those results are retained in the private scientific audit archive, but they are not MobiOrigin performance evidence and are intentionally excluded from this repository's claims.
+
 ## Reproducibility and scope
 
 - External evaluation: 10,000 paired bootstrap replicates over `source_accession`, seed `20260818`.
@@ -90,7 +90,3 @@ Publication-facing aggregate tables, methods, figure data, and frozen claim boun
 MobiOrigin source code is distributed under GPL-3.0. Third-party MOB-suite-derived database records are not bundled and retain their own provenance and licensing conditions. The official MOB-suite repository is Apache-2.0 licensed, but this project does not assume that license establishes redistribution rights for every record in its separately hosted database archive.
 
 Use the versioned metadata in [`CITATION.cff`](CITATION.cff) when citing the software. An archival DOI can be added after the tagged release is deposited; until then, include the repository URL, version, and commit used for analysis. Release changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
-
-## Historical compatibility
-
-The repository still contains the historical broader `plasflow2` source tree, but the MobiOrigin distribution intentionally installs only the standalone `mobiorigin` command. See [`docs/MOBIORIGIN_MIGRATION.md`](docs/MOBIORIGIN_MIGRATION.md) before replacing an existing PlasFlow2 workflow.

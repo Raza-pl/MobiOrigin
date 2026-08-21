@@ -29,9 +29,7 @@ jobs:
         run: ruff check src/ tests/
 
       - name: mypy
-        run: |
-          mypy src/mobiorigin/ --ignore-missing-imports
-          mypy src/plasflow2/ --ignore-missing-imports
+        run: mypy src/mobiorigin/ --ignore-missing-imports
 
   test:
     name: Tests (Python ${{ matrix.python-version }})
@@ -67,31 +65,3 @@ jobs:
         run: >-
           pytest tests/unit/test_mobiorigin_production.py -q -o addopts=""
           --cov=mobiorigin --cov-report=term --cov-fail-under=80
-
-  legacy-test:
-    name: Legacy PlasFlow2 regression signal (Python 3.10)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.10"
-
-      - name: Install Poetry
-        run: pip install poetry
-
-      - name: Install dependencies
-        run: |
-          poetry config virtualenvs.create false
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          poetry install --no-interaction --with dev
-
-      - name: Run historical regression suite
-        env:
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-          OPENBLAS_NUM_THREADS: "1"
-        run: pytest tests/unit -q --cov=plasflow2 --cov-report=term
