@@ -37,4 +37,4 @@ MobiOrigin 0.1.0 is the initial research release of the frozen `mobiorigin-dev1-
 
 ## External actions after repository freeze
 
-The GitHub release page, repository rename (if desired), archival DOI, and journal submission require authenticated external services and author confirmation. Those actions must not change the frozen scientific candidate or reported results.
+The repository has been renamed to `Raza-pl/MobiOrigin`. Creating the GitHub release page, minting an archival DOI, and submitting to a journal still require external-service actions and author confirmation. Those actions must not change the frozen scientific candidate or reported results.

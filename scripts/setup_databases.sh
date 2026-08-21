@@ -195,8 +195,8 @@ else
         # The calibrated MLP, its cryptographic manifest, and the native
         # marker model are distributed with v2.1.0. The legacy PCA file
         # remains available from v2.0.0.
-        RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.1.0"
-        LEGACY_RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+        RELEASE_BASE="https://github.com/Raza-pl/MobiOrigin/releases/download/v2.1.0"
+        LEGACY_RELEASE_BASE="https://github.com/Raza-pl/MobiOrigin/releases/download/v2.0.0"
 
         model_ok=true
         for fname in mlp_v2.pt mlp_v2.pt.manifest.json marker_xgb.json marker_xgb.json.meta.json; do
@@ -326,7 +326,7 @@ else
     SARG_FASTA="$SARG_DIR/sarg.fasta"
     # Primary: pre-built DIAMOND database from PlasFlow v2 release (fastest, no build step).
     # Fallback: download SARG FASTA and build locally.
-    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+    RELEASE_BASE="https://github.com/Raza-pl/MobiOrigin/releases/download/v2.0.0"
 
     if download "$RELEASE_BASE/sarg.dmnd" "$SARG_DMND" "sarg.dmnd"; then
         ok "SARG DIAMOND database ready"
@@ -382,7 +382,7 @@ elif [[ -f "$AMR_DMND" && -f "$AMR_META" && -f "$AMR_VERSION" && -f "$AMR_FORMAT
 else
     # v2.1.2 distributes a matched DIAMOND database and fam.tsv hierarchy.
     # Both files must come from the same AMRFinderPlus database release.
-    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.1.2"
+    RELEASE_BASE="https://github.com/Raza-pl/MobiOrigin/releases/download/v2.1.2"
 
     rm -rf "$AMR_TMP"
     mkdir -p "$AMR_TMP"
@@ -571,7 +571,7 @@ elif [[ -f "$ICE_DMND" ]]; then
 else
     ICE_FASTA="$ICE_DIR/ICEberg3_proteins.faa"
     ICE_TSV="$ICE_DIR/ice_experimental_list.tsv"
-    RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+    RELEASE_BASE="https://github.com/Raza-pl/MobiOrigin/releases/download/v2.0.0"
 
     # Primary: pre-built DIAMOND database from PlasFlow v2 release.
     # Fallback: download protein FASTA from SJTU (often VPN-blocked) and build.
@@ -675,7 +675,7 @@ else
     if ! $MOB_DB_FOUND; then
         # Try to get pre-built databases from PlasFlow v2 release first,
         # then fall back to mob_init (which requires ete3 and a 500 MB download).
-        RELEASE_BASE="https://github.com/Raza-pl/plasflow2.0/releases/download/v2.0.0"
+        RELEASE_BASE="https://github.com/Raza-pl/MobiOrigin/releases/download/v2.0.0"
         MOB_DATA_DIR="$(python -c "import mob_suite, os; print(os.path.join(os.path.dirname(mob_suite.__file__), 'data'))" 2>/dev/null)"
 
         if [[ -n "$MOB_DATA_DIR" ]] && mkdir -p "$MOB_DATA_DIR" 2>/dev/null; then

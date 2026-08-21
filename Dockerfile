@@ -55,7 +55,7 @@ FROM python:3.11-slim AS runtime
 
 LABEL maintainer="Raza <shahbaz.invincible3182@gmail.com>"
 LABEL description="PlasFlow v2 — metagenomic contig classifier and AMR risk scorer"
-LABEL org.opencontainers.image.source="https://github.com/Raza-pl/plasflow2.0"
+LABEL org.opencontainers.image.source="https://github.com/Raza-pl/MobiOrigin"
 
 # System packages:
 #   - DIAMOND (bioinformatics aligner)

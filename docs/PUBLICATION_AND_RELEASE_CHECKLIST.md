@@ -10,6 +10,7 @@
 - Atomic exact-hash marker-database setup command; databases remain unbundled.
 - Versioned citation metadata and changelog.
 - Manuscript draft with frozen aggregate results and explicit limitations.
+- Public repository renamed to `Raza-pl/MobiOrigin`; package metadata and installation routes use the canonical URL.
 
 ## Author confirmation required before journal submission
 
@@ -21,7 +22,6 @@
 
 ## Hosting actions requiring authenticated external services
 
-- Rename or transfer the historical GitHub repository if a MobiOrigin-specific slug is desired.
 - Create the public tagged GitHub release and attach release notes.
 - Connect the release to Zenodo or another archive and add the minted DOI to `CITATION.cff` and the manuscript.
 - Submit the manuscript and supplementary files through the selected journal portal.

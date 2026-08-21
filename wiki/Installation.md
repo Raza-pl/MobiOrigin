@@ -16,8 +16,8 @@ PlasFlow v2 supports Mac Intel, Mac M1–M5, Linux x86_64, and WSL Ubuntu. Pytho
 ## Option A — No-fuss (recommended)
 
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0
-cd plasflow2.0
+git clone https://github.com/Raza-pl/MobiOrigin
+cd MobiOrigin
 bash install.sh
 conda activate plasflow2
 ```
@@ -41,8 +41,8 @@ Takes **15–30 min** depending on your connection.
 Use this if you have conda and want to set up the environment yourself.
 
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0
-cd plasflow2.0
+git clone https://github.com/Raza-pl/MobiOrigin
+cd MobiOrigin
 
 conda env create -f environment.yml
 conda activate plasflow2
@@ -71,8 +71,8 @@ Use this if conda is not available. Requires Python 3.10 and system tools instal
 | geNomad ≥ 1.7 | `conda install -c bioconda -c conda-forge genomad` |
 
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0
-cd plasflow2.0
+git clone https://github.com/Raza-pl/MobiOrigin
+cd MobiOrigin
 
 pip install -e .
 mob_init
@@ -85,8 +85,8 @@ bash scripts/setup_databases.sh
 ## Option D — Docker
 
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0
-cd plasflow2.0
+git clone https://github.com/Raza-pl/MobiOrigin
+cd MobiOrigin
 
 docker build -t plasflow2 .
 
@@ -182,7 +182,7 @@ See [Advanced Usage — Taxonomy](Advanced-Usage#taxonomy-annotation-gtdb) for d
 
 ### Model weights
 
-Downloaded from [GitHub Releases v2.0.0](https://github.com/Raza-pl/plasflow2.0/releases/tag/v2.0.0):
+Downloaded from [GitHub Releases v2.0.0](https://github.com/Raza-pl/MobiOrigin/releases/tag/v2.0.0):
 
 | File | Size | Purpose |
 |------|------|---------|

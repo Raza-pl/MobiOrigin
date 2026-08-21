@@ -20,8 +20,8 @@ include = [
     { path = "docs/manuscript/MOBIORIGIN_MANUSCRIPT_DRAFT.md", format = ["sdist"] },
     { path = "docs/manuscript/mobiorigin_external_validation", format = ["sdist"] },
 ]
-homepage = "https://github.com/Raza-pl/plasflow2.0"
-repository = "https://github.com/Raza-pl/plasflow2.0"
+homepage = "https://github.com/Raza-pl/MobiOrigin"
+repository = "https://github.com/Raza-pl/MobiOrigin"
 keywords = ["bioinformatics", "plasmid", "phage", "replicon", "machine-learning"]
 classifiers = [
     "Development Status :: 4 - Beta",

@@ -21,8 +21,8 @@ MobiOrigin is the successor research classifier developed from the PlasFlow2 pro
 MobiOrigin currently targets Python 3.10 or 3.11 and requires DIAMOND on `PATH`.
 
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0.git
-cd plasflow2.0
+git clone https://github.com/Raza-pl/MobiOrigin.git
+cd MobiOrigin
 python -m pip install .
 mobiorigin --help
 ```

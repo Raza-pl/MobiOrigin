@@ -13,8 +13,8 @@ Welcome to the PlasFlow v2 documentation. **Current version: 2.0.0-beta**
 ## Quick start
 
 ```bash
-git clone https://github.com/Raza-pl/plasflow2.0
-cd plasflow2.0
+git clone https://github.com/Raza-pl/MobiOrigin
+cd MobiOrigin
 bash install.sh
 conda activate plasflow2
 plasflow2 run --input assembly.fasta --output results/ --threads 16
