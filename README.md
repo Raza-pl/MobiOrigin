@@ -30,10 +30,14 @@ mobiorigin --help
 MobiOrigin does not bundle third-party biological database records. Retrieve and verify the exact research databases locally:
 
 ```bash
-mobiorigin setup-databases --output-dir mobiorigin_mob_databases
+mob_init
+MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).parent / "data")')"
+mobiorigin setup-databases \
+  --source-dir "$MOB_DATA_DIR" \
+  --output-dir mobiorigin_mob_databases
 ```
 
-The command publishes the directory atomically only after all three database hashes match. An offline source-directory route and complete provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any database hash differs.
+`mob_init` retrieves the upstream database through MOB-suite's official route. MobiOrigin then publishes its runtime directory atomically only after all three database hashes match. Complete provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any database hash differs.
 
 ## Run
 

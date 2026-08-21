@@ -28,7 +28,8 @@ def parser() -> argparse.ArgumentParser:
     setup_parser.add_argument(
         "--source-dir",
         type=Path,
-        help="copy exact databases from a local directory instead of downloading",
+        required=True,
+        help="official MOB-suite data directory containing the three exact databases",
     )
     return value
 

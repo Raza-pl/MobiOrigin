@@ -339,5 +339,16 @@ def test_cli_dispatches_predict(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 def test_cli_dispatches_database_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     observed: dict[str, object] = {}
     monkeypatch.setattr(cli, "setup_databases", lambda **kwargs: observed.update(kwargs))
-    cli.main(["setup-databases", "--output-dir", str(tmp_path / "db")])
-    assert observed == {"output_dir": tmp_path / "db", "source_dir": None}
+    cli.main(
+        [
+            "setup-databases",
+            "--source-dir",
+            str(tmp_path / "official_source"),
+            "--output-dir",
+            str(tmp_path / "db"),
+        ]
+    )
+    assert observed == {
+        "output_dir": tmp_path / "db",
+        "source_dir": tmp_path / "official_source",
+    }

@@ -21,17 +21,21 @@ This is a conservative scientific distribution policy, not legal advice.
 
 The hashes apply to the final `.dmnd` files consumed by MobiOrigin, not merely their source FASTA files. A database made from a different source release or DIAMOND build may not reproduce these byte identities.
 
-## Automated identity-verified setup
+## Official-source, identity-verified setup
 
-After installing MobiOrigin, run:
+Install MOB-suite 3.1.8, initialize its official database archive, then point MobiOrigin at MOB-suite's data directory:
 
 ```bash
-mobiorigin setup-databases --output-dir mobiorigin_mob_databases
+mob_init
+MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).parent / "data")')"
+mobiorigin setup-databases \
+  --source-dir "$MOB_DATA_DIR" \
+  --output-dir mobiorigin_mob_databases
 ```
 
-The command downloads the three database files from the versioned MobiOrigin database release, verifies the frozen SHA-256 identity of every file, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if a download is interrupted or any identity differs. Existing output directories are never overwritten.
+`mob_init` performs user-side retrieval from the official MOB-suite route. MobiOrigin copies only the three required files, verifies the frozen SHA-256 identity of every file, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if any identity differs. Existing output directories are never overwritten.
 
-For an offline or institutionally mirrored installation, first place the three exact `.dmnd` files in one source directory and run:
+For an offline or institutionally mirrored installation, place the three exact `.dmnd` files in one source directory and run the same MobiOrigin command with that directory as `--source-dir`.
 
 ```bash
 mobiorigin setup-databases \

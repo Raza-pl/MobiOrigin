@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import tempfile
-import urllib.request
 from pathlib import Path
 from typing import BinaryIO
 
@@ -18,7 +17,6 @@ DATABASE_FILENAMES = {
     "mob": "mob_proteins.dmnd",
     "mpf": "mpf_proteins.dmnd",
 }
-DEFAULT_BASE_URL = "https://github.com/Raza-pl/MobiOrigin/releases/download/databases-v1"
 ARCHIVE_DOI = "https://doi.org/10.5281/zenodo.10304948"
 MANIFEST_NAME = "mobiorigin_mob_suite_database_manifest.json"
 NOTICE = """MobiOrigin marker-database notice
@@ -46,18 +44,12 @@ def _copy_and_hash(source: BinaryIO, destination: Path) -> str:
     return digest.hexdigest()
 
 
-def _open_url(url: str) -> BinaryIO:
-    request = urllib.request.Request(url, headers={"User-Agent": "MobiOrigin/0.1"})
-    return urllib.request.urlopen(request, timeout=120)  # noqa: S310
-
-
 def setup_databases(
     output_dir: Path,
     *,
-    source_dir: Path | None = None,
-    base_url: str = DEFAULT_BASE_URL,
+    source_dir: Path,
 ) -> None:
-    """Retrieve or copy the three frozen databases and publish them atomically."""
+    """Verify and copy three official-source databases, then publish atomically."""
     if output_dir.exists():
         raise FileExistsError("Database output directory already exists")
     parent = output_dir.parent
@@ -68,17 +60,12 @@ def setup_databases(
         for family, filename in DATABASE_FILENAMES.items():
             destination = temporary / filename
             expected = DATABASE_SHA256[family]
-            if source_dir is None:
-                source_identity = f"{base_url.rstrip('/')}/{filename}"
-                with _open_url(source_identity) as source:
-                    observed = _copy_and_hash(source, destination)
-            else:
-                source_path = source_dir / filename
-                if not source_path.is_file():
-                    raise FileNotFoundError(f"Missing source database: {source_path}")
-                source_identity = str(source_path.resolve())
-                with source_path.open("rb") as source:
-                    observed = _copy_and_hash(source, destination)
+            source_path = source_dir / filename
+            if not source_path.is_file():
+                raise FileNotFoundError(f"Missing source database: {source_path}")
+            source_identity = str(source_path.resolve())
+            with source_path.open("rb") as source:
+                observed = _copy_and_hash(source, destination)
             if observed != expected:
                 raise ValueError(f"MOB-suite {family} database SHA-256 mismatch")
             manifest_databases[family] = {
@@ -91,7 +78,7 @@ def setup_databases(
             "schema_version": "mobiorigin-mob-suite-database-manifest-v1",
             "databases": manifest_databases,
             "upstream_archive_doi": ARCHIVE_DOI,
-            "network_accessed": source_dir is None,
+            "network_accessed": False,
         }
         (temporary / MANIFEST_NAME).write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
