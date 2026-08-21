@@ -22,8 +22,15 @@ env/
 .ipynb_checkpoints/
 
 # Runtime databases and generated outputs
+data/
+results/
+scripts/dev/
+docs/manuscript/figures/
+gtdb_genomes_reps_r220/
 mobiorigin_mob_databases/
 mobiorigin_results/
+*_Improvement_Plan.md
+email_*.md
 *.fna
 *.fasta
 *.fa
