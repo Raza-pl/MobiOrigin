@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="500" viewBox="0 0 920 500">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,sans-serif;fill:#1f2937}.title{font-size:22px;font-weight:700}.label{font-size:15px}.value{font-size:13px}.axis{stroke:#9ca3af;stroke-width:1}.f1{fill:#2563eb}.ba{fill:#14b8a6}</style>
+<text x="30" y="35" class="title">External plasmid-binary performance (post-hoc secondary comparison)</text>
+<line x1="230.0" y1="60" x2="230.0" y2="400" class="axis" opacity="0.35"/>
+<text x="230.0" y="422" text-anchor="middle" class="value">0.0</text>
+<line x1="354.0" y1="60" x2="354.0" y2="400" class="axis" opacity="0.35"/>
+<text x="354.0" y="422" text-anchor="middle" class="value">0.2</text>
+<line x1="478.0" y1="60" x2="478.0" y2="400" class="axis" opacity="0.35"/>
+<text x="478.0" y="422" text-anchor="middle" class="value">0.4</text>
+<line x1="602.0" y1="60" x2="602.0" y2="400" class="axis" opacity="0.35"/>
+<text x="602.0" y="422" text-anchor="middle" class="value">0.6</text>
+<line x1="726.0" y1="60" x2="726.0" y2="400" class="axis" opacity="0.35"/>
+<text x="726.0" y="422" text-anchor="middle" class="value">0.8</text>
+<line x1="850.0" y1="60" x2="850.0" y2="400" class="axis" opacity="0.35"/>
+<text x="850.0" y="422" text-anchor="middle" class="value">1.0</text>
+<text x="30" y="92" class="label">MobiOrigin</text>
+<rect x="230" y="70" width="462.11" height="24" class="f1"/>
+<text x="699.11" y="87" class="value">F1 0.745</text>
+<rect x="230" y="98" width="501.27" height="24" class="ba"/>
+<text x="738.27" y="115" class="value">BA 0.808</text>
+<text x="30" y="157" class="label">PlasClass</text>
+<rect x="230" y="135" width="376.33" height="24" class="f1"/>
+<text x="613.33" y="152" class="value">F1 0.607</text>
+<rect x="230" y="163" width="430.44" height="24" class="ba"/>
+<text x="667.43" y="180" class="value">BA 0.694</text>
+<text x="30" y="222" class="label">PlasFlow v1</text>
+<rect x="230" y="200" width="358.85" height="24" class="f1"/>
+<text x="595.85" y="217" class="value">F1 0.579</text>
+<rect x="230" y="228" width="423.77" height="24" class="ba"/>
+<text x="660.77" y="245" class="value">BA 0.683</text>
+<text x="30" y="287" class="label">PLASMe</text>
+<rect x="230" y="265" width="225.36" height="24" class="f1"/>
+<text x="462.36" y="282" class="value">F1 0.363</text>
+<rect x="230" y="293" width="377.74" height="24" class="ba"/>
+<text x="614.74" y="310" class="value">BA 0.609</text>
+<text x="30" y="352" class="label">Platon</text>
+<rect x="230" y="330" width="358.01" height="24" class="f1"/>
+<text x="595.01" y="347" class="value">F1 0.577</text>
+<rect x="230" y="358" width="435.40" height="24" class="ba"/>
+<text x="672.39" y="375" class="value">BA 0.702</text>
+<rect x="30" y="445" width="16" height="16" class="f1"/><text x="53" y="458" class="value">Plasmid binary F1</text>
+<rect x="190" y="445" width="16" height="16" class="ba"/><text x="213" y="458" class="value">Plasmid binary balanced accuracy</text>
+<text x="30" y="486" class="value">Exploratory post-hoc analysis; not a replacement for the prospective MobiOrigin-versus-geNomad comparison.</text>
+</svg>

@@ -11,6 +11,26 @@ import numpy as np
 import pytest
 import torch
 from mobiorigin import cli
+from mobiorigin.annotate import (
+    ArgHit,
+    Orf,
+    annotate,
+    consensus_hits,
+    load_amrfinder_hierarchy,
+    parse_amrfinderplus_hits,
+    parse_amrprot_hits,
+    parse_card_hits,
+    parse_sarg_hits,
+    predict_annotation_orfs,
+)
+from mobiorigin.biological_evidence import (
+    EvidenceHit,
+    arg_evidence,
+    load_predictions,
+    parse_amrfinderplus_non_amr,
+    write_integrated_results,
+    write_publication_summary,
+)
 from mobiorigin.database_setup import DATABASE_FILENAMES, MANIFEST_NAME, setup_databases
 from mobiorigin.fasta import FastaRecord, read_fasta
 from mobiorigin.marker_features import (
@@ -352,3 +372,420 @@ def test_cli_dispatches_database_setup(monkeypatch: pytest.MonkeyPatch, tmp_path
         "output_dir": tmp_path / "db",
         "source_dir": tmp_path / "official_source",
     }
+
+
+def test_arg_parsers_preserve_independent_evidence_and_filter_non_amr(tmp_path: Path) -> None:
+    orfs = {"seq__orf_1": Orf("seq__orf_1", "seq", 1, 300, 1, 100)}
+    card = write(
+        tmp_path / "card.tsv",
+        "seq__orf_1\tgb|ABC.1|ARO:3000001|blaX\t91\t95\t1e-20\t200\t"
+        "gb|ABC.1|ARO:3000001|blaX description\n",
+    )
+    card_hits = parse_card_hits(
+        card,
+        orfs,
+        {
+            "ARO:3000001": {
+                "gene": "blaX",
+                "family": "class A beta-lactamase",
+                "drug_class": "beta-lactam",
+                "mechanism": "antibiotic inactivation",
+            }
+        },
+    )
+    sarg = write(
+        tmp_path / "sarg.tsv",
+        "seq__orf_1\tSARG|beta-lactam|bla*|WP_1.1\t90\t92\t1e-15\t180\t"
+        "SARG|beta-lactam|bla*|WP_1.1 protein\n",
+    )
+    sarg_hits = parse_sarg_hits(sarg, orfs)
+    assert card_hits[0].source == "CARD"
+    assert card_hits[0].resistance_mechanism == "antibiotic inactivation"
+    assert sarg_hits[0].source == "SARG"
+    assert sarg_hits[0].drug_class == "beta-lactam"
+    assert consensus_hits([sarg_hits[0], card_hits[0]]) == [card_hits[0]]
+
+    official = write(
+        tmp_path / "official.tsv",
+        "Protein id\tElement symbol\tElement name\tType\tClass\tSubclass\tMethod\t"
+        "% Coverage of reference\t% Identity to reference\tClosest reference accession\t"
+        "Hierarchy node\n"
+        "seq__orf_1\tblaX\tbeta-lactamase\tAMR\tBETA-LACTAM\tCEPHALOSPORIN\t"
+        "BLASTP\t98\t99\tWP_1.1\tblaX_fam\n"
+        "seq__orf_1\tstxA\tShiga toxin\tVIRULENCE\tSTX2\tstxA\tEXACTP\t100\t100\t"
+        "WP_2.1\tstxA\n",
+    )
+    official_hits = parse_amrfinderplus_hits(official, orfs)
+    assert len(official_hits) == 1
+    assert official_hits[0].source == "AMRFINDERPLUS"
+    assert official_hits[0].gene_symbol == "blaX"
+
+
+def test_annotation_orf_coordinates_and_amrprot_hierarchy(tmp_path: Path) -> None:
+    proteins = tmp_path / "proteins.faa"
+    orfs = predict_annotation_orfs([FastaRecord("seq", "ATG" + "GCC" * 400 + "TAA")], proteins)
+    assert orfs
+    first = next(iter(orfs.values()))
+    assert first.sequence_id == "seq"
+    assert first.start >= 1
+    assert first.end > first.start
+    assert proteins.read_text(encoding="ascii").startswith(">seq__orf_")
+
+    hierarchy_path = write(
+        tmp_path / "fam.tsv",
+        "#node_id\tparent_node_id\tgene_symbol\ttype\tclass\tsubclass\tfamily_name\n"
+        "ALL\t\t-\t\t\t\t\n"
+        "AMR\tALL\t-\tAMR\t\t\t\n"
+        "BETA\tAMR\tblaX\t\tBETA-LACTAM\tCEPHALOSPORIN\tclass A family\n"
+        "VIR\tALL\tstxA\tVIRULENCE\tSTX2\tstxA\tShiga toxin\n",
+    )
+    hierarchy = load_amrfinder_hierarchy(hierarchy_path)
+    diamond = write(
+        tmp_path / "amrprot.tsv",
+        f"{first.identifier}\tABC.1\t99\t100\t1e-30\t300\t"
+        "ABC.1|1|1|blaX|blaX_fam||1|CEPHALOSPORIN|BETA-LACTAM|class_A_beta_lactamase\n"
+        f"{first.identifier}\tVIR.1\t100\t100\t1e-40\t400\t"
+        "VIR.1|1|1|stxA|stxA||1|stxA|STX2|Shiga_toxin\n",
+    )
+    hits = parse_amrprot_hits(diamond, orfs, hierarchy)
+    assert len(hits) == 1
+    assert hits[0].source == "AMRPROT_DIAMOND"
+    assert hits[0].gene_symbol == "blaX"
+
+
+def test_arg_annotation_integration_is_atomic_and_prediction_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fasta = write(tmp_path / "input.fasta", ">seq\nATGGCCGCCGCC\n")
+    database = tmp_path / "databases"
+    for directory in (database / "card", database / "sarg"):
+        directory.mkdir(parents=True)
+    write(database / "card" / "card.dmnd", "card\n")
+    write(
+        database / "card" / "aro_index.tsv",
+        "ARO Accession\tARO Name\tAMR Gene Family\tDrug Class\tResistance Mechanism\n"
+        "ARO:3000001\tblaX\tclass A\tbeta-lactam\tantibiotic inactivation\n",
+    )
+    write(database / "sarg" / "sarg.dmnd", "sarg\n")
+    official_database = tmp_path / "official_amrfinder"
+    official_database.mkdir()
+    write(official_database / "version.txt", "test-version\n")
+
+    def fake_orfs(records: list[FastaRecord], output: Path) -> dict[str, Orf]:
+        output.write_text(">seq__orf_1\nMAAA\n", encoding="ascii")
+        return {"seq__orf_1": Orf("seq__orf_1", records[0].identifier, 1, 12, 1, 4)}
+
+    def fake_diamond(**kwargs: object) -> None:
+        output = kwargs["output"]
+        database_path = kwargs["database"]
+        assert isinstance(output, Path) and isinstance(database_path, Path)
+        if database_path.name == "card.dmnd":
+            output.write_text(
+                "seq__orf_1\tgb|ABC|ARO:3000001|blaX\t99\t100\t1e-30\t300\t"
+                "gb|ABC|ARO:3000001|blaX\n",
+                encoding="utf-8",
+            )
+        else:
+            output.write_text("", encoding="utf-8")
+
+    def fake_amrfinder(**kwargs: object) -> None:
+        output = kwargs["output"]
+        assert isinstance(output, Path)
+        output.write_text(
+            "Protein id\tElement symbol\tElement name\tType\tClass\tMethod\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("mobiorigin.annotate.predict_annotation_orfs", fake_orfs)
+    monkeypatch.setattr("mobiorigin.annotate.run_arg_diamond", fake_diamond)
+    monkeypatch.setattr("mobiorigin.annotate.run_amrfinderplus", fake_amrfinder)
+    output = tmp_path / "annotations"
+    annotate(
+        input_fasta=fasta,
+        output_dir=output,
+        database_dir=database,
+        diamond=Path("true"),
+        amrfinder_bin=Path("true"),
+        amrfinder_database=official_database,
+    )
+    assert sorted(path.name for path in output.iterdir()) == [
+        "SHA256SUMS.txt",
+        "annotation_provenance.json",
+        "annotation_summary.tsv",
+        "arg_consensus.tsv",
+        "arg_hits.tsv",
+        "predicted_proteins.faa",
+        "raw_evidence",
+    ]
+    provenance = json.loads((output / "annotation_provenance.json").read_text())
+    assert provenance["annotation_is_prediction_independent"] is True
+    assert provenance["official_amrfinderplus_executed"] is True
+    with pytest.raises(FileExistsError):
+        annotate(
+            input_fasta=fasta,
+            output_dir=output,
+            database_dir=database,
+            diamond=Path("true"),
+            amrfinder_bin=Path("true"),
+            amrfinder_database=official_database,
+        )
+
+
+def test_cli_dispatches_annotate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(cli, "annotate", lambda **kwargs: observed.update(kwargs))
+    cli.main(
+        [
+            "annotate",
+            "--input-fasta",
+            str(tmp_path / "input.fasta"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--database-dir",
+            str(tmp_path / "db"),
+            "--amrfinder-database",
+            str(tmp_path / "amrfinder"),
+            "--threads",
+            "4",
+        ]
+    )
+    assert observed["threads"] == 4
+    assert observed["amrfinder_mode"] == "official"
+    assert observed["profile"] == "arg"
+    assert observed["predictions_tsv"] is None
+
+
+def test_comprehensive_evidence_priority_is_transparent_and_prediction_preserving(
+    tmp_path: Path,
+) -> None:
+    records = [FastaRecord("seq", "A" * 2000)]
+    predictions_path = write(
+        tmp_path / "predictions.tsv",
+        "sequence_id\tlength_bp\tprediction\tp_chromosome\tp_plasmid\tp_phage\t"
+        "plasmid_score\tabstention_reason\n"
+        "seq\t2000\tplasmid\t0.05\t0.9\t0.05\t0.85\t\n",
+    )
+    predictions = load_predictions(predictions_path, records)
+    arg = ArgHit(
+        "seq",
+        "seq__orf_1",
+        1,
+        300,
+        1,
+        "CARD",
+        "blaX",
+        "beta-lactamase",
+        "ARO:1",
+        "class A",
+        "beta-lactam",
+        "inactivation",
+        "DIAMOND_BLASTP",
+        99.0,
+        100.0,
+        1e-30,
+        300.0,
+    )
+    evidence = [
+        *arg_evidence([arg]),
+        EvidenceHit(
+            "seq",
+            "seq__orf_2",
+            400,
+            700,
+            1,
+            "MOBILITY",
+            "MOB_SUITE_RELAXASE",
+            "relaxase",
+            "MOBF",
+            "MOBF",
+            "mob",
+            "relaxase",
+            "DIAMOND_BLASTP",
+            70.0,
+            90.0,
+            1e-20,
+            200.0,
+        ),
+        EvidenceHit(
+            "seq",
+            "seq__orf_3",
+            800,
+            1100,
+            1,
+            "MOBILITY",
+            "MOB_SUITE_MPF",
+            "mating_pair_formation",
+            "MPF_F",
+            "MPF_F",
+            "mpf",
+            "MPF",
+            "DIAMOND_BLASTP",
+            65.0,
+            85.0,
+            1e-12,
+            150.0,
+        ),
+    ]
+    integrated = tmp_path / "integrated.tsv"
+    rows = write_integrated_results(integrated, records, evidence, predictions)
+    assert rows[0]["prediction"] == "plasmid"
+    assert rows[0]["p_plasmid"] == "0.9"
+    assert rows[0]["evidence_priority_tier"] == "A"
+    assert rows[0]["mobility_class"] == "conjugative"
+    summary = tmp_path / "summary.json"
+    write_publication_summary(summary, rows, evidence)
+    payload = json.loads(summary.read_text())
+    assert payload["interpretation"]["priority_is_clinical_risk_score"] is False
+    assert payload["interpretation"]["annotation_changes_origin_prediction"] is False
+
+
+def test_amrfinderplus_non_amr_evidence_remains_outside_arg_consensus(tmp_path: Path) -> None:
+    orfs = {"seq__orf_1": Orf("seq__orf_1", "seq", 1, 300, 1, 100)}
+    output = write(
+        tmp_path / "amrfinder.tsv",
+        "Protein id\tElement symbol\tElement name\tType\tSubtype\tClass\tMethod\t"
+        "% Coverage of reference\t% Identity to reference\tClosest reference accession\n"
+        "seq__orf_1\tstxA\tShiga toxin\tVIRULENCE\tVIRULENCE\tTOXIN\tEXACTP\t"
+        "100\t100\tWP_1.1\n",
+    )
+    hits = parse_amrfinderplus_non_amr(output, orfs)
+    assert len(hits) == 1
+    assert hits[0].evidence_group == "VIRULENCE"
+    assert hits[0].source == "AMRFINDERPLUS"
+    assert hits[0].feature_name == "stxA"
+
+
+def test_comprehensive_annotation_publishes_integrated_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fasta = write(tmp_path / "input.fasta", ">seq\n" + "ATGGCC" * 400 + "\n")
+    predictions = write(
+        tmp_path / "predictions.tsv",
+        "sequence_id\tlength_bp\tprediction\tp_chromosome\tp_plasmid\tp_phage\t"
+        "plasmid_score\tabstention_reason\n"
+        "seq\t2400\tplasmid\t0.05\t0.9\t0.05\t0.85\t\n",
+    )
+    database = tmp_path / "databases"
+    required = {
+        "card/card.dmnd": "card\n",
+        "card/aro_index.tsv": (
+            "ARO Accession\tARO Name\tAMR Gene Family\tDrug Class\tResistance Mechanism\n"
+            "ARO:3000001\tblaX\tclass A\tbeta-lactam\tantibiotic inactivation\n"
+        ),
+        "sarg/sarg.dmnd": "sarg\n",
+        "vfdb/vfdb_setA.dmnd": "vfdb\n",
+        "vfdb/vfdb_indx.txt": "VFG000001(gb|WP_1.1)\tVFC0001\tToxin\n",
+        "mge/isfinder.dmnd": "mge\n",
+        "mge/mge_database.tsv": (
+            "ID\tSub_class\tgene_name\tClass\tLength\n"
+            "1_tnpA_X\tIS3\ttnpA\tinsertion_sequence\t300\n"
+        ),
+        "bacmet/bacmet.dmnd": "bacmet\n",
+        "bacmet/Bacmet_list.tsv": (
+            "BacMet_ID\tGene_name\tClass\tAccession\tOrganism\tLength\tLocation\tCompound\n"
+            "BAC0001\tabeM\tBio\tQ1\tTest\t100\tChromosome\tTriclosan [class: phenol]\n"
+        ),
+        "mob_suite/rep_proteins.dmnd": "rep\n",
+        "mob_suite/mob_proteins.dmnd": "mob\n",
+        "mob_suite/mpf_proteins.dmnd": "mpf\n",
+    }
+    for relative, content in required.items():
+        destination = database / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        write(destination, content)
+    official_database = tmp_path / "official_amrfinder"
+    official_database.mkdir()
+    write(official_database / "version.txt", "test\n")
+
+    def fake_orfs(records: list[FastaRecord], output: Path) -> dict[str, Orf]:
+        output.write_text(
+            ">seq__orf_1\nMAAA\n>seq__orf_2\nMBBB\n>seq__orf_3\nMCCC\n",
+            encoding="ascii",
+        )
+        return {
+            "seq__orf_1": Orf("seq__orf_1", records[0].identifier, 1, 300, 1, 100),
+            "seq__orf_2": Orf("seq__orf_2", records[0].identifier, 400, 700, 1, 100),
+            "seq__orf_3": Orf("seq__orf_3", records[0].identifier, 800, 1100, -1, 100),
+        }
+
+    def fake_arg_search(**kwargs: object) -> None:
+        output = kwargs["output"]
+        database_path = kwargs["database"]
+        assert isinstance(output, Path) and isinstance(database_path, Path)
+        if database_path.name == "card.dmnd":
+            output.write_text(
+                "seq__orf_1\tgb|ABC|ARO:3000001|blaX\t99\t100\t1e-30\t300\t"
+                "gb|ABC|ARO:3000001|blaX\n",
+                encoding="utf-8",
+            )
+        else:
+            output.write_text("", encoding="utf-8")
+
+    def fake_amrfinder(**kwargs: object) -> None:
+        output = kwargs["output"]
+        assert isinstance(output, Path)
+        output.write_text(
+            "Protein id\tElement symbol\tElement name\tType\tSubtype\tClass\tSubclass\t"
+            "Method\t% Coverage of reference\t% Identity to reference\t"
+            "Closest reference accession\tHierarchy node\n"
+            "seq__orf_1\tblaX\tbeta-lactamase\tAMR\tAMR\tBETA-LACTAM\t\tEXACTP\t"
+            "100\t100\tWP_ARG\tblaX\n"
+            "seq__orf_2\tstxA\tShiga toxin\tVIRULENCE\tVIRULENCE\tTOXIN\t\tEXACTP\t"
+            "100\t100\tWP_VF\tstxA\n"
+            "seq__orf_3\tqacX\tbiocide resistance\tSTRESS\tBIOCIDE\tQAC\t\tBLASTP\t"
+            "95\t90\tWP_QAC\tqacX\n",
+            encoding="utf-8",
+        )
+
+    def fake_evidence_search(**kwargs: object) -> None:
+        output = kwargs["output"]
+        database_path = kwargs["database"]
+        assert isinstance(output, Path) and isinstance(database_path, Path)
+        rows = {
+            "vfdb_setA.dmnd": (
+                "seq__orf_2\tVFG000001(gb|WP_1.1)\t90\t100\t1e-20\t200\t"
+                "VFG000001(gb|WP_1.1) stxA [Shiga toxin (VF1)] [Escherichia coli]\n"
+            ),
+            "isfinder.dmnd": "seq__orf_3\t1_tnpA_X\t80\t90\t1e-10\t150\ttnpA\n",
+            "bacmet.dmnd": ("seq__orf_3\tBAC0001|abeM|tr|Q1\t90\t95\t1e-15\t180\tAbeM pump\n"),
+            "rep_proteins.dmnd": (
+                "seq__orf_1\tNC_1|IncP_s1_f0_o0\t70\t80\t1e-12\t170\tIncP replicon\n"
+            ),
+            "mob_proteins.dmnd": ("seq__orf_2\tMOBF_1\t70\t90\t1e-15\t190\tMOBF relaxase\n"),
+            "mpf_proteins.dmnd": (
+                "seq__orf_3\tMPF_F_1\t70\t90\t1e-15\t190\tMPF_F coupling protein\n"
+            ),
+        }
+        output.write_text(rows[database_path.name], encoding="utf-8")
+
+    monkeypatch.setattr("mobiorigin.annotate.predict_annotation_orfs", fake_orfs)
+    monkeypatch.setattr("mobiorigin.annotate.run_arg_diamond", fake_arg_search)
+    monkeypatch.setattr("mobiorigin.annotate.run_amrfinderplus", fake_amrfinder)
+    monkeypatch.setattr("mobiorigin.biological_evidence.run_evidence_diamond", fake_evidence_search)
+    output = tmp_path / "comprehensive"
+    annotate(
+        input_fasta=fasta,
+        output_dir=output,
+        database_dir=database,
+        diamond=Path("true"),
+        amrfinder_bin=Path("true"),
+        amrfinder_database=official_database,
+        profile="comprehensive",
+        predictions_tsv=predictions,
+    )
+    for name in (
+        "biological_evidence.tsv",
+        "mobiorigin_annotated_results.tsv",
+        "publication_summary.json",
+        "mobiorigin_report.html",
+    ):
+        assert (output / name).is_file()
+    integrated = (output / "mobiorigin_annotated_results.tsv").read_text()
+    assert "\tplasmid\t" in integrated
+    assert "\tA\tARG plus relaxase and mating-pair-formation evidence\t" in integrated
+    report = (output / "mobiorigin_report.html").read_text()
+    assert "not clinical risk scores" in report
+    provenance = json.loads((output / "annotation_provenance.json").read_text())
+    assert provenance["annotation_profile"] == "comprehensive"
+    assert provenance["predictions_integrated"] is True
+    assert provenance["classification_labels_or_probabilities_changed"] is False

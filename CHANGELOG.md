@@ -2,6 +2,43 @@
 
 All notable MobiOrigin changes are documented here. The project uses semantic versioning for the standalone `mobiorigin` package interface.
 
+## 0.1.1 — 2026-08-23
+
+Publication and biological-annotation update for the unchanged frozen
+`mobiorigin-dev1-mob-selective-v1` classifier.
+
+### Added
+
+- Prediction-independent `mobiorigin annotate` workflow integrating CARD, SARG,
+  official AMRFinderPlus, VFDB, MGE, BacMet2, and MOB-suite evidence without
+  changing classifier labels or probabilities.
+- Publication-quality annotation tables, provenance, checksums, and HTML reports,
+  including transparent A–E biological evidence-priority tiers that are explicitly
+  not clinical risk scores.
+- Post-hoc exploratory external comparisons with PlasClass, PlasFlow v1, PLASMe,
+  and Platon under a separately frozen statistical contract.
+- Label-free operational evidence from two deterministic real-assembly subsets,
+  covering all 12 dataset–tool runs and 10 pairwise operational comparisons.
+- Publication tables, editable vector figures, methods, limitations, and updated
+  manuscript and repository documentation.
+
+### Changed
+
+- Package and citation metadata now identify the expanded publication bundle as
+  version 0.1.1.
+- Distribution metadata includes the annotation and operational-validation
+  documentation.
+
+### Scientific boundaries
+
+- The frozen classifier, three model checkpoints, marker normalization, ensemble,
+  and selective threshold are unchanged from version 0.1.0.
+- Secondary comparator findings are exploratory and do not alter the preregistered
+  MobiOrigin-versus-geNomad co-primary evidence.
+- Real-assembly results support runtime, call-rate, coverage, agreement, and
+  biological-evidence reporting only; they do not support ground-truth accuracy or
+  superiority claims.
+
 ## 0.1.0 — 2026-08-21
 
 Initial research release of the frozen `mobiorigin-dev1-mob-selective-v1` candidate.

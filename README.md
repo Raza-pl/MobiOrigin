@@ -7,7 +7,7 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Status
 
-- Package version: `0.1.0` (initial research release of the frozen dev1 candidate).
+- Package version: `0.1.1` (publication bundle for the frozen dev1 candidate).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Runtime: deterministic CPU inference; 1–8 requested DIAMOND threads.
 - Network access during prediction: none.
@@ -57,6 +57,35 @@ The output directory contains:
 
 See [`docs/MOBIORIGIN_OUTPUT_SCHEMA.md`](docs/MOBIORIGIN_OUTPUT_SCHEMA.md) for the exact schema and interpretation.
 
+## Independent biological annotation
+
+`mobiorigin annotate` adds protein-level biological evidence after
+classification. It never changes MobiOrigin labels, probabilities, or the
+selective threshold. The ARG profile retains independent CARD, SARG, and
+official AMRFinderPlus evidence. The comprehensive profile additionally reports
+AMRFinderPlus virulence/stress calls, VFDB core homologs, curated MGE evidence,
+BacMet2 biocide/metal-resistance homologs, and MOB-suite replication, relaxase,
+and mating-pair-formation markers.
+
+```bash
+mobiorigin annotate \
+  --input-fasta assembly.fasta \
+  --output-dir mobiorigin_annotations \
+  --database-dir /path/to/annotation_databases \
+  --profile comprehensive \
+  --predictions-tsv mobiorigin_predictions/predictions.tsv \
+  --amrfinder-mode official \
+  --amrfinder-database /path/to/amrfinderplus/database/version \
+  --threads 8
+```
+
+The integrated table, machine-readable summary, self-contained HTML report,
+raw evidence, and every consumed database identity are published atomically.
+The A–E evidence-priority tier is a transparent review queue based on ARG and
+mobility context; it is not a clinical risk score. Database layout, thresholds,
+provenance, licensing boundaries, and output schemas are documented in
+[`docs/MOBIORIGIN_ANNOTATION.md`](docs/MOBIORIGIN_ANNOTATION.md).
+
 ## Prospective external validation
 
 The frozen prospective external cohort contained 3,000 fragments from 3,000 distinct versioned source accessions. MobiOrigin and geNomad 1.12.0/database 1.9 received identical class-hidden FASTA bytes, and both prediction sets were frozen before label release.
@@ -76,9 +105,27 @@ The result supports higher macro-F1 and plasmid binary F1 on this frozen cohort.
 
 Publication-facing aggregate tables, methods, figure data, and frozen claim boundaries are in [`docs/manuscript/mobiorigin_external_validation`](docs/manuscript/mobiorigin_external_validation/README.md).
 
-### Comparator scope
+### Additional exploratory comparator analysis
 
-The prospective MobiOrigin evaluation used geNomad as the preregistered comparator. Earlier local experiments involving PlasClass, PLASMe, and Platon evaluated a different predecessor model and cohort. Those results are retained in the private scientific audit archive, but they are not MobiOrigin performance evidence and are intentionally excluded from this repository's claims.
+The prospective MobiOrigin evaluation used geNomad as the preregistered comparator. After that analysis was complete, predictions from PlasClass, PlasFlow v1, PLASMe, and Platon were frozen on the same 3,000-record external cohort and evaluated under a separate post-hoc exploratory contract.
+
+| Tool | Plasmid F1 | Balanced accuracy | Precision | Sensitivity | Coverage |
+|---|---:|---:|---:|---:|---:|
+| MobiOrigin | 0.7453 | 0.8085 | 0.7518 | 0.7390 | 0.9737 |
+| PlasClass | 0.6070 | 0.6943 | 0.5070 | 0.7560 | 1.0000 |
+| PlasFlow v1 | 0.5788 | 0.6835 | 0.5737 | 0.5840 | 0.6987 |
+| PLASMe | 0.3635 | 0.6093 | 0.9454 | 0.2250 | 1.0000 |
+| Platon | 0.5774 | 0.7023 | 0.9649 | 0.4120 | 1.0000 |
+
+MobiOrigin had the highest F1 and balanced accuracy in this secondary comparison, and all eight paired MobiOrigin-minus-comparator tests were positive after Holm adjustment. These findings are exploratory, not additional preregistered co-primary evidence. PlasClass had slightly higher sensitivity, while PLASMe and Platon had higher precision but substantially lower sensitivity. Full methods, paired intervals, and mandatory claim limitations are included in the publication-evidence directory linked above.
+
+<!-- BEGIN REAL-ASSEMBLY OPERATIONAL VALIDATION -->
+## Real-assembly operational validation
+
+MobiOrigin and five comparators were run on two deterministic real-assembly subsets containing 2,488 and 2,445 records (approximately 15.5 Mb each). All 12 dataset–tool routes completed. The publication bundle reports end-to-end runtime, call fraction, coverage, label-free agreement, and biological evidence-priority tiers. These assemblies do not have frozen record-level ground truth, so this analysis does **not** support accuracy or superiority claims. Evidence tiers A–E prioritize follow-up and are not clinical risk scores.
+
+Tables, an editable SVG figure, methods, and mandatory claim boundaries are available in [`docs/manuscript/mobiorigin_operational_validation`](docs/manuscript/mobiorigin_operational_validation).
+<!-- END REAL-ASSEMBLY OPERATIONAL VALIDATION -->
 
 ## Reproducibility and scope
 

@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
+from mobiorigin.annotate import annotate
 from mobiorigin.database_setup import setup_databases
 from mobiorigin.predict import predict
 
@@ -31,6 +32,42 @@ def parser() -> argparse.ArgumentParser:
         required=True,
         help="official MOB-suite data directory containing the three exact databases",
     )
+    annotate_parser = subparsers.add_parser(
+        "annotate", help="annotate biological evidence without changing MobiOrigin predictions"
+    )
+    annotate_parser.add_argument("--input-fasta", type=Path, required=True)
+    annotate_parser.add_argument("--output-dir", type=Path, required=True)
+    annotate_parser.add_argument(
+        "--database-dir",
+        type=Path,
+        required=True,
+        help="directory containing card/, sarg/, and amrfinder/ resources",
+    )
+    annotate_parser.add_argument("--threads", type=int, default=1)
+    annotate_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
+    annotate_parser.add_argument(
+        "--amrfinder-mode",
+        choices=("official", "amrprot"),
+        default="official",
+        help="official AMRFinderPlus (default) or explicitly supplemental AMRProt DIAMOND",
+    )
+    annotate_parser.add_argument("--amrfinder-bin", type=Path, default=Path("amrfinder"))
+    annotate_parser.add_argument(
+        "--amrfinder-database",
+        type=Path,
+        help="complete official AMRFinderPlus database directory (required in official mode)",
+    )
+    annotate_parser.add_argument(
+        "--profile",
+        choices=("arg", "comprehensive"),
+        default="arg",
+        help="ARG-only output or comprehensive ARG/VF/MGE/stress/mobility evidence",
+    )
+    annotate_parser.add_argument(
+        "--predictions-tsv",
+        type=Path,
+        help="optional matching MobiOrigin predictions.tsv for an integrated publication table",
+    )
     return value
 
 
@@ -45,3 +82,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     elif args.command == "setup-databases":
         setup_databases(output_dir=args.output_dir, source_dir=args.source_dir)
+    elif args.command == "annotate":
+        annotate(
+            input_fasta=args.input_fasta,
+            output_dir=args.output_dir,
+            database_dir=args.database_dir,
+            threads=args.threads,
+            diamond=args.diamond,
+            amrfinder_mode=args.amrfinder_mode,
+            amrfinder_bin=args.amrfinder_bin,
+            amrfinder_database=args.amrfinder_database,
+            profile=args.profile,
+            predictions_tsv=args.predictions_tsv,
+        )

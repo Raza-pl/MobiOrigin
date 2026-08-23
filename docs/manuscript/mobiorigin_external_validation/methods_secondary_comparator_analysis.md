@@ -1,0 +1,7 @@
+# Secondary comparator analysis methods
+
+The additional PlasClass, PlasFlow v1, PLASMe, and Platon comparisons were specified after completion of the prospective MobiOrigin-versus-geNomad analysis and are therefore reported as post-hoc exploratory evidence. All tools were evaluated on the same frozen 3,000-record external cohort and prediction order. Predictions were frozen before the sealed ground-truth map was opened.
+
+Because the four secondary tools expose plasmid-versus-non-plasmid decisions rather than a common three-class output, the shared endpoint family was restricted to plasmid-binary precision, sensitivity, specificity, F1, balanced accuracy, Matthews correlation coefficient, and prediction coverage. An unclassified output was treated as a non-plasmid decision for sensitivity, accuracy, F1, and balanced accuracy and was also counted as an abstention for coverage. Precision used only predicted-plasmid calls in its denominator.
+
+Paired differences (MobiOrigin minus comparator) were evaluated for plasmid-binary F1 and balanced accuracy. Two-sided percentile 95% intervals used 10,000 paired bootstrap replicates at the source-accession level with seed 20260822. Holm adjustment was applied across the eight exploratory tests (four comparators by two endpoints). These tests support exploratory comparisons only and do not modify the prospective co-primary MobiOrigin-versus-geNomad inference.

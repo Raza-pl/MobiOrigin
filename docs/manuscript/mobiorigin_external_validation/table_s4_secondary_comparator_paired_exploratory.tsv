@@ -1,0 +1,9 @@
+comparison	endpoint	mobiorigin_minus_comparator	ci95_low	ci95_high	raw_two_sided_p	holm_adjusted_p	exploratory_superiority
+MobiOrigin vs PlasClass	f1	0.138350	0.113076	0.163581	0.00019998	0.00159984	true
+MobiOrigin vs PlasClass	balanced_accuracy	0.114250	0.093642	0.134467	0.00019998	0.00159984	true
+MobiOrigin vs PlasFlow v1	f1	0.166544	0.139508	0.194980	0.00019998	0.00159984	true
+MobiOrigin vs PlasFlow v1	balanced_accuracy	0.125000	0.104515	0.146064	0.00019998	0.00159984	true
+MobiOrigin vs PLASMe	f1	0.381846	0.342514	0.420599	0.00019998	0.00159984	true
+MobiOrigin vs PLASMe	balanced_accuracy	0.199250	0.179470	0.218801	0.00019998	0.00159984	true
+MobiOrigin vs Platon	f1	0.167900	0.134806	0.201882	0.00019998	0.00159984	true
+MobiOrigin vs Platon	balanced_accuracy	0.106250	0.087195	0.125491	0.00019998	0.00159984	true

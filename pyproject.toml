@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mobiorigin"
-version = "0.1.0"
+version = "0.1.1"
 description = "MobiOrigin: sequence-and-marker classification of bacterial replicons"
 authors = ["Shahbaz Raza <shahbaz.invincible3182@gmail.com>"]
 license = "GPL-3.0"
@@ -14,10 +14,13 @@ include = [
     { path = "CHANGELOG.md", format = ["sdist"] },
     { path = "docs/MOBIORIGIN_DATABASE_SETUP.md", format = ["sdist"] },
     { path = "docs/MOBIORIGIN_OUTPUT_SCHEMA.md", format = ["sdist"] },
+    { path = "docs/MOBIORIGIN_ANNOTATION.md", format = ["sdist"] },
     { path = "docs/PUBLICATION_AND_RELEASE_CHECKLIST.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.0.md", format = ["sdist"] },
+    { path = "docs/RELEASE_NOTES_0.1.1.md", format = ["sdist"] },
     { path = "docs/manuscript/MOBIORIGIN_MANUSCRIPT_DRAFT.md", format = ["sdist"] },
     { path = "docs/manuscript/mobiorigin_external_validation", format = ["sdist"] },
+    { path = "docs/manuscript/mobiorigin_operational_validation", format = ["sdist"] },
 ]
 homepage = "https://github.com/Raza-pl/MobiOrigin"
 repository = "https://github.com/Raza-pl/MobiOrigin"

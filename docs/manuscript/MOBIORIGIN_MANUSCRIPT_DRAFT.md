@@ -49,6 +49,16 @@ The final cohort comprised 3,000 records from 3,000 distinct versioned source ac
 
 The co-primary endpoints were three-class macro-F1 and plasmid-versus-non-plasmid F1. Differences were MobiOrigin minus geNomad. Two-sided percentile 95% intervals and paired empirical *P* values used 10,000 bootstrap replicates over `source_accession` with seed 20260818. Holm adjustment controlled multiplicity across the two co-primary endpoints. Balanced accuracy, precision, sensitivity, coverage, and length-bin analyses were descriptive.
 
+After the prospective analysis was complete, PlasClass, PlasFlow v1, PLASMe, and Platon predictions were frozen on the identical external FASTA and evaluated as a separate post-hoc exploratory analysis. The shared endpoint family was restricted to plasmid-binary metrics. Paired MobiOrigin-minus-comparator differences in F1 and balanced accuracy used 10,000 source-accession bootstrap replicates with seed 20260822, with Holm correction across eight tests. These analyses were not treated as additional prospective co-primary evidence.
+
+<!-- BEGIN REAL-ASSEMBLY OPERATIONAL METHODS -->
+
+### Real-assembly operational evaluation
+
+After all prospective and post-hoc accuracy comparisons were closed, we performed a label-free operational evaluation on two real assembly inputs. To bound workstation runtime while retaining five fixed length strata, records were ranked deterministically by SHA-256 within each length bin and accumulated toward 4 Mb per bin with a maximum of 800 records per bin. The resulting subsets contained 2,488 records (15.46 Mb) from GCA_054405655.1 and 2,445 records (15.49 Mb) from W1. MobiOrigin, geNomad, PlasClass, PlasFlow v1, PLASMe, and Platon received identical subset FASTA bytes within each dataset. We recorded end-to-end wallclock time, plasmid call fraction, abstention-derived prediction coverage, and label-free pairwise agreement with MobiOrigin. MobiOrigin comprehensive annotation was additionally summarized using evidence-priority tiers A–E. Because neither assembly had a frozen record-level origin truth map, no accuracy, sensitivity, specificity, or superiority inference was calculated for this analysis.
+
+<!-- END REAL-ASSEMBLY OPERATIONAL METHODS -->
+
 ## Results
 
 ### Locked-test qualification
@@ -63,11 +73,27 @@ For plasmid-versus-non-plasmid classification, MobiOrigin achieved F1 0.7453 com
 
 The tools showed a clear descriptive trade-off. MobiOrigin plasmid sensitivity was 0.739, 0.180 higher than geNomad, whereas its precision was 0.752, 0.141 lower. MobiOrigin coverage was 0.974 versus 0.999 for geNomad because the frozen selective policy abstained on low-margin plasmid calls. Length-stratified results were heterogeneous: MobiOrigin showed its largest macro-F1 advantage in the 1–<2 kb group, while geNomad was stronger in some intermediate and long-fragment groups. These subgroup results were not co-primary inferential tests.
 
+### Exploratory secondary comparator analysis
+
+MobiOrigin had the highest plasmid-binary F1 (0.7453) and balanced accuracy (0.8085) among MobiOrigin, PlasClass, PlasFlow v1, PLASMe, and Platon. Comparator F1 values were 0.6070, 0.5788, 0.3635, and 0.5774, respectively; balanced accuracies were 0.6943, 0.6835, 0.6093, and 0.7023. All eight paired MobiOrigin-minus-comparator intervals excluded zero and remained significant after Holm adjustment across the exploratory family.
+
+The secondary tools exposed different operating trade-offs. PlasClass sensitivity (0.756) was slightly higher than MobiOrigin (0.739). PLASMe and Platon achieved precision of 0.945 and 0.965, respectively, but sensitivity of only 0.225 and 0.412. PlasFlow v1 prediction coverage was 0.699. These post-hoc findings complement, but do not alter, the prospective MobiOrigin-versus-geNomad inference.
+
+<!-- BEGIN REAL-ASSEMBLY OPERATIONAL RESULTS -->
+
+### Real-assembly operational behavior
+
+All 12 dataset–tool prediction routes completed. MobiOrigin processed each approximately 15.5-Mb subset in 44 seconds and returned prediction coverage of 0.975 and 0.980, with plasmid call fractions of 0.083 and 0.079. Call fractions varied markedly by tool and dataset: geNomad called 0.021 and 0.008 of records as plasmid, PlasClass 0.262 and 0.428, PlasFlow v1 0.178 and 0.198, PLASMe 0.014 and 0.007, and Platon 0.004 and 0.002. Exact label-free binary agreement with MobiOrigin ranged from 0.509 to 0.893 on GCA_054405655.1 and from 0.450 to 0.902 on W1. These agreements are strongly influenced by class-call prevalence and therefore are not measures of correctness.
+
+The annotation evidence tiers identified 5 tier-C and 165 tier-D records across both subsets; no tier-A or tier-B records were observed, and the remaining 4,763 records were tier E. Tiers A–E prioritize biological follow-up based on the available annotation evidence. They are not clinical risk scores, do not establish pathogenic hosts, and cannot validate replicon origin without independent ground truth.
+
+<!-- END REAL-ASSEMBLY OPERATIONAL RESULTS -->
+
 ## Discussion
 
 MobiOrigin supported both preregistered co-primary superiority claims on a prospective, class-balanced external cohort. The design combines alignment-free sequence information with a compact marker panel and avoids using comparator output as a feature or teacher. The improvement in plasmid F1 was driven primarily by sensitivity, including a large descriptive advantage on the shortest fragments.
 
-The results do not establish universal superiority. geNomad retained substantially higher plasmid precision and nearly complete coverage, and it provides broader annotation functions outside the scope of MobiOrigin. Users prioritizing conservative plasmid calls may prefer geNomad or require independent confirmation. MobiOrigin is best interpreted as a replicon-origin classifier with an explicit abstention policy, not as a substitute for complete mobile-element annotation.
+The results do not establish universal superiority. geNomad retained substantially higher plasmid precision and nearly complete coverage, and it provides broader annotation functions outside the scope of MobiOrigin. The exploratory secondary comparison likewise showed that PLASMe and Platon provided more conservative high-precision calls and that PlasClass had slightly higher sensitivity. Users prioritizing conservative plasmid calls may prefer a high-precision tool or require independent confirmation. MobiOrigin is best interpreted as a replicon-origin classifier with an explicit abstention policy, not as a substitute for complete mobile-element annotation.
 
 Several limitations remain. The external cohort was deliberately balanced rather than prevalence-matched to a particular environment, so predictive values in operational samples will depend on class prevalence. All external sources were drawn through official public sequence routes and do not capture every geographic, ecological, or taxonomic setting. The marker databases are identity-frozen third-party research resources retrieved locally rather than bundled. Finally, the external cohort is permanently closed to retrospective tuning; further improvement requires a newly designed prospective study.
 

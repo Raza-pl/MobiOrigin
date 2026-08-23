@@ -1,0 +1,6 @@
+tool	plasmid_precision	plasmid_sensitivity	plasmid_specificity	plasmid_binary_f1	plasmid_binary_balanced_accuracy	plasmid_binary_mcc	prediction_coverage	analysis_role
+MobiOrigin	0.751780	0.739000	0.878000	0.745335	0.808500	0.619684	0.973667	post_hoc_secondary_external_comparison
+PlasClass	0.507042	0.756000	0.632500	0.606985	0.694250	0.366288	1.000000	post_hoc_secondary_external_comparison
+PlasFlow v1	0.573674	0.584000	0.783000	0.578791	0.683500	0.365389	0.698667	post_hoc_secondary_external_comparison
+PLASMe	0.945378	0.225000	0.993500	0.363489	0.609250	0.381124	1.000000	post_hoc_secondary_external_comparison
+Platon	0.964871	0.412000	0.992500	0.577435	0.702250	0.545757	1.000000	post_hoc_secondary_external_comparison

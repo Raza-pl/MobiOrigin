@@ -1,3 +1,3 @@
 """MobiOrigin: sequence-and-marker classification of bacterial replicons."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
