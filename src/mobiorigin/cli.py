@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Sequence
 
 from mobiorigin.annotate import annotate
-from mobiorigin.database_setup import setup_databases
+from mobiorigin.database_setup import check_databases, setup_databases
 from mobiorigin.predict import predict
+from mobiorigin.visualize import visualize
 
 
 def parser() -> argparse.ArgumentParser:
@@ -29,9 +31,14 @@ def parser() -> argparse.ArgumentParser:
     setup_parser.add_argument(
         "--source-dir",
         type=Path,
-        required=True,
         help="official MOB-suite data directory containing the three exact databases",
     )
+    setup_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify DIAMOND and an existing output directory without copying databases",
+    )
+    setup_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
     annotate_parser = subparsers.add_parser(
         "annotate", help="annotate biological evidence without changing MobiOrigin predictions"
     )
@@ -68,11 +75,22 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional matching MobiOrigin predictions.tsv for an integrated publication table",
     )
+    visualize_parser = subparsers.add_parser(
+        "visualize", help="create deterministic tables, SVG, and HTML from MobiOrigin outputs"
+    )
+    visualize_parser.add_argument("--predictions-tsv", type=Path, required=True)
+    visualize_parser.add_argument("--output-dir", type=Path, required=True)
+    visualize_parser.add_argument(
+        "--annotated-results-tsv",
+        type=Path,
+        help="optional matching mobiorigin_annotated_results.tsv for evidence-tier summaries",
+    )
     return value
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = parser().parse_args(argv)
+    argument_parser = parser()
+    args = argument_parser.parse_args(argv)
     if args.command == "predict":
         predict(
             input_fasta=args.input_fasta,
@@ -81,7 +99,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             threads=args.threads,
         )
     elif args.command == "setup-databases":
-        setup_databases(output_dir=args.output_dir, source_dir=args.source_dir)
+        if args.check:
+            print(json.dumps(check_databases(args.output_dir, diamond=args.diamond), indent=2))
+        else:
+            if args.source_dir is None:
+                argument_parser.error(
+                    "setup-databases requires --source-dir unless --check is used"
+                )
+            setup_databases(output_dir=args.output_dir, source_dir=args.source_dir)
     elif args.command == "annotate":
         annotate(
             input_fasta=args.input_fasta,
@@ -94,4 +119,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             amrfinder_database=args.amrfinder_database,
             profile=args.profile,
             predictions_tsv=args.predictions_tsv,
+        )
+    elif args.command == "visualize":
+        visualize(
+            predictions_tsv=args.predictions_tsv,
+            output_dir=args.output_dir,
+            annotated_results_tsv=args.annotated_results_tsv,
         )
