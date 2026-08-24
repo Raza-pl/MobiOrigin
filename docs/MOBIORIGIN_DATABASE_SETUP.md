@@ -35,6 +35,16 @@ mobiorigin setup-databases \
 
 `mob_init` performs user-side retrieval from the official MOB-suite route. MobiOrigin copies only the three required files, verifies the frozen SHA-256 identity of every file, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if any identity differs. Existing output directories are never overwritten.
 
+Verify DIAMOND and all three published database files before prediction:
+
+```bash
+mobiorigin setup-databases \
+  --check \
+  --output-dir mobiorigin_mob_databases
+```
+
+The check prints the DIAMOND version and the three required SHA-256 identities. Missing executables, malformed manifests, missing databases, or changed payload bytes fail closed.
+
 For an offline or institutionally mirrored installation, place the three exact `.dmnd` files in one source directory and run the same MobiOrigin command with that directory as `--source-dir`.
 
 ```bash

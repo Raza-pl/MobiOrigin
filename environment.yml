@@ -1,0 +1,15 @@
+name: mobiorigin
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.24
+  - pyrodigal>=3.0
+  - pytorch>=2.0,<2.6
+  - diamond>=2.1
+  - mob_suite=3.1.8
+  - pip:
+      - -e .

@@ -31,7 +31,12 @@ from mobiorigin.biological_evidence import (
     write_integrated_results,
     write_publication_summary,
 )
-from mobiorigin.database_setup import DATABASE_FILENAMES, MANIFEST_NAME, setup_databases
+from mobiorigin.database_setup import (
+    DATABASE_FILENAMES,
+    MANIFEST_NAME,
+    check_databases,
+    setup_databases,
+)
 from mobiorigin.fasta import FastaRecord, read_fasta
 from mobiorigin.marker_features import (
     DATABASE_SHA256,
@@ -60,6 +65,7 @@ from mobiorigin.sequence_features import (
     k7_canonical_vector,
     kmer_vector,
 )
+from mobiorigin.visualize import visualize
 
 
 def write(path: Path, value: str) -> Path:
@@ -371,6 +377,97 @@ def test_cli_dispatches_database_setup(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert observed == {
         "output_dir": tmp_path / "db",
         "source_dir": tmp_path / "official_source",
+    }
+
+
+def test_database_check_verifies_diamond_and_frozen_databases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("mobiorigin.database_setup.shutil.which", lambda value: "/bin/diamond")
+    monkeypatch.setattr(
+        "mobiorigin.database_setup.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout="diamond version 2.1.9\n", stderr=""
+        ),
+    )
+    monkeypatch.setattr(
+        "mobiorigin.database_setup.load_database_manifest",
+        lambda path: {family: path / filename for family, filename in DATABASE_FILENAMES.items()},
+    )
+    result = check_databases(tmp_path / "db")
+    assert result["status"] == "PASS"
+    assert result["databases_verified"] == 3
+    assert result["diamond_version"] == "diamond version 2.1.9"
+
+
+def test_cli_dispatches_database_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli,
+        "check_databases",
+        lambda database_dir, **kwargs: observed.update({"database_dir": database_dir, **kwargs})
+        or {"status": "PASS"},
+    )
+    cli.main(["setup-databases", "--check", "--output-dir", str(tmp_path / "db")])
+    assert observed == {"database_dir": tmp_path / "db", "diamond": Path("diamond")}
+
+
+def test_visualization_outputs_tables_svg_and_html(tmp_path: Path) -> None:
+    predictions = write(
+        tmp_path / "predictions.tsv",
+        "sequence_id\tlength_bp\tprediction\tp_chromosome\tp_plasmid\tp_phage\t"
+        "plasmid_score\tabstention_reason\n"
+        "a\t1500\tplasmid\t0.1\t0.8\t0.1\t0.7\t\n"
+        "b\t3000\tchromosome\t0.8\t0.1\t0.1\t-0.7\t\n"
+        "c\t8000\tphage\t0.1\t0.1\t0.8\t-0.7\t\n"
+        "d\t60000\tunclassified\t0.3\t0.4\t0.3\t0.1\tlow_plasmid_margin\n",
+    )
+    annotated = write(
+        tmp_path / "annotated.tsv",
+        "sequence_id\tprediction\tconsensus_arg_orfs\tmge_hits\tmobility_marker_hits\t"
+        "evidence_priority_tier\n"
+        "a\tplasmid\t1\t1\t0\tB\n"
+        "b\tchromosome\t0\t0\t0\tE\n"
+        "c\tphage\t0\t0\t1\tD\n"
+        "d\tunclassified\t0\t0\t0\tE\n",
+    )
+    output = tmp_path / "visualization"
+    visualize(
+        predictions_tsv=predictions,
+        annotated_results_tsv=annotated,
+        output_dir=output,
+    )
+    assert {
+        "prediction_summary.tsv",
+        "prediction_by_length_bin.tsv",
+        "visualization_summary.json",
+        "mobiorigin_summary.svg",
+        "mobiorigin_dashboard.html",
+        "SHA256SUMS.txt",
+    } == {path.name for path in output.iterdir()}
+    summary = json.loads((output / "visualization_summary.json").read_text())
+    assert summary["records"] == 4
+    assert summary["evidence_priority_tier_counts"]["B"] == 1
+    assert summary["accuracy_metrics_calculated"] is False
+    assert "Interpretation boundary" in (output / "mobiorigin_dashboard.html").read_text()
+
+
+def test_cli_dispatches_visualize(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(cli, "visualize", lambda **kwargs: observed.update(kwargs))
+    cli.main(
+        [
+            "visualize",
+            "--predictions-tsv",
+            str(tmp_path / "predictions.tsv"),
+            "--output-dir",
+            str(tmp_path / "visualization"),
+        ]
+    )
+    assert observed == {
+        "predictions_tsv": tmp_path / "predictions.tsv",
+        "output_dir": tmp_path / "visualization",
+        "annotated_results_tsv": None,
     }
 
 

@@ -14,16 +14,21 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 - Models: three frozen checkpoints distributed with the package. Each is governed by a cryptographic manifest and SHA-256 verified before use.
 - Marker databases: not redistributed. Users must provide the exact identity-verified MOB-suite-derived research databases described in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
 
-## Install from this repository
+## Install
 
-MobiOrigin currently targets Python 3.10 or 3.11 and requires DIAMOND on `PATH`.
+The recommended current installation uses the provided Conda environment. It installs Python 3.10, CPU-compatible PyTorch, DIAMOND, Pyrodigal, and MOB-suite together:
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
 cd MobiOrigin
-python -m pip install .
+mamba env create -f environment.yml
+conda activate mobiorigin
 mobiorigin --help
 ```
+
+Use `conda env create -f environment.yml` when Mamba is unavailable. A source-only virtual-environment route and troubleshooting instructions are provided in the complete [installation and analysis tutorial](docs/INSTALLATION_AND_TUTORIAL.md).
+
+MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
 
 ## Prepare marker databases
 
@@ -34,6 +39,10 @@ mob_init
 MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).parent / "data")')"
 mobiorigin setup-databases \
   --source-dir "$MOB_DATA_DIR" \
+  --output-dir mobiorigin_mob_databases
+
+mobiorigin setup-databases \
+  --check \
   --output-dir mobiorigin_mob_databases
 ```
 
@@ -56,6 +65,18 @@ The output directory contains:
 - `SHA256SUMS.txt`: output checksums.
 
 See [`docs/MOBIORIGIN_OUTPUT_SCHEMA.md`](docs/MOBIORIGIN_OUTPUT_SCHEMA.md) for the exact schema and interpretation.
+
+## Visualize predictions
+
+Create summary tables, an editable SVG figure, and a browser-ready HTML dashboard without adding plotting dependencies:
+
+```bash
+mobiorigin visualize \
+  --predictions-tsv mobiorigin_results/predictions.tsv \
+  --output-dir mobiorigin_visualization
+```
+
+Open `mobiorigin_visualization/mobiorigin_dashboard.html`. The dashboard reports contig- and base-pair-weighted prediction proportions and length-stratified plasmid calls. It is descriptive and does not calculate accuracy.
 
 ## Independent biological annotation
 
@@ -85,6 +106,15 @@ The A–E evidence-priority tier is a transparent review queue based on ARG and
 mobility context; it is not a clinical risk score. Database layout, thresholds,
 provenance, licensing boundaries, and output schemas are documented in
 [`docs/MOBIORIGIN_ANNOTATION.md`](docs/MOBIORIGIN_ANNOTATION.md).
+
+To add evidence-tier summaries to the visualization:
+
+```bash
+mobiorigin visualize \
+  --predictions-tsv mobiorigin_results/predictions.tsv \
+  --annotated-results-tsv mobiorigin_annotations/mobiorigin_annotated_results.tsv \
+  --output-dir mobiorigin_annotated_visualization
+```
 
 ## Prospective external validation
 

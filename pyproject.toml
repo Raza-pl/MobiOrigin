@@ -15,6 +15,8 @@ include = [
     { path = "docs/MOBIORIGIN_DATABASE_SETUP.md", format = ["sdist"] },
     { path = "docs/MOBIORIGIN_OUTPUT_SCHEMA.md", format = ["sdist"] },
     { path = "docs/MOBIORIGIN_ANNOTATION.md", format = ["sdist"] },
+    { path = "docs/INSTALLATION_AND_TUTORIAL.md", format = ["sdist"] },
+    { path = "environment.yml", format = ["sdist"] },
     { path = "docs/PUBLICATION_AND_RELEASE_CHECKLIST.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.0.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.1.md", format = ["sdist"] },

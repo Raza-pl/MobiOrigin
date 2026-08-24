@@ -6,11 +6,12 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
-from mobiorigin.marker_features import DATABASE_SHA256
+from mobiorigin.marker_features import DATABASE_SHA256, load_database_manifest
 
 DATABASE_FILENAMES = {
     "rep": "rep_proteins.dmnd",
@@ -93,3 +94,25 @@ def setup_databases(
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
+
+
+def check_databases(database_dir: Path, *, diamond: Path = Path("diamond")) -> dict[str, object]:
+    """Fail closed unless DIAMOND and all frozen marker databases are usable."""
+    executable = shutil.which(str(diamond))
+    if executable is None:
+        candidate = diamond.expanduser()
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            raise FileNotFoundError(f"DIAMOND executable not found: {diamond}")
+        executable = str(candidate.resolve())
+    completed = subprocess.run([executable, "version"], text=True, capture_output=True, check=False)
+    if completed.returncode:
+        raise RuntimeError(f"DIAMOND version check failed: {completed.stderr.strip()}")
+    databases = load_database_manifest(database_dir)
+    return {
+        "status": "PASS",
+        "diamond": executable,
+        "diamond_version": (completed.stdout or completed.stderr).strip(),
+        "database_dir": str(database_dir.resolve()),
+        "databases_verified": len(databases),
+        "database_sha256": {family: DATABASE_SHA256[family] for family in sorted(DATABASE_SHA256)},
+    }
