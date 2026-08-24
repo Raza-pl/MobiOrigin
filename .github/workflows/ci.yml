@@ -65,3 +65,28 @@ jobs:
         run: >-
           pytest tests/unit/test_mobiorigin_production.py -q -o addopts=""
           --cov=mobiorigin --cov-report=term --cov-fail-under=80
+
+  install-smoke:
+    name: CPU installation & database-environment solve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create the documented CPU runtime
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+          post-cleanup: all
+
+      - name: Verify installed commands and CPU-only runtime
+        shell: micromamba-shell {0}
+        run: |
+          mobiorigin --help
+          diamond version
+          python -c 'import numpy, pyrodigal, torch; assert numpy.__version__ == "1.26.4"; assert torch.version.cuda is None; print(numpy.__version__, torch.__version__)'
+          bash -n scripts/setup_mobiorigin_databases.sh
+
+      - name: Verify the isolated MOB-suite environment can be solved
+        shell: bash
+        run: micromamba create --dry-run --yes --file environment.mob-database.yml

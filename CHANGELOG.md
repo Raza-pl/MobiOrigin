@@ -2,6 +2,19 @@
 
 All notable MobiOrigin changes are documented here. The project uses semantic versioning for the standalone `mobiorigin` package interface.
 
+## Unreleased
+
+### Fixed
+
+- Separated the CPU-only MobiOrigin runtime from MOB-suite's incompatible legacy
+  NumPy/pandas database-building stack.
+- Added a non-overwriting database setup helper with Linux/WSL, Intel macOS, and
+  Apple Silicon/Rosetta handling plus actionable failure messages.
+- Prevented Conda from selecting CUDA by pinning the documented runtime to a
+  cross-platform CPU PyTorch build.
+- Added CI installation smoke tests, an isolated MOB-suite dependency solve, and
+  installation-contract unit tests.
+
 ## 0.1.1 — 2026-08-23
 
 Publication and biological-annotation update for the unchanged frozen
