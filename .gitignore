@@ -25,7 +25,10 @@ env/
 data/
 results/
 scripts/dev/
-docs/manuscript/figures/
+docs/presentation/
+*.ppt
+*.pptx
+*.potx
 gtdb_genomes_reps_r220/
 mobiorigin_mob_databases/
 mobiorigin_results/

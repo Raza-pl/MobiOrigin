@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use MobiOrigin, please cite this software and the associated manuscript."
+message: "If you use MobiOrigin, please cite this software release."
 title: "MobiOrigin: sequence-and-marker classification of bacterial replicons"
 type: software
 authors:
