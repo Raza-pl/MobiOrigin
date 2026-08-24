@@ -1,0 +1,12 @@
+name: mobiorigin-db
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.10
+  - numpy>=1.11.1,<1.23.5
+  - pandas>=0.22,<=1.5.3
+  - blast>=2.9,<2.16
+  - libsqlite<3.49
+  - mob_suite=3.1.8

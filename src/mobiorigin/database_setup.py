@@ -63,7 +63,12 @@ def setup_databases(
             expected = DATABASE_SHA256[family]
             source_path = source_dir / filename
             if not source_path.is_file():
-                raise FileNotFoundError(f"Missing source database: {source_path}")
+                raise FileNotFoundError(
+                    f"Missing source database: {source_path}. "
+                    "MOB-suite initialization did not produce all three required files. "
+                    "Use scripts/setup_mobiorigin_databases.sh from the source checkout; "
+                    "do not install MOB-suite into the MobiOrigin runtime environment."
+                )
             source_identity = str(source_path.resolve())
             with source_path.open("rb") as source:
                 observed = _copy_and_hash(source, destination)
@@ -98,6 +103,12 @@ def setup_databases(
 
 def check_databases(database_dir: Path, *, diamond: Path = Path("diamond")) -> dict[str, object]:
     """Fail closed unless DIAMOND and all frozen marker databases are usable."""
+    manifest_path = database_dir / MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"MobiOrigin database manifest not found: {manifest_path}. "
+            "Run scripts/setup_mobiorigin_databases.sh from the source checkout first."
+        )
     executable = shutil.which(str(diamond))
     if executable is None:
         candidate = diamond.expanduser()

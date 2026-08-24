@@ -1,12 +1,12 @@
 # MobiOrigin installation, prediction, annotation, and visualization tutorial
 
-This tutorial follows one complete analysis from a new environment to an HTML report. Commands are written for macOS or Linux. MobiOrigin currently supports Python 3.10 and 3.11 and performs CPU inference.
+This tutorial follows one complete analysis from a new environment to an HTML report. Commands are written for macOS, Linux, or WSL2. MobiOrigin currently supports Python 3.10 and 3.11 and performs CPU inference.
 
 ## 1. Install MobiOrigin
 
 ### Recommended: Conda or Mamba environment
 
-This route installs Python, PyTorch, DIAMOND, Pyrodigal, and MOB-suite together.
+This route installs Python, a CPU-only PyTorch build, DIAMOND, and Pyrodigal. It deliberately does **not** install MOB-suite in the same environment. MOB-suite 3.1.8 requires NumPy below 1.23.5, while MobiOrigin requires NumPy 1.24 or newer; combining them can produce `numpy.dtype size changed` failures.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
@@ -14,13 +14,19 @@ cd MobiOrigin
 mamba env create -f environment.yml
 conda activate mobiorigin
 mobiorigin --help
+python -c 'import numpy, pyrodigal, torch; print("NumPy", numpy.__version__, "PyTorch", torch.__version__, "CUDA", torch.version.cuda)'
+diamond version
 ```
 
-Use `conda env create -f environment.yml` if Mamba is unavailable.
+Use `conda env create -f environment.yml` if Mamba is unavailable. The final diagnostic should report NumPy 1.26.4 and `CUDA None`.
+
+### Windows
+
+Use Ubuntu under WSL2 and run the Linux commands above inside the WSL terminal. Do not mix Windows Python, Windows Conda, and WSL executables in one environment. A repository cloned under the Linux home directory generally performs better than one under `/mnt/c/`.
 
 ### Python virtual environment
 
-Use this route only when DIAMOND and MOB-suite are already installed separately.
+Use this route only when a compatible DIAMOND executable is already available. MOB-suite is still used only in the separate database-bootstrap environment described below.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
@@ -32,21 +38,23 @@ python -m pip install .
 mobiorigin --help
 ```
 
+The guided database helper expects the recommended named Conda runtime. Virtual-environment users should follow the manual database route in section 2, then reactivate `.venv` before running `mobiorigin setup-databases`.
+
 MobiOrigin is not yet published on PyPI or Bioconda. Do not use `pip install mobiorigin` or `mamba install mobiorigin` until the corresponding release page exists.
 
 ## 2. Prepare and verify the marker databases
 
-MobiOrigin does not redistribute the MOB-suite biological sequence databases. Retrieve them through MOB-suite and let MobiOrigin copy only the three frozen, identity-verified marker databases.
+MobiOrigin does not redistribute the MOB-suite biological sequence databases. The recommended helper keeps MOB-suite's older dependency stack isolated, retrieves its official database, and lets MobiOrigin copy only the three frozen, identity-verified files.
 
 ```bash
-mob_init
-MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).parent / "data")')"
-mobiorigin setup-databases \
-  --source-dir "$MOB_DATA_DIR" \
-  --output-dir "$HOME/mobiorigin_databases"
+bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
 ```
 
-Run the preflight check before analyzing real data:
+The helper creates or updates `mobiorigin-db` from `environment.mob-database.yml`, runs `mob_init` there, switches back to the `mobiorigin` runtime for hash verification, and performs the final preflight. It is safe to rerun: an existing output is checked rather than overwritten.
+
+On Apple Silicon, Bioconda does not currently provide the older BLAST build required by MOB-suite 3.1.8 as a native arm64 package. The helper therefore creates only the `mobiorigin-db` bootstrap environment as `osx-64` under Rosetta. The MobiOrigin runtime remains native arm64. If Rosetta is absent, the helper stops and prints the one-time installation command rather than changing the system automatically.
+
+You can repeat only the preflight before analyzing real data:
 
 ```bash
 mobiorigin setup-databases \
@@ -55,6 +63,33 @@ mobiorigin setup-databases \
 ```
 
 A successful check prints `"status": "PASS"`, the DIAMOND version, and three verified database identities. The command fails if DIAMOND is missing or any file differs from the frozen hashes.
+
+### Manual two-environment database setup
+
+Use these steps if you prefer not to run the helper:
+
+```bash
+mamba env create -f environment.mob-database.yml
+conda activate mobiorigin-db
+mob_init
+MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).resolve().parent / "data")')"
+
+conda activate mobiorigin
+mobiorigin setup-databases \
+  --source-dir "$MOB_DATA_DIR" \
+  --output-dir "$HOME/mobiorigin_databases"
+mobiorigin setup-databases \
+  --check \
+  --output-dir "$HOME/mobiorigin_databases"
+```
+
+On an Apple Silicon Mac, replace the second environment-creation command with:
+
+```bash
+mamba env create --platform osx-64 -f environment.mob-database.yml
+```
+
+Do not run `pip install mob-suite`, force an old NumPy into `mobiorigin`, or add the historical `ursky` channel. Those workarounds can install obsolete MOB-suite releases and binary-incompatible pandas builds.
 
 ## 3. Create an analysis directory
 
@@ -164,9 +199,31 @@ which diamond
 mobiorigin setup-databases --check --output-dir "$HOME/mobiorigin_databases"
 ```
 
+### `numpy.dtype size changed`
+
+MOB-suite or pandas was installed into the MobiOrigin runtime environment. Recreate the two environments from their separate files:
+
+```bash
+conda deactivate
+conda env remove -n mobiorigin
+conda env remove -n mobiorigin-db
+mamba env create -f environment.yml
+bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases_new"
+```
+
+Use a fresh database output name while diagnosing the old directory. The helper does not delete data.
+
+### Conda solver selects CUDA packages
+
+The repository environment pins `pytorch=2.5.1=cpu*`. If a solver still proposes CUDA, confirm you are using the current `environment.yml` and that the channels end with `nodefaults`. Do not remove the CPU build constraint.
+
+### WSL command begins with `^[[200~`
+
+That text is a terminal bracketed-paste control sequence, not part of the command. Press `Ctrl+C`, paste one command again into the WSL terminal, and do not include the prompt character or surrounding quotation marks.
+
 ### Database hash mismatch
 
-Do not bypass the check. Remove the incomplete MobiOrigin database output, rerun `mob_init`, and create a fresh output directory with `setup-databases`.
+Do not bypass the check. Keep the rejected directory for diagnosis and rerun the database helper with a fresh output directory. A different upstream release or DIAMOND build may not reproduce the frozen byte identities.
 
 ### Output directory already exists
 
@@ -178,7 +235,7 @@ Prediction is CPU-oriented. Start with eight DIAMOND threads, maintain sufficien
 
 ## 10. Packaging status
 
-- Source installation and `environment.yml`: available now.
+- Source installation, CPU runtime environment, isolated database environment, and guided database helper: available now.
 - PyPI: not yet enabled. The current model-inclusive wheel is approximately 112.5 MB, above PyPI's default 100 MB per-file limit. Before publishing, either move the checkpoints to a separately verified download route or obtain a PyPI project limit increase. Trusted publishing should be configured only after that packaging decision is frozen.
 - Bioconda: requires a separate recipe pull request after a public source distribution exists.
 

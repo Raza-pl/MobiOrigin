@@ -16,7 +16,7 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Install
 
-The recommended current installation uses the provided Conda environment. It installs Python 3.10, CPU-compatible PyTorch, DIAMOND, Pyrodigal, and MOB-suite together:
+The recommended installation uses a small CPU-only runtime environment. MOB-suite is intentionally kept in a separate database-bootstrap environment because its supported NumPy range does not overlap MobiOrigin's runtime requirement.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
@@ -26,27 +26,19 @@ conda activate mobiorigin
 mobiorigin --help
 ```
 
-Use `conda env create -f environment.yml` when Mamba is unavailable. A source-only virtual-environment route and troubleshooting instructions are provided in the complete [installation and analysis tutorial](docs/INSTALLATION_AND_TUTORIAL.md).
+The runtime pins a cross-platform CPU build of PyTorch and does not install CUDA. Use `conda env create -f environment.yml` when Mamba is unavailable. Windows users should run these commands inside WSL2. A source-only route, WSL notes, and diagnostics are provided in the complete [installation and analysis tutorial](docs/INSTALLATION_AND_TUTORIAL.md).
 
 MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
 
 ## Prepare marker databases
 
-MobiOrigin does not bundle third-party biological database records. Retrieve and verify the exact research databases locally:
+MobiOrigin does not bundle third-party biological database records. From the repository root, one helper creates the isolated MOB-suite environment, retrieves the official data, and verifies the three frozen MobiOrigin databases:
 
 ```bash
-mob_init
-MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).parent / "data")')"
-mobiorigin setup-databases \
-  --source-dir "$MOB_DATA_DIR" \
-  --output-dir mobiorigin_mob_databases
-
-mobiorigin setup-databases \
-  --check \
-  --output-dir mobiorigin_mob_databases
+bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
 ```
 
-`mob_init` retrieves the upstream database through MOB-suite's official route. MobiOrigin then publishes its runtime directory atomically only after all three database hashes match. Complete provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any database hash differs.
+The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. MobiOrigin publishes its database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any database hash differs.
 
 ## Run
 

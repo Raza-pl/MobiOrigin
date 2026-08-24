@@ -67,6 +67,8 @@ from mobiorigin.sequence_features import (
 )
 from mobiorigin.visualize import visualize
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def write(path: Path, value: str) -> Path:
     path.write_text(value, encoding="ascii")
@@ -180,6 +182,47 @@ def test_database_setup_is_atomic_and_identity_checked(
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
         setup_databases(failed, source_dir=source)
     assert not failed.exists()
+
+
+def test_installation_environments_keep_incompatible_stacks_separate() -> None:
+    runtime = (PROJECT_ROOT / "environment.yml").read_text(encoding="utf-8")
+    database = (PROJECT_ROOT / "environment.mob-database.yml").read_text(encoding="utf-8")
+    assert "name: mobiorigin\n" in runtime
+    assert "numpy=1.26.4" in runtime
+    assert "pytorch=2.5.1=cpu*" in runtime
+    assert "diamond>=2.1" in runtime
+    assert "mob_suite" not in runtime
+    assert "pandas" not in runtime
+    assert "name: mobiorigin-db\n" in database
+    assert "mob_suite=3.1.8" in database
+    assert "numpy>=1.11.1,<1.23.5" in database
+    assert "pandas>=0.22,<=1.5.3" in database
+    assert "blast>=2.9,<2.16" in database
+    assert "pytorch" not in database
+
+
+def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
+    helper = PROJECT_ROOT / "scripts/setup_mobiorigin_databases.sh"
+    payload = helper.read_text(encoding="utf-8")
+    assert payload.startswith("#!/usr/bin/env bash\n")
+    assert "set -e" not in payload
+    assert "environment.mob-database.yml" in payload
+    assert "run -n mobiorigin-db mob_init" in payload
+    assert "run -n mobiorigin mobiorigin setup-databases" in payload
+    assert "--platform osx-64" in payload
+    assert "Rosetta" in payload
+    assert "Existing MobiOrigin marker databases are valid" in payload
+    assert not any(line.lstrip().startswith("rm ") for line in payload.splitlines())
+
+
+def test_database_setup_missing_source_has_actionable_error(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="setup_mobiorigin_databases.sh"):
+        setup_databases(tmp_path / "output", source_dir=tmp_path / "missing")
+
+
+def test_database_check_missing_manifest_has_actionable_error(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="setup_mobiorigin_databases.sh"):
+        check_databases(tmp_path / "missing")
 
 
 def test_model_round_trip_and_rejections(tmp_path: Path) -> None:
@@ -383,6 +426,9 @@ def test_cli_dispatches_database_setup(monkeypatch: pytest.MonkeyPatch, tmp_path
 def test_database_check_verifies_diamond_and_frozen_databases(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    database_dir = tmp_path / "db"
+    database_dir.mkdir()
+    write(database_dir / MANIFEST_NAME, "{}\n")
     monkeypatch.setattr("mobiorigin.database_setup.shutil.which", lambda value: "/bin/diamond")
     monkeypatch.setattr(
         "mobiorigin.database_setup.subprocess.run",
@@ -394,7 +440,7 @@ def test_database_check_verifies_diamond_and_frozen_databases(
         "mobiorigin.database_setup.load_database_manifest",
         lambda path: {family: path / filename for family, filename in DATABASE_FILENAMES.items()},
     )
-    result = check_databases(tmp_path / "db")
+    result = check_databases(database_dir)
     assert result["status"] == "PASS"
     assert result["databases_verified"] == 3
     assert result["diamond_version"] == "diamond version 2.1.9"

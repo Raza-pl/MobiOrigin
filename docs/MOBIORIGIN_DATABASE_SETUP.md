@@ -21,29 +21,52 @@ This is a conservative scientific distribution policy, not legal advice.
 
 The hashes apply to the final `.dmnd` files consumed by MobiOrigin, not merely their source FASTA files. A database made from a different source release or DIAMOND build may not reproduce these byte identities.
 
-## Official-source, identity-verified setup
+## Recommended isolated, identity-verified setup
 
-Install MOB-suite 3.1.8, initialize its official database archive, then point MobiOrigin at MOB-suite's data directory:
+MobiOrigin and MOB-suite must not be installed into the same Conda environment. Their supported NumPy ranges do not overlap. From a MobiOrigin source checkout, use the guided helper:
 
 ```bash
-mob_init
-MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).parent / "data")')"
-mobiorigin setup-databases \
-  --source-dir "$MOB_DATA_DIR" \
-  --output-dir mobiorigin_mob_databases
+bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
 ```
 
-`mob_init` performs user-side retrieval from the official MOB-suite route. MobiOrigin copies only the three required files, verifies the frozen SHA-256 identity of every file, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if any identity differs. Existing output directories are never overwritten.
+The helper creates a dedicated `mobiorigin-db` environment from `environment.mob-database.yml`, runs MOB-suite 3.1.8's official `mob_init` route there, and invokes MobiOrigin from the separate `mobiorigin` runtime environment. MobiOrigin copies only the three required files, verifies every frozen SHA-256 identity, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if any identity differs. Existing output directories are verified and never overwritten.
+
+On Apple Silicon, the helper creates only the database-builder environment as `osx-64` under Rosetta because the compatible historical BLAST build is not available natively for arm64. The MobiOrigin prediction environment stays native arm64. The helper checks for Rosetta and fails with an explicit instruction if it is unavailable.
 
 Verify DIAMOND and all three published database files before prediction:
 
 ```bash
 mobiorigin setup-databases \
   --check \
-  --output-dir mobiorigin_mob_databases
+  --output-dir "$HOME/mobiorigin_databases"
 ```
 
 The check prints the DIAMOND version and the three required SHA-256 identities. Missing executables, malformed manifests, missing databases, or changed payload bytes fail closed.
+
+## Manual two-environment route
+
+```bash
+mamba env create -f environment.yml
+mamba env create -f environment.mob-database.yml
+
+conda activate mobiorigin-db
+mob_init
+MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).resolve().parent / "data")')"
+
+conda activate mobiorigin
+mobiorigin setup-databases \
+  --source-dir "$MOB_DATA_DIR" \
+  --output-dir "$HOME/mobiorigin_databases"
+mobiorigin setup-databases \
+  --check \
+  --output-dir "$HOME/mobiorigin_databases"
+```
+
+For Apple Silicon, create the second environment with `mamba env create --platform osx-64 -f environment.mob-database.yml` instead.
+
+The `mobiorigin` environment contains NumPy 1.26.4 and CPU-only PyTorch. The `mobiorigin-db` environment contains MOB-suite's compatible NumPy, pandas, BLAST, and SQLite ranges. It is used for retrieval only and is not used for prediction.
+
+Do not repair a failed combined environment by downgrading NumPy, forcing pandas, installing the obsolete `mob-suite` PyPI project, or mixing historical channels. Recreate the two isolated environments instead.
 
 For an offline or institutionally mirrored installation, place the three exact `.dmnd` files in one source directory and run the same MobiOrigin command with that directory as `--source-dir`.
 
