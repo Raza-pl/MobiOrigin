@@ -19,8 +19,8 @@ Publication and biological-annotation update for the unchanged frozen
   and Platon under a separately frozen statistical contract.
 - Label-free operational evidence from two deterministic real-assembly subsets,
   covering all 12 dataset–tool runs and 10 pairwise operational comparisons.
-- Publication tables, editable vector figures, methods, limitations, and updated
-  manuscript and repository documentation.
+- Validation tables, editable vector figures, methods, limitations, and updated
+  repository documentation.
 
 ### Changed
 
@@ -53,7 +53,7 @@ Initial research release of the frozen `mobiorigin-dev1-mob-selective-v1` candid
 - Atomic prediction outputs with provenance and SHA-256 checksums.
 - `mobiorigin setup-databases` for atomic retrieval or offline installation of the exact marker databases.
 - Prospective external validation against geNomad 1.12.0/database 1.9 using 3,000 source-disjoint records.
-- Publication-facing aggregate tables, vector figure, methods, claim boundaries, and manuscript draft.
+- Aggregate validation tables, vector figure, methods, and claim boundaries.
 
 ### Scientific boundaries
 

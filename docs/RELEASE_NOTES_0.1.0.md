@@ -17,7 +17,7 @@ MobiOrigin 0.1.0 is the initial research release of the frozen `mobiorigin-dev1-
 - Three frozen tensor-only model state dictionaries and training-only marker normalization.
 - Atomic exact-hash marker-database setup command; third-party biological databases are not bundled.
 - Atomic prediction outputs with provenance and checksums.
-- User documentation, citation metadata, changelog, manuscript draft, and aggregate publication artifacts.
+- User documentation, citation metadata, changelog, and aggregate validation artifacts.
 
 ## Reproducibility gates
 
@@ -37,4 +37,4 @@ MobiOrigin 0.1.0 is the initial research release of the frozen `mobiorigin-dev1-
 
 ## External actions after repository freeze
 
-The repository has been renamed to `Raza-pl/MobiOrigin`. Creating the GitHub release page, minting an archival DOI, and submitting to a journal still require external-service actions and author confirmation. Those actions must not change the frozen scientific candidate or reported results.
+The repository has been renamed to `Raza-pl/MobiOrigin`. Creating the GitHub release page and minting an archival DOI still require external-service actions and author confirmation. Those actions must not change the frozen scientific candidate or reported results.

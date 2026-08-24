@@ -31,8 +31,8 @@ are byte-identical to version 0.1.0.
 - A label-free operational study reports runtime, call rate, coverage, agreement,
   and biological evidence for two deterministic real-assembly subsets. All 12
   dataset–tool routes and all 10 pairwise operational comparisons completed.
-- Publication-facing tables, editable SVG figures, methods, limitations, and the
-  manuscript draft have been updated.
+- Validation tables, editable SVG figures, methods, and limitations have been
+  updated.
 
 ## Distribution contents
 
@@ -42,8 +42,8 @@ are byte-identical to version 0.1.0.
   normalization.
 - Atomic prediction and annotation artifacts with provenance and SHA-256
   checksums.
-- User documentation, citation metadata, changelog, manuscript draft, and
-  aggregate publication evidence.
+- User documentation, citation metadata, changelog, and aggregate validation
+  evidence.
 - No third-party biological database payloads; users retrieve licensed databases
   locally following the documented setup routes.
 
@@ -71,7 +71,5 @@ are byte-identical to version 0.1.0.
 
 ## External release actions
 
-The GitHub release page, archival DOI, and journal submission remain external
-service actions. Journal submission additionally requires final author
-declarations and target-journal formatting; neither may change the frozen
-scientific candidate or reported results.
+The GitHub release page and archival DOI remain external service actions. Neither
+may change the frozen scientific candidate or reported results.

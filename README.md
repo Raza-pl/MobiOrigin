@@ -133,7 +133,7 @@ The frozen prospective external cohort contained 3,000 fragments from 3,000 dist
 
 The result supports higher macro-F1 and plasmid binary F1 on this frozen cohort. It does **not** support higher plasmid precision, higher coverage, or universal superiority. MobiOrigin traded lower precision and modestly lower coverage for substantially higher plasmid sensitivity. The external cohort is closed to retrospective tuning and record-level error mining.
 
-Publication-facing aggregate tables, methods, figure data, and frozen claim boundaries are in [`docs/manuscript/mobiorigin_external_validation`](docs/manuscript/mobiorigin_external_validation/README.md).
+Aggregate validation tables, methods, figure data, and frozen claim boundaries are in [`docs/validation/external_validation`](docs/validation/external_validation/README.md).
 
 ### Additional exploratory comparator analysis
 
@@ -147,14 +147,14 @@ The prospective MobiOrigin evaluation used geNomad as the preregistered comparat
 | PLASMe | 0.3635 | 0.6093 | 0.9454 | 0.2250 | 1.0000 |
 | Platon | 0.5774 | 0.7023 | 0.9649 | 0.4120 | 1.0000 |
 
-MobiOrigin had the highest F1 and balanced accuracy in this secondary comparison, and all eight paired MobiOrigin-minus-comparator tests were positive after Holm adjustment. These findings are exploratory, not additional preregistered co-primary evidence. PlasClass had slightly higher sensitivity, while PLASMe and Platon had higher precision but substantially lower sensitivity. Full methods, paired intervals, and mandatory claim limitations are included in the publication-evidence directory linked above.
+MobiOrigin had the highest F1 and balanced accuracy in this secondary comparison, and all eight paired MobiOrigin-minus-comparator tests were positive after Holm adjustment. These findings are exploratory, not additional preregistered co-primary evidence. PlasClass had slightly higher sensitivity, while PLASMe and Platon had higher precision but substantially lower sensitivity. Full methods, paired intervals, and mandatory claim limitations are included in the validation-evidence directory linked above.
 
 <!-- BEGIN REAL-ASSEMBLY OPERATIONAL VALIDATION -->
 ## Real-assembly operational validation
 
 MobiOrigin and five comparators were run on two deterministic real-assembly subsets containing 2,488 and 2,445 records (approximately 15.5 Mb each). All 12 dataset–tool routes completed. The publication bundle reports end-to-end runtime, call fraction, coverage, label-free agreement, and biological evidence-priority tiers. These assemblies do not have frozen record-level ground truth, so this analysis does **not** support accuracy or superiority claims. Evidence tiers A–E prioritize follow-up and are not clinical risk scores.
 
-Tables, an editable SVG figure, methods, and mandatory claim boundaries are available in [`docs/manuscript/mobiorigin_operational_validation`](docs/manuscript/mobiorigin_operational_validation).
+Tables, an editable SVG figure, methods, and mandatory claim boundaries are available in [`docs/validation/operational_validation`](docs/validation/operational_validation).
 <!-- END REAL-ASSEMBLY OPERATIONAL VALIDATION -->
 
 ## Reproducibility and scope
