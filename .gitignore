@@ -44,6 +44,8 @@ email_*.md
 
 # Qualified production model artifacts
 !src/mobiorigin/data/
+!src/mobiorigin/data/examples/
+!src/mobiorigin/data/examples/*.fasta
 !src/mobiorigin/data/models/
 !src/mobiorigin/data/models/dev1/
 !src/mobiorigin/data/models/dev1/*.pt

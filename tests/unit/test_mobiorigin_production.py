@@ -341,6 +341,32 @@ def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
     assert not any(line.lstrip().startswith("rm ") for line in payload.splitlines())
 
 
+def test_bundled_four_class_example_and_runner_are_public_and_portable() -> None:
+    example = PROJECT_ROOT / "src/mobiorigin/data/examples/annotated_assembly_example.fasta"
+    records = read_fasta(example)
+    assert [record.identifier for record in records] == [
+        "assembly_example_chromosome_01",
+        "assembly_example_chromosome_02",
+        "assembly_example_plasmid_01",
+        "assembly_example_plasmid_02",
+        "assembly_example_phage_01",
+        "assembly_example_phage_02",
+        "assembly_example_unclassified_01",
+        "assembly_example_unclassified_02",
+    ]
+    assert all(record.supported for record in records)
+    assert sum(len(record.sequence) for record in records) == 160_054
+
+    runner = PROJECT_ROOT / "scripts/run_mobiorigin_assembly_example.sh"
+    payload = runner.read_text(encoding="utf-8")
+    assert payload.startswith("#!/usr/bin/env bash\n")
+    assert "set -e" not in payload
+    assert "annotated_assembly_example.fasta" in payload
+    assert "chromosome=2, plasmid=2, phage=2, unclassified=2" in payload
+    assert "ANNOTATION_DATABASE" in payload
+    assert "accuracy or prevalence" in payload
+
+
 def test_frozen_marker_translation_is_deterministic(tmp_path: Path) -> None:
     source = write(tmp_path / "rep.dna.fas", ">record description\nATG" + "GCT" * 30 + "TAA")
     destination = tmp_path / "rep_proteins.faa"

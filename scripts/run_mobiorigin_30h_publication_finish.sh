@@ -370,7 +370,7 @@ echo "Policy: two deterministic real-assembly subsets; no ground-truth accuracy 
 required=(
   "$PY"
   "$ROOT/data/test/GCA_054405655.1_ASM5440565v1_genomic.fna"
-  "$ROOT/data/test/W1.contigs.fa.gz"
+  "$ROOT/data/test/assembly_b.contigs.fa.gz"
   "$MOB_DATABASE"
   "$ANNOTATION_DATABASE"
   "$AMRFINDER_DATABASE"
@@ -410,7 +410,7 @@ else
 fi
 
 run_dataset "gca054405655" "$ROOT/data/test/GCA_054405655.1_ASM5440565v1_genomic.fna"
-run_dataset "w1" "$ROOT/data/test/W1.contigs.fa.gz"
+run_dataset "assembly_b" "$ROOT/data/test/assembly_b.contigs.fa.gz"
 
 echo "Building publication-oriented operational summaries..."
 "$PY" - "$RESULT_ROOT" <<'PY'
@@ -424,7 +424,7 @@ from collections import Counter
 from pathlib import Path
 
 root = Path(sys.argv[1])
-datasets = ["gca054405655", "w1"]
+datasets = ["gca054405655", "assembly_b"]
 tools = ["mobiorigin", "genomad", "plasclass", "plasflow_v1", "plasme", "platon"]
 
 
@@ -584,7 +584,7 @@ echo "Available storage GiB: $available_gib"
 echo "Results: $RESULT_ROOT"
 echo "Primary reports:"
 echo "  $OUTPUT_ROOT/gca054405655/annotation/mobiorigin_report.html"
-echo "  $OUTPUT_ROOT/w1/annotation/mobiorigin_report.html"
+echo "  $OUTPUT_ROOT/assembly_b/annotation/mobiorigin_report.html"
 echo "  $RESULT_ROOT/operational_benchmark_summary.tsv"
 echo "  $RESULT_ROOT/pairwise_operational_agreement.tsv"
 echo "  $RESULT_ROOT/biological_evidence_tier_summary.tsv"

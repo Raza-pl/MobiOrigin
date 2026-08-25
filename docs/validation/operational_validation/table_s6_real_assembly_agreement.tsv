@@ -4,8 +4,8 @@ gca054405655	mobiorigin_vs_plasclass	2488	0.7580385852090032	2427	0.777091058920
 gca054405655	mobiorigin_vs_plasflow_v1	2488	0.5092443729903537	1572	0.7856234096692112	label-free operational agreement; not accuracy
 gca054405655	mobiorigin_vs_plasme	2488	0.8910771704180064	2427	0.9134734239802225	label-free operational agreement; not accuracy
 gca054405655	mobiorigin_vs_platon	2488	0.8926848874598071	2427	0.915121549237742	label-free operational agreement; not accuracy
-w1	mobiorigin_vs_genomad	2445	0.901840490797546	2395	0.9206680584551148	label-free operational agreement; not accuracy
-w1	mobiorigin_vs_plasclass	2445	0.592638036809816	2395	0.6050104384133612	label-free operational agreement; not accuracy
-w1	mobiorigin_vs_plasflow_v1	2445	0.4498977505112474	1465	0.7344709897610922	label-free operational agreement; not accuracy
-w1	mobiorigin_vs_plasme	2445	0.9006134969325154	2395	0.9194154488517745	label-free operational agreement; not accuracy
-w1	mobiorigin_vs_platon	2445	0.9002044989775051	2395	0.9189979123173277	label-free operational agreement; not accuracy
+assembly_b	mobiorigin_vs_genomad	2445	0.901840490797546	2395	0.9206680584551148	label-free operational agreement; not accuracy
+assembly_b	mobiorigin_vs_plasclass	2445	0.592638036809816	2395	0.6050104384133612	label-free operational agreement; not accuracy
+assembly_b	mobiorigin_vs_plasflow_v1	2445	0.4498977505112474	1465	0.7344709897610922	label-free operational agreement; not accuracy
+assembly_b	mobiorigin_vs_plasme	2445	0.9006134969325154	2395	0.9194154488517745	label-free operational agreement; not accuracy
+assembly_b	mobiorigin_vs_platon	2445	0.9002044989775051	2395	0.9189979123173277	label-free operational agreement; not accuracy
