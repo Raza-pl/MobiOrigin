@@ -109,6 +109,10 @@ The output directory must be new. Publication is atomic: failed ORF calling,
 database search, parsing, alignment, or hashing leaves no partial published
 result.
 
+`--threads` accepts 1–128 external-search workers. It should not exceed the
+CPUs allocated by the workstation or scheduler; oversubscription can reduce
+performance.
+
 Comprehensive homology thresholds are frozen in provenance: VFDB core 60%
 identity/80% query coverage; curated MGE 70%/80%; BacMet2 80%/80%; and
 MOB-suite markers 50%/70%. These calls are homology evidence, not phenotype

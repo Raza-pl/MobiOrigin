@@ -28,7 +28,9 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="marker database directory (default: $MOBIORIGIN_DATABASE_DIR or user data directory)",
     )
-    predict_parser.add_argument("--threads", type=int, default=1)
+    predict_parser.add_argument(
+        "--threads", type=int, default=1, help="external-search workers (1-128; default: 1)"
+    )
     setup_parser = subparsers.add_parser(
         "setup-databases", help="retrieve and verify the frozen MOB marker databases"
     )
@@ -55,7 +57,9 @@ def parser() -> argparse.ArgumentParser:
         required=True,
         help="directory containing card/, sarg/, and amrfinder/ resources",
     )
-    annotate_parser.add_argument("--threads", type=int, default=1)
+    annotate_parser.add_argument(
+        "--threads", type=int, default=1, help="external-search workers (1-128; default: 1)"
+    )
     annotate_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
     annotate_parser.add_argument(
         "--amrfinder-mode",
@@ -96,7 +100,9 @@ def parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--input-fasta", type=Path, required=True)
     run_parser.add_argument("--output-dir", type=Path, required=True)
     run_parser.add_argument("--database-dir", type=Path)
-    run_parser.add_argument("--threads", type=int, default=1)
+    run_parser.add_argument(
+        "--threads", type=int, default=1, help="external-search workers (1-128; default: 1)"
+    )
     doctor_parser = subparsers.add_parser("doctor", help="check installation and databases")
     doctor_parser.add_argument("--database-dir", type=Path)
     doctor_parser.add_argument(
@@ -107,7 +113,9 @@ def parser() -> argparse.ArgumentParser:
     )
     demo_parser.add_argument("--output-dir", type=Path, default=Path("mobiorigin_demo"))
     demo_parser.add_argument("--database-dir", type=Path)
-    demo_parser.add_argument("--threads", type=int, default=1)
+    demo_parser.add_argument(
+        "--threads", type=int, default=1, help="external-search workers (1-128; default: 1)"
+    )
     return value
 
 

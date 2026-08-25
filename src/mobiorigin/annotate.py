@@ -18,6 +18,7 @@ from pathlib import Path
 from mobiorigin import __version__
 from mobiorigin.fasta import IUPAC_DNA, FastaRecord, read_fasta
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
+from mobiorigin.runtime import validate_threads
 
 MIN_IDENTITY = 80.0
 MIN_QUERY_COVERAGE = 80.0
@@ -613,8 +614,7 @@ def annotate(
     predictions_tsv: Path | None = None,
 ) -> None:
     """Run independent ARG or comprehensive annotation and publish atomically."""
-    if not 1 <= threads <= 8:
-        raise ValueError("Threads must be between 1 and 8")
+    validate_threads(threads)
     if amrfinder_mode not in {"official", "amrprot"}:
         raise ValueError("AMRFinder mode must be 'official' or 'amrprot'")
     if profile not in {"arg", "comprehensive"}:

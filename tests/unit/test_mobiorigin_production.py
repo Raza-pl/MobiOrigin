@@ -67,6 +67,7 @@ from mobiorigin.predict import (
     selective_labels,
 )
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
+from mobiorigin.runtime import MAX_THREADS, validate_threads
 from mobiorigin.sequence_features import (
     FEATURE_DIM,
     extract_sequence_features,
@@ -88,6 +89,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def write(path: Path, value: str) -> Path:
     path.write_text(value, encoding="ascii")
     return path
+
+
+@pytest.mark.parametrize("threads", [1, 8, 64, 128])
+def test_thread_validation_accepts_supported_counts(threads: int) -> None:
+    assert MAX_THREADS == 128
+    assert validate_threads(threads) == threads
+
+
+@pytest.mark.parametrize("threads", [0, 129])
+def test_thread_validation_rejects_out_of_range_counts(threads: int) -> None:
+    with pytest.raises(ValueError, match="Threads must be between 1 and 128"):
+        validate_threads(threads)
 
 
 def test_fasta_preserves_order_and_iupac(tmp_path: Path) -> None:
