@@ -4,21 +4,56 @@ This tutorial follows one complete analysis from a new environment to an HTML re
 
 ## 1. Install MobiOrigin
 
-### Recommended: Conda or Mamba environment
+### Recommended: guided Conda or Mamba installation
 
-This route installs Python, a CPU-only PyTorch build, DIAMOND, and Pyrodigal. It deliberately does **not** install MOB-suite in the same environment. MOB-suite 3.1.8 requires NumPy below 1.23.5, while MobiOrigin requires NumPy 1.24 or newer; combining them can produce `numpy.dtype size changed` failures.
+This route installs Python, a CPU-only PyTorch build, DIAMOND, Pyrodigal, and
+official AMRFinderPlus. It deliberately does **not** install MOB-suite in the
+same environment. MOB-suite 3.1.8 requires NumPy below 1.23.5, while MobiOrigin
+requires NumPy 1.24 or newer; combining them can produce `numpy.dtype size
+changed` failures.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
 cd MobiOrigin
-mamba env create -f environment.yml
+bash install.sh
 conda activate mobiorigin
-mobiorigin --help
-python -c 'import numpy, pyrodigal, torch; print("NumPy", numpy.__version__, "PyTorch", torch.__version__, "CUDA", torch.version.cuda)'
-diamond version
+mobiorigin doctor
 ```
 
-Use `conda env create -f environment.yml` if Mamba is unavailable. The final diagnostic should report NumPy 1.26.4 and `CUDA None`.
+The installer uses Mamba when available and otherwise Conda. It creates or
+updates the `mobiorigin` runtime, builds the marker databases in the isolated
+`mobiorigin-db` environment, verifies required software and database identities,
+and runs a bundled synthetic example. It checks return codes explicitly and
+does not use `set -e`.
+
+The test output is created at `mobiorigin_demo/`. Open
+`mobiorigin_demo/visualization/mobiorigin_dashboard.html`; inspect
+`mobiorigin_demo/predictions/predictions.tsv` for the per-sequence schema and
+`mobiorigin_demo/predictions/provenance.json` for reproducibility metadata. The
+synthetic sequence is deliberately shorter than 1,000 bp, so the expected result
+is `unclassified` with `unsupported_length`. This fast example confirms package,
+model/database verification, provenance, and report generation; it is not a
+biological benchmark.
+
+AMRFinderPlus and its executable dependencies are installed in the visible
+runtime. Comprehensive annotation additionally uses CARD, SARG, VFDB,
+ISfinder-derived, and BacMet research data. MobiOrigin does not silently accept
+licenses, bypass registrations, or redistribute these resources; prepare them
+using the exact layout in `docs/MOBIORIGIN_ANNOTATION.md`, then MobiOrigin will
+validate every required file before analysis.
+
+Useful choices:
+
+```bash
+# Install software now and prepare databases later
+bash install.sh --software-only
+
+# Use a custom database location
+bash install.sh --database-dir /data/mobiorigin/marker_databases
+
+# Put the test result in a fresh custom location
+bash install.sh --demo-dir "$HOME/mobiorigin_installation_test"
+```
 
 ### Windows
 
@@ -47,7 +82,8 @@ MobiOrigin is not yet published on PyPI or Bioconda. Do not use `pip install mob
 MobiOrigin does not redistribute the MOB-suite biological sequence databases. The recommended helper keeps MOB-suite's older dependency stack isolated, retrieves its official database, and lets MobiOrigin copy only the three frozen, identity-verified files.
 
 ```bash
-bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
+bash scripts/setup_mobiorigin_databases.sh \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/marker_databases"
 ```
 
 The helper creates or updates `mobiorigin-db` from `environment.mob-database.yml`, runs `mob_init` there, switches back to the `mobiorigin` runtime for hash verification, and performs the final preflight. It is safe to rerun: an existing output is checked rather than overwritten.
@@ -59,7 +95,7 @@ You can repeat only the preflight before analyzing real data:
 ```bash
 mobiorigin setup-databases \
   --check \
-  --output-dir "$HOME/mobiorigin_databases"
+  --output-dir "${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/marker_databases"
 ```
 
 A successful check prints `"status": "PASS"`, the DIAMOND version, and three verified database identities. The command fails if DIAMOND is missing or any file differs from the frozen hashes.
@@ -109,7 +145,6 @@ Input records must have unique FASTA identifiers. Supported sequence lengths are
 mobiorigin predict \
   --input-fasta input/assembly.fasta \
   --output-dir predictions \
-  --database-dir "$HOME/mobiorigin_databases" \
   --threads 8
 ```
 

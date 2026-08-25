@@ -11,6 +11,7 @@ from mobiorigin.annotate import annotate
 from mobiorigin.database_setup import check_databases, setup_databases
 from mobiorigin.predict import predict
 from mobiorigin.visualize import visualize
+from mobiorigin.workflow import demo, doctor, resolve_database_dir, run_analysis
 
 
 def parser() -> argparse.ArgumentParser:
@@ -22,7 +23,11 @@ def parser() -> argparse.ArgumentParser:
     predict_parser = subparsers.add_parser("predict", help="run MobiOrigin prediction")
     predict_parser.add_argument("--input-fasta", type=Path, required=True)
     predict_parser.add_argument("--output-dir", type=Path, required=True)
-    predict_parser.add_argument("--database-dir", type=Path, required=True)
+    predict_parser.add_argument(
+        "--database-dir",
+        type=Path,
+        help="marker database directory (default: $MOBIORIGIN_DATABASE_DIR or user data directory)",
+    )
     predict_parser.add_argument("--threads", type=int, default=1)
     setup_parser = subparsers.add_parser(
         "setup-databases", help="retrieve and verify the frozen MOB marker databases"
@@ -85,6 +90,24 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional matching mobiorigin_annotated_results.tsv for evidence-tier summaries",
     )
+    run_parser = subparsers.add_parser(
+        "run", help="run prediction and create tables, SVG, and an HTML dashboard"
+    )
+    run_parser.add_argument("--input-fasta", type=Path, required=True)
+    run_parser.add_argument("--output-dir", type=Path, required=True)
+    run_parser.add_argument("--database-dir", type=Path)
+    run_parser.add_argument("--threads", type=int, default=1)
+    doctor_parser = subparsers.add_parser("doctor", help="check installation and databases")
+    doctor_parser.add_argument("--database-dir", type=Path)
+    doctor_parser.add_argument(
+        "--software-only", action="store_true", help="check installed commands without databases"
+    )
+    demo_parser = subparsers.add_parser(
+        "demo", help="run a bundled synthetic installation test and create example outputs"
+    )
+    demo_parser.add_argument("--output-dir", type=Path, default=Path("mobiorigin_demo"))
+    demo_parser.add_argument("--database-dir", type=Path)
+    demo_parser.add_argument("--threads", type=int, default=1)
     return value
 
 
@@ -95,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         predict(
             input_fasta=args.input_fasta,
             output_dir=args.output_dir,
-            database_dir=args.database_dir,
+            database_dir=resolve_database_dir(args.database_dir),
             threads=args.threads,
         )
     elif args.command == "setup-databases":
@@ -125,4 +148,27 @@ def main(argv: Sequence[str] | None = None) -> None:
             predictions_tsv=args.predictions_tsv,
             output_dir=args.output_dir,
             annotated_results_tsv=args.annotated_results_tsv,
+        )
+    elif args.command == "run":
+        run_analysis(
+            input_fasta=args.input_fasta,
+            output_dir=args.output_dir,
+            database_dir=args.database_dir,
+            threads=args.threads,
+        )
+    elif args.command == "doctor":
+        result = doctor(database_dir=args.database_dir, software_only=args.software_only)
+        print(json.dumps(result, indent=2))
+        if result["status"] != "PASS":
+            raise SystemExit(1)
+    elif args.command == "demo":
+        print(
+            json.dumps(
+                demo(
+                    output_dir=args.output_dir,
+                    database_dir=args.database_dir,
+                    threads=args.threads,
+                ),
+                indent=2,
+            )
         )

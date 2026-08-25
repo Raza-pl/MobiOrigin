@@ -66,6 +66,13 @@ from mobiorigin.sequence_features import (
     kmer_vector,
 )
 from mobiorigin.visualize import visualize
+from mobiorigin.workflow import (
+    default_database_dir,
+    demo,
+    doctor,
+    resolve_database_dir,
+    run_analysis,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -191,6 +198,8 @@ def test_installation_environments_keep_incompatible_stacks_separate() -> None:
     assert "numpy=1.26.4" in runtime
     assert "pytorch=2.5.1=cpu*" in runtime
     assert "diamond>=2.1" in runtime
+    assert "ncbi-amrfinderplus=4.2.7" in runtime
+    assert "-e ." not in runtime
     assert "mob_suite" not in runtime
     assert "pandas" not in runtime
     assert "name: mobiorigin-db\n" in database
@@ -199,6 +208,103 @@ def test_installation_environments_keep_incompatible_stacks_separate() -> None:
     assert "pandas>=0.22,<=1.5.3" in database
     assert "blast>=2.9,<2.16" in database
     assert "pytorch" not in database
+
+
+def test_guided_installer_is_non_errexit_and_runs_demo() -> None:
+    installer = (PROJECT_ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "set -e" not in installer
+    assert "env create --file" in installer
+    assert "mobiorigin doctor --software-only" in installer
+    assert "scripts/setup_mobiorigin_databases.sh" in installer
+    assert "mobiorigin demo" in installer
+    assert "--software-only" in installer
+    assert not any(line.lstrip().startswith("rm ") for line in installer.splitlines())
+
+
+def test_default_database_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("MOBIORIGIN_DATABASE_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert default_database_dir() == tmp_path / "data" / "mobiorigin" / "marker_databases"
+    monkeypatch.setenv("MOBIORIGIN_DATABASE_DIR", str(tmp_path / "custom"))
+    assert resolve_database_dir(None) == tmp_path / "custom"
+    assert resolve_database_dir(tmp_path / "explicit") == tmp_path / "explicit"
+
+
+def test_doctor_reports_software_and_database_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "mobiorigin.workflow._command_version",
+        lambda command, arguments: {
+            "status": "PASS",
+            "executable": f"/bin/{command}",
+            "version": "test",
+        },
+    )
+    monkeypatch.setattr(
+        "mobiorigin.workflow.check_databases", lambda path: {"status": "PASS", "path": str(path)}
+    )
+    result = doctor(database_dir=tmp_path / "db")
+    assert result["status"] == "PASS"
+    assert result["database"]["status"] == "PASS"
+    assert doctor(software_only=True)["status"] == "PASS"
+
+
+def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    predictions_text = (
+        "sequence_id\tlength_bp\tprediction\tp_chromosome\tp_plasmid\tp_phage\t"
+        "plasmid_score\tabstention_reason\n"
+        "demo\t1200\tplasmid\t0.1\t0.8\t0.1\t0.7\t\n"
+    )
+
+    def fake_predict(**kwargs: object) -> None:
+        output = Path(str(kwargs["output_dir"]))
+        output.mkdir()
+        write(output / "predictions.tsv", predictions_text)
+        write(output / "provenance.json", "{}\n")
+
+    monkeypatch.setattr("mobiorigin.workflow.predict", fake_predict)
+    output = tmp_path / "analysis"
+    run_analysis(
+        input_fasta=tmp_path / "input.fasta",
+        output_dir=output,
+        database_dir=tmp_path / "db",
+    )
+    assert (output / "README_RESULTS.txt").is_file()
+    assert (output / "visualization" / "mobiorigin_dashboard.html").is_file()
+    with pytest.raises(FileExistsError):
+        run_analysis(
+            input_fasta=tmp_path / "input.fasta",
+            output_dir=output,
+            database_dir=tmp_path / "db",
+        )
+    demo_output = tmp_path / "demo"
+    result = demo(output_dir=demo_output, database_dir=tmp_path / "db")
+    assert result["status"] == "PASS"
+    assert result["records"] == 1
+
+
+def test_cli_dispatches_run_doctor_and_demo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(cli, "run_analysis", lambda **kwargs: observed.update(kwargs))
+    cli.main(
+        [
+            "run",
+            "--input-fasta",
+            str(tmp_path / "input.fasta"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert observed["database_dir"] is None
+    monkeypatch.setattr(cli, "doctor", lambda **kwargs: {"status": "PASS"})
+    cli.main(["doctor", "--software-only"])
+    assert '"status": "PASS"' in capsys.readouterr().out
+    monkeypatch.setattr(cli, "demo", lambda **kwargs: {"status": "PASS"})
+    cli.main(["demo", "--output-dir", str(tmp_path / "demo")])
+    assert '"status": "PASS"' in capsys.readouterr().out
 
 
 def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
