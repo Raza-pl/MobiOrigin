@@ -178,23 +178,41 @@ mobiorigin visualize \
 
 ## Four-class annotated example
 
-The example below uses eight supported-length contigs from the W1 assembly: two
-records that reproducibly produce each MobiOrigin output class. Comprehensive
-annotation was run independently after prediction. It did not alter any label,
-probability, or abstention decision.
+The repository includes an eight-record assembly example at
+[`src/mobiorigin/data/examples/annotated_assembly_example.fasta`](src/mobiorigin/data/examples/annotated_assembly_example.fasta).
+It contains two supported-length records that reproducibly produce each
+MobiOrigin output class. Run the prediction and visualization test with:
+
+```bash
+conda activate mobiorigin
+bash scripts/run_mobiorigin_assembly_example.sh
+```
+
+The script writes a fresh timestamped output directory, verifies the expected
+2/2/2/2 class accounting, and reports the prediction table and HTML dashboard.
+To run comprehensive annotation on the same records, supply the prepared
+annotation-database directory described above:
+
+```bash
+ANNOTATION_DATABASE=/path/to/annotation_databases \
+  bash scripts/run_mobiorigin_assembly_example.sh
+```
+
+Comprehensive annotation runs independently after prediction and does not alter
+any label, probability, or abstention decision.
 
 ![MobiOrigin four-class prediction and annotation showcase](docs/assets/mobiorigin_four_class_annotation_showcase.svg)
 
 | Example | MobiOrigin output | Prediction detail | Selected annotation evidence | Tier |
 |---|---|---|---|---:|
-| `k141_219641` | Chromosome | chromosome probability 0.910 | `bla`; one mobility marker | B |
-| `k141_111586` | Chromosome | chromosome probability 0.885 | `rsmA`; one virulence hit | C |
-| `k141_168126` | Plasmid | plasmid probability 0.970 | `tet(M)`; eight MGE hits; one mobility marker | B |
-| `k141_747861` | Plasmid | plasmid probability 0.976 | `EreA`, `aadA`, `linG`, `qacEdelta1`, `sul1`; one MGE hit | B |
-| `k141_517089` | Phage | phage probability 0.399 | `erm` | C |
-| `k141_75733` | Phage | phage probability 0.663 | `lnu(D)` | C |
-| `k141_776802` | Unclassified | plasmid score 0.179, below 0.198 threshold | `vanR` | C |
-| `k141_730517` | Unclassified | plasmid score 0.168, below 0.198 threshold | one MGE hit | D |
+| `assembly_example_chromosome_01` | Chromosome | chromosome probability 0.910 | `bla`; one mobility marker | B |
+| `assembly_example_chromosome_02` | Chromosome | chromosome probability 0.885 | `rsmA`; one virulence hit | C |
+| `assembly_example_plasmid_01` | Plasmid | plasmid probability 0.970 | `tet(M)`; eight MGE hits; one mobility marker | B |
+| `assembly_example_plasmid_02` | Plasmid | plasmid probability 0.976 | `EreA`, `aadA`, `linG`, `qacEdelta1`, `sul1`; one MGE hit | B |
+| `assembly_example_phage_01` | Phage | phage probability 0.399 | `erm` | C |
+| `assembly_example_phage_02` | Phage | phage probability 0.663 | `lnu(D)` | C |
+| `assembly_example_unclassified_01` | Unclassified | plasmid score 0.179, below 0.198 threshold | `vanR` | C |
+| `assembly_example_unclassified_02` | Unclassified | plasmid score 0.168, below 0.198 threshold | one MGE hit | D |
 
 This deliberately evidence-rich set demonstrates the output schema, all four
 labels, selective abstention, and biological-evidence reporting. Because the
@@ -204,10 +222,11 @@ independent-validation estimate. It also illustrates why annotation remains a
 separate layer: ARG or mobility evidence can occur on chromosome, phage, and
 unclassified records and therefore does not by itself prove plasmid origin.
 
-The local reproducibility helper
-[`scripts/run_mobiorigin_multiclass_annotation_showcase.sh`](scripts/run_mobiorigin_multiclass_annotation_showcase.sh)
-recreates this report when the complete W1 input and its frozen full-analysis
-outputs are available. It uses Bash and works on macOS, Linux, and WSL2.
+The bundled example runner
+[`scripts/run_mobiorigin_assembly_example.sh`](scripts/run_mobiorigin_assembly_example.sh)
+uses Bash and works on macOS, Linux, and WSL2. Third-party annotation databases
+are not redistributed; without `ANNOTATION_DATABASE`, the script performs the
+four-class prediction and visualization test and skips annotation explicitly.
 
 ## Prospective external validation
 

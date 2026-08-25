@@ -4,8 +4,8 @@ gca054405655	B	0	0.0	evidence-priority tier; not a clinical risk score
 gca054405655	C	4	0.001607717041800643	evidence-priority tier; not a clinical risk score
 gca054405655	D	103	0.04139871382636656	evidence-priority tier; not a clinical risk score
 gca054405655	E	2381	0.9569935691318328	evidence-priority tier; not a clinical risk score
-w1	A	0	0.0	evidence-priority tier; not a clinical risk score
-w1	B	0	0.0	evidence-priority tier; not a clinical risk score
-w1	C	1	0.00040899795501022495	evidence-priority tier; not a clinical risk score
-w1	D	62	0.025357873210633947	evidence-priority tier; not a clinical risk score
-w1	E	2382	0.9742331288343559	evidence-priority tier; not a clinical risk score
+assembly_b	A	0	0.0	evidence-priority tier; not a clinical risk score
+assembly_b	B	0	0.0	evidence-priority tier; not a clinical risk score
+assembly_b	C	1	0.00040899795501022495	evidence-priority tier; not a clinical risk score
+assembly_b	D	62	0.025357873210633947	evidence-priority tier; not a clinical risk score
+assembly_b	E	2382	0.9742331288343559	evidence-priority tier; not a clinical risk score
