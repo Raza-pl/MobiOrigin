@@ -29,7 +29,9 @@ MobiOrigin and MOB-suite must not be installed into the same Conda environment. 
 bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
 ```
 
-The helper creates a dedicated `mobiorigin-db` environment from `environment.mob-database.yml`, runs MOB-suite 3.1.8's official `mob_init` route there, and invokes MobiOrigin from the separate `mobiorigin` runtime environment. MobiOrigin copies only the three required files, verifies every frozen SHA-256 identity, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial output if any identity differs. Existing output directories are verified and never overwritten.
+The helper creates a dedicated `mobiorigin-db` retrieval environment from `environment.mob-database.yml`, runs MOB-suite 3.1.8's official `mob_init` route there, and locates the current `mob_suite/databases` raw files. A second small `mobiorigin-marker-build` helper from `environment.marker-build.yml` contains only Python and pinned DIAMOND 2.0.15 (database build 153). It verifies the raw identities, applies the frozen six-frame replication-protein translation, and reconstructs the three final indexes without changing MOB-suite's older Qt/ICU dependency stack. MobiOrigin then verifies every frozen SHA-256 identity, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial published output if any source or rebuilt identity differs. Existing valid downloads and helper environments are reused rather than overwritten or updated in place.
+
+The helper exports `PYTHONNOUSERSITE=1` and clears `PYTHONPATH`/`PYTHONHOME` so packages from `~/.local` cannot contaminate the isolated builder. MOB-suite 3.1.8 names the raw files `rep.dna.fas`, `mob.proteins.faa`, and `mpf.proteins.faa`; `mob_init` does not itself create MobiOrigin's three `.dmnd` filenames.
 
 On Apple Silicon, the helper creates only the database-builder environment as `osx-64` under Rosetta because the compatible historical BLAST build is not available natively for arm64. The MobiOrigin prediction environment stays native arm64. The helper checks for Rosetta and fails with an explicit instruction if it is unavailable.
 
@@ -48,14 +50,21 @@ The check prints the DIAMOND version and the three required SHA-256 identities. 
 ```bash
 mamba env create -f environment.yml
 mamba env create -f environment.mob-database.yml
+mamba env create -f environment.marker-build.yml
 
 conda activate mobiorigin-db
 mob_init
-MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).resolve().parent / "data")')"
+MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).resolve().parent / "databases")')"
+
+conda activate mobiorigin-marker-build
+python src/mobiorigin/marker_database_builder.py \
+  --raw-dir "$MOB_DATA_DIR" \
+  --output-dir /tmp/mobiorigin_frozen_marker_build \
+  --diamond diamond
 
 conda activate mobiorigin
 mobiorigin setup-databases \
-  --source-dir "$MOB_DATA_DIR" \
+  --source-dir /tmp/mobiorigin_frozen_marker_build \
   --output-dir "$HOME/mobiorigin_databases"
 mobiorigin setup-databases \
   --check \
@@ -64,7 +73,7 @@ mobiorigin setup-databases \
 
 For Apple Silicon, create the second environment with `mamba env create --platform osx-64 -f environment.mob-database.yml` instead.
 
-The `mobiorigin` environment contains NumPy 1.26.4 and CPU-only PyTorch. The `mobiorigin-db` environment contains MOB-suite's compatible NumPy, pandas, BLAST, and SQLite ranges. It is used for retrieval only and is not used for prediction.
+The `mobiorigin` environment contains NumPy 1.26.4 and CPU-only PyTorch. The `mobiorigin-db` environment contains MOB-suite's compatible NumPy, pandas, BLAST, and SQLite ranges and is used only for retrieval. The small `mobiorigin-marker-build` environment contains DIAMOND 2.0.15 for deterministic database construction. Neither helper environment is used for prediction. The runtime environment can use a newer DIAMOND to search these database-format-3 indexes.
 
 Do not repair a failed combined environment by downgrading NumPy, forcing pandas, installing the obsolete `mob-suite` PyPI project, or mixing historical channels. Recreate the two isolated environments instead.
 

@@ -86,7 +86,7 @@ bash scripts/setup_mobiorigin_databases.sh \
   "${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/marker_databases"
 ```
 
-The helper creates or updates `mobiorigin-db` from `environment.mob-database.yml`, runs `mob_init` there, switches back to the `mobiorigin` runtime for hash verification, and performs the final preflight. It is safe to rerun: an existing output is checked rather than overwritten.
+The helper creates or reuses `mobiorigin-db` for MOB-suite retrieval and a small separate `mobiorigin-marker-build` environment for DIAMOND 2.0.15. Keeping the builder separate avoids retrofitting historical DIAMOND/Boost into MOB-suite's Qt/ICU dependency stack. It runs or reuses `mob_init`, finds MOB-suite's current `databases/` raw-file layout, reconstructs the frozen indexes, then switches back to the `mobiorigin` runtime for hash verification and the final preflight. It is safe to rerun: an existing download or valid output is reused rather than overwritten. The helper also disables user-site Python packages so an unrelated `~/.local` NumPy or pandas cannot contaminate either helper.
 
 On Apple Silicon, Bioconda does not currently provide the older BLAST build required by MOB-suite 3.1.8 as a native arm64 package. The helper therefore creates only the `mobiorigin-db` bootstrap environment as `osx-64` under Rosetta. The MobiOrigin runtime remains native arm64. If Rosetta is absent, the helper stops and prints the one-time installation command rather than changing the system automatically.
 
@@ -106,13 +106,22 @@ Use these steps if you prefer not to run the helper:
 
 ```bash
 mamba env create -f environment.mob-database.yml
+mamba env create -f environment.marker-build.yml
 conda activate mobiorigin-db
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH PYTHONHOME
 mob_init
-MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).resolve().parent / "data")')"
+MOB_DATA_DIR="$(python -c 'import mob_suite, pathlib; print(pathlib.Path(mob_suite.__file__).resolve().parent / "databases")')"
+
+conda activate mobiorigin-marker-build
+python src/mobiorigin/marker_database_builder.py \
+  --raw-dir "$MOB_DATA_DIR" \
+  --output-dir /tmp/mobiorigin_frozen_marker_build \
+  --diamond diamond
 
 conda activate mobiorigin
 mobiorigin setup-databases \
-  --source-dir "$MOB_DATA_DIR" \
+  --source-dir /tmp/mobiorigin_frozen_marker_build \
   --output-dir "$HOME/mobiorigin_databases"
 mobiorigin setup-databases \
   --check \

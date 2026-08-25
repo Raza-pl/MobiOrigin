@@ -88,7 +88,7 @@ bash scripts/setup_mobiorigin_databases.sh \
   "${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/marker_databases"
 ```
 
-The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. MobiOrigin publishes its database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any database hash differs.
+The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. It reuses a completed MOB-suite download, reconstructs the frozen indexes with DIAMOND 2.0.15, and publishes the database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any source or database hash differs.
 
 ## Run
 
@@ -175,6 +175,39 @@ mobiorigin visualize \
   --annotated-results-tsv mobiorigin_annotations/mobiorigin_annotated_results.tsv \
   --output-dir mobiorigin_annotated_visualization
 ```
+
+## Four-class annotated example
+
+The example below uses eight supported-length contigs from the W1 assembly: two
+records that reproducibly produce each MobiOrigin output class. Comprehensive
+annotation was run independently after prediction. It did not alter any label,
+probability, or abstention decision.
+
+![MobiOrigin four-class prediction and annotation showcase](docs/assets/mobiorigin_four_class_annotation_showcase.svg)
+
+| Example | MobiOrigin output | Prediction detail | Selected annotation evidence | Tier |
+|---|---|---|---|---:|
+| `k141_219641` | Chromosome | chromosome probability 0.910 | `bla`; one mobility marker | B |
+| `k141_111586` | Chromosome | chromosome probability 0.885 | `rsmA`; one virulence hit | C |
+| `k141_168126` | Plasmid | plasmid probability 0.970 | `tet(M)`; eight MGE hits; one mobility marker | B |
+| `k141_747861` | Plasmid | plasmid probability 0.976 | `EreA`, `aadA`, `linG`, `qacEdelta1`, `sul1`; one MGE hit | B |
+| `k141_517089` | Phage | phage probability 0.399 | `erm` | C |
+| `k141_75733` | Phage | phage probability 0.663 | `lnu(D)` | C |
+| `k141_776802` | Unclassified | plasmid score 0.179, below 0.198 threshold | `vanR` | C |
+| `k141_730517` | Unclassified | plasmid score 0.168, below 0.198 threshold | one MGE hit | D |
+
+This deliberately evidence-rich set demonstrates the output schema, all four
+labels, selective abstention, and biological-evidence reporting. Because the
+records were selected using earlier MobiOrigin outputs and annotations, the
+observed 7/8 ARG-positive fraction is **not** an accuracy, prevalence, or
+independent-validation estimate. It also illustrates why annotation remains a
+separate layer: ARG or mobility evidence can occur on chromosome, phage, and
+unclassified records and therefore does not by itself prove plasmid origin.
+
+The local reproducibility helper
+[`scripts/run_mobiorigin_multiclass_annotation_showcase.sh`](scripts/run_mobiorigin_multiclass_annotation_showcase.sh)
+recreates this report when the complete W1 input and its frozen full-analysis
+outputs are available. It uses Bash and works on macOS, Linux, and WSL2.
 
 ## Prospective external validation
 

@@ -38,6 +38,14 @@ from mobiorigin.database_setup import (
     setup_databases,
 )
 from mobiorigin.fasta import FastaRecord, read_fasta
+from mobiorigin.marker_database_builder import (
+    DIAMOND_VERSION,
+    build_rep_proteins,
+    translate,
+)
+from mobiorigin.marker_database_builder import (
+    read_fasta as read_marker_fasta,
+)
 from mobiorigin.marker_features import (
     DATABASE_SHA256,
     OrfSummary,
@@ -194,6 +202,7 @@ def test_database_setup_is_atomic_and_identity_checked(
 def test_installation_environments_keep_incompatible_stacks_separate() -> None:
     runtime = (PROJECT_ROOT / "environment.yml").read_text(encoding="utf-8")
     database = (PROJECT_ROOT / "environment.mob-database.yml").read_text(encoding="utf-8")
+    marker_build = (PROJECT_ROOT / "environment.marker-build.yml").read_text(encoding="utf-8")
     assert "name: mobiorigin\n" in runtime
     assert "numpy=1.26.4" in runtime
     assert "pytorch=2.5.1=cpu*" in runtime
@@ -207,7 +216,11 @@ def test_installation_environments_keep_incompatible_stacks_separate() -> None:
     assert "numpy>=1.11.1,<1.23.5" in database
     assert "pandas>=0.22,<=1.5.3" in database
     assert "blast>=2.9,<2.16" in database
+    assert "diamond=2.0.15" not in database
     assert "pytorch" not in database
+    assert "name: mobiorigin-marker-build\n" in marker_build
+    assert "diamond=2.0.15" in marker_build
+    assert "mob_suite" not in marker_build
 
 
 def test_guided_installer_is_non_errexit_and_runs_demo() -> None:
@@ -313,12 +326,33 @@ def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
     assert payload.startswith("#!/usr/bin/env bash\n")
     assert "set -e" not in payload
     assert "environment.mob-database.yml" in payload
+    assert "environment.marker-build.yml" in payload
     assert "run -n mobiorigin-db mob_init" in payload
+    assert 'root / "databases"' in payload
+    assert "marker_database_builder.py" in payload
+    assert "run -n mobiorigin-marker-build python" in payload
+    assert "PYTHONNOUSERSITE=1" in payload
+    assert "unset PYTHONPATH" in payload
+    assert "--diamond diamond" in payload
     assert "run -n mobiorigin mobiorigin setup-databases" in payload
     assert "--platform osx-64" in payload
     assert "Rosetta" in payload
     assert "Existing MobiOrigin marker databases are valid" in payload
     assert not any(line.lstrip().startswith("rm ") for line in payload.splitlines())
+
+
+def test_frozen_marker_translation_is_deterministic(tmp_path: Path) -> None:
+    source = write(tmp_path / "rep.dna.fas", ">record description\nATG" + "GCT" * 30 + "TAA")
+    destination = tmp_path / "rep_proteins.faa"
+    build_rep_proteins(source, destination)
+    records = list(read_marker_fasta(destination))
+    assert records[0] == ("record description_s1_f0_o0", "M" + "A" * 30)
+    repeated = tmp_path / "repeated.faa"
+    build_rep_proteins(source, repeated)
+    assert repeated.read_bytes() == destination.read_bytes()
+    assert translate("ATGGCTTAA") == "MA*"
+    assert translate("GCN") == "A"
+    assert DIAMOND_VERSION == "2.0.15"
 
 
 def test_database_setup_missing_source_has_actionable_error(tmp_path: Path) -> None:
