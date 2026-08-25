@@ -14,43 +14,111 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 - Models: three frozen checkpoints distributed with the package. Each is governed by a cryptographic manifest and SHA-256 verified before use.
 - Marker databases: not redistributed. Users must provide the exact identity-verified MOB-suite-derived research databases described in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
 
-## Install
+## Quick start: install, verify, and see an example
 
-The recommended installation uses a small CPU-only runtime environment. MOB-suite is intentionally kept in a separate database-bootstrap environment because its supported NumPy range does not overlap MobiOrigin's runtime requirement.
+MobiOrigin uses one visible Conda/Mamba environment. The guided installer adds
+MobiOrigin, CPU-only PyTorch, NumPy, Pyrodigal, DIAMOND, and official
+AMRFinderPlus; prepares the identity-verified marker databases in an isolated
+helper environment; checks the installation; and runs a tiny synthetic example.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
 cd MobiOrigin
-mamba env create -f environment.yml
+bash install.sh
 conda activate mobiorigin
-mobiorigin --help
 ```
 
-The runtime pins a cross-platform CPU build of PyTorch and does not install CUDA. Use `conda env create -f environment.yml` when Mamba is unavailable. Windows users should run these commands inside WSL2. A source-only route, WSL notes, and diagnostics are provided in the complete [installation and analysis tutorial](docs/INSTALLATION_AND_TUTORIAL.md).
+The installer uses Mamba when available and otherwise Conda. It never enables
+shell `errexit`, never deletes an existing database or result directory, and
+prints a resume command if a stage fails. Windows users should run it inside
+Ubuntu on WSL2. The runtime is CPU-only and does not install CUDA.
+
+When installation succeeds, the final check creates:
+
+```text
+mobiorigin_demo/
+├── README_RESULTS.txt
+├── predictions/
+│   ├── predictions.tsv
+│   ├── provenance.json
+│   └── SHA256SUMS.txt
+└── visualization/
+    ├── mobiorigin_dashboard.html
+    ├── mobiorigin_summary.svg
+    ├── prediction_summary.tsv
+    ├── prediction_by_length_bin.tsv
+    ├── visualization_summary.json
+    └── SHA256SUMS.txt
+```
+
+Open `mobiorigin_demo/visualization/mobiorigin_dashboard.html` to see the same
+kind of report produced for a real assembly. The bundled FASTA is synthetic and
+deliberately shorter than MobiOrigin's 1,000 bp supported limit, so its stable
+test result is `unclassified` with `unsupported_length`. This makes the check
+fast while exercising package/model/database verification, output publication,
+provenance, tables, SVG, and HTML. It is not biological validation. Check the
+installation again at any time with:
+
+```bash
+mobiorigin doctor
+```
+
+Use `bash install.sh --software-only` to defer database preparation. The
+complete [installation and analysis tutorial](docs/INSTALLATION_AND_TUTORIAL.md)
+covers manual installation, Apple Silicon, Linux, WSL2, diagnostics, and
+database licensing boundaries.
+
+The installer includes the official AMRFinderPlus software and its BLAST/HMMER
+runtime dependencies. CARD, SARG, VFDB, ISfinder-derived, and BacMet research
+datasets are not silently downloaded or redistributed because their licenses,
+registration terms, and version-specific preparation differ. The
+comprehensive annotation guide validates a user-prepared directory and reports
+every missing resource explicitly.
 
 MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
 
 ## Prepare marker databases
 
-MobiOrigin does not bundle third-party biological database records. From the repository root, one helper creates the isolated MOB-suite environment, retrieves the official data, and verifies the three frozen MobiOrigin databases:
+MobiOrigin does not bundle third-party biological database records. The guided
+installer performs this stage automatically. To run or resume only database
+preparation:
 
 ```bash
-bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
+bash scripts/setup_mobiorigin_databases.sh \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/marker_databases"
 ```
 
-The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. MobiOrigin publishes its database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any database hash differs.
+The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. It reuses a completed MOB-suite download, reconstructs the frozen indexes with DIAMOND 2.0.15, and publishes the database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any source or database hash differs.
 
 ## Run
 
+The simplest command performs prediction and visualization in one atomic result
+directory:
+
 ```bash
-mobiorigin predict   --input-fasta assembly.fasta   --output-dir mobiorigin_results   --database-dir /path/to/mobiorigin_mob_databases   --threads 8
+mobiorigin run \
+  --input-fasta assembly.fasta \
+  --output-dir mobiorigin_results \
+  --threads 8
+```
+
+MobiOrigin uses the documented user-data location by default. Advanced users
+can override it per command with `--database-dir` or globally with
+`MOBIORIGIN_DATABASE_DIR`. For prediction files without visualization:
+
+```bash
+mobiorigin predict \
+  --input-fasta assembly.fasta \
+  --output-dir mobiorigin_predictions \
+  --threads 8
 ```
 
 The output directory must not already exist. Input FASTA identifiers must be unique first-token identifiers, and sequences may contain standard IUPAC DNA symbols.
 
 ## Outputs
 
-The output directory contains:
+The `run` output directory contains `README_RESULTS.txt`, a `predictions/`
+directory, and a `visualization/` directory. The prediction directory contains:
 
 - `predictions.tsv`: ordered per-record labels, probabilities, plasmid margin, and abstention reason.
 - `provenance.json`: package version, input identity, model/database identities, threshold, and prediction identity.
@@ -107,6 +175,39 @@ mobiorigin visualize \
   --annotated-results-tsv mobiorigin_annotations/mobiorigin_annotated_results.tsv \
   --output-dir mobiorigin_annotated_visualization
 ```
+
+## Four-class annotated example
+
+The example below uses eight supported-length contigs from the W1 assembly: two
+records that reproducibly produce each MobiOrigin output class. Comprehensive
+annotation was run independently after prediction. It did not alter any label,
+probability, or abstention decision.
+
+![MobiOrigin four-class prediction and annotation showcase](docs/assets/mobiorigin_four_class_annotation_showcase.svg)
+
+| Example | MobiOrigin output | Prediction detail | Selected annotation evidence | Tier |
+|---|---|---|---|---:|
+| `k141_219641` | Chromosome | chromosome probability 0.910 | `bla`; one mobility marker | B |
+| `k141_111586` | Chromosome | chromosome probability 0.885 | `rsmA`; one virulence hit | C |
+| `k141_168126` | Plasmid | plasmid probability 0.970 | `tet(M)`; eight MGE hits; one mobility marker | B |
+| `k141_747861` | Plasmid | plasmid probability 0.976 | `EreA`, `aadA`, `linG`, `qacEdelta1`, `sul1`; one MGE hit | B |
+| `k141_517089` | Phage | phage probability 0.399 | `erm` | C |
+| `k141_75733` | Phage | phage probability 0.663 | `lnu(D)` | C |
+| `k141_776802` | Unclassified | plasmid score 0.179, below 0.198 threshold | `vanR` | C |
+| `k141_730517` | Unclassified | plasmid score 0.168, below 0.198 threshold | one MGE hit | D |
+
+This deliberately evidence-rich set demonstrates the output schema, all four
+labels, selective abstention, and biological-evidence reporting. Because the
+records were selected using earlier MobiOrigin outputs and annotations, the
+observed 7/8 ARG-positive fraction is **not** an accuracy, prevalence, or
+independent-validation estimate. It also illustrates why annotation remains a
+separate layer: ARG or mobility evidence can occur on chromosome, phage, and
+unclassified records and therefore does not by itself prove plasmid origin.
+
+The local reproducibility helper
+[`scripts/run_mobiorigin_multiclass_annotation_showcase.sh`](scripts/run_mobiorigin_multiclass_annotation_showcase.sh)
+recreates this report when the complete W1 input and its frozen full-analysis
+outputs are available. It uses Bash and works on macOS, Linux, and WSL2.
 
 ## Prospective external validation
 

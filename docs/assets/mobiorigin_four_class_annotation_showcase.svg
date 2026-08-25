@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title description">
+  <title id="title">MobiOrigin four-class prediction and annotation showcase</title>
+  <desc id="description">Eight evidence-rich W1 contigs, with two examples each predicted as chromosome, plasmid, phage, or unclassified, together with independent biological annotations.</desc>
+  <rect width="1200" height="650" fill="#f6f8fb"/>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #173b57; }
+    .title { font-size: 30px; font-weight: 700; }
+    .subtitle { font-size: 16px; fill: #53697c; }
+    .card-title { font-size: 21px; font-weight: 700; fill: #ffffff; }
+    .count { font-size: 14px; fill: #ffffff; }
+    .body { font-size: 15px; }
+    .small { font-size: 13px; fill: #53697c; }
+    .metric { font-size: 19px; font-weight: 700; }
+    .boundary { font-size: 14px; font-weight: 700; fill: #7b3f00; }
+  </style>
+
+  <text x="50" y="48" class="title">MobiOrigin four-class annotated example</text>
+  <text x="50" y="76" class="subtitle">8 evidence-rich W1 contigs · 2 reproduced predictions per output class · annotation does not change predictions</text>
+
+  <g transform="translate(50 112)">
+    <rect width="260" height="328" rx="12" fill="#ffffff" stroke="#cdd8e2"/>
+    <path d="M12 0h236a12 12 0 0 1 12 12v64H0V12A12 12 0 0 1 12 0z" fill="#355c7d"/>
+    <text x="20" y="32" class="card-title">Chromosome</text>
+    <text x="20" y="57" class="count">2 contigs</text>
+    <text x="20" y="108" class="body">k141_219641 · p=0.910</text>
+    <text x="20" y="134" class="body">ARG: bla</text>
+    <text x="20" y="160" class="body">Mobility markers: 1 · Tier B</text>
+    <line x1="20" y1="184" x2="240" y2="184" stroke="#dce4eb"/>
+    <text x="20" y="216" class="body">k141_111586 · p=0.885</text>
+    <text x="20" y="242" class="body">ARG: rsmA</text>
+    <text x="20" y="268" class="body">Virulence hits: 1 · Tier C</text>
+    <text x="20" y="306" class="small">ARG evidence alone does not prove</text>
+    <text x="20" y="324" class="small">plasmid origin.</text>
+  </g>
+
+  <g transform="translate(330 112)">
+    <rect width="260" height="328" rx="12" fill="#ffffff" stroke="#cdd8e2"/>
+    <path d="M12 0h236a12 12 0 0 1 12 12v64H0V12A12 12 0 0 1 12 0z" fill="#2a9d8f"/>
+    <text x="20" y="32" class="card-title">Plasmid</text>
+    <text x="20" y="57" class="count">2 contigs</text>
+    <text x="20" y="108" class="body">k141_168126 · p=0.970</text>
+    <text x="20" y="134" class="body">ARG: tet(M)</text>
+    <text x="20" y="160" class="body">8 MGE + 1 mobility · Tier B</text>
+    <line x1="20" y1="184" x2="240" y2="184" stroke="#dce4eb"/>
+    <text x="20" y="216" class="body">k141_747861 · p=0.976</text>
+    <text x="20" y="242" class="body">5 consensus ARG families</text>
+    <text x="20" y="268" class="body">1 MGE + stress evidence · Tier B</text>
+    <text x="20" y="306" class="small">Prediction and evidence are reported</text>
+    <text x="20" y="324" class="small">as separate, traceable layers.</text>
+  </g>
+
+  <g transform="translate(610 112)">
+    <rect width="260" height="328" rx="12" fill="#ffffff" stroke="#cdd8e2"/>
+    <path d="M12 0h236a12 12 0 0 1 12 12v64H0V12A12 12 0 0 1 12 0z" fill="#d6a62f"/>
+    <text x="20" y="32" class="card-title">Phage</text>
+    <text x="20" y="57" class="count">2 contigs</text>
+    <text x="20" y="108" class="body">k141_517089 · p=0.399</text>
+    <text x="20" y="134" class="body">ARG: erm · Tier C</text>
+    <text x="20" y="160" class="small">Lower-confidence argmax call</text>
+    <line x1="20" y1="184" x2="240" y2="184" stroke="#dce4eb"/>
+    <text x="20" y="216" class="body">k141_75733 · p=0.663</text>
+    <text x="20" y="242" class="body">ARG: lnu(D) · Tier C</text>
+    <text x="20" y="286" class="small">ARG annotations can occur on records</text>
+    <text x="20" y="304" class="small">predicted outside the plasmid class.</text>
+  </g>
+
+  <g transform="translate(890 112)">
+    <rect width="260" height="328" rx="12" fill="#ffffff" stroke="#cdd8e2"/>
+    <path d="M12 0h236a12 12 0 0 1 12 12v64H0V12A12 12 0 0 1 12 0z" fill="#7d8799"/>
+    <text x="20" y="32" class="card-title">Unclassified</text>
+    <text x="20" y="57" class="count">2 selective abstentions</text>
+    <text x="20" y="108" class="body">k141_776802</text>
+    <text x="20" y="134" class="body">plasmid score 0.179 &lt; 0.198</text>
+    <text x="20" y="160" class="body">ARG: vanR · Tier C</text>
+    <line x1="20" y1="184" x2="240" y2="184" stroke="#dce4eb"/>
+    <text x="20" y="216" class="body">k141_730517</text>
+    <text x="20" y="242" class="body">plasmid score 0.168 &lt; 0.198</text>
+    <text x="20" y="268" class="body">1 MGE hit · Tier D</text>
+    <text x="20" y="306" class="small">Evidence never overrides the frozen</text>
+    <text x="20" y="324" class="small">selective-abstention policy.</text>
+  </g>
+
+  <rect x="50" y="468" width="1100" height="82" rx="10" fill="#ffffff" stroke="#cdd8e2"/>
+  <text x="90" y="503" class="metric">7/8 ARG-positive</text>
+  <text x="325" y="503" class="metric">3 MGE-positive</text>
+  <text x="555" y="503" class="metric">2 mobility-positive</text>
+  <text x="815" y="503" class="metric">1 virulence-positive</text>
+  <text x="90" y="532" class="small">Evidence tiers: B=3 · C=4 · D=1</text>
+  <text x="555" y="532" class="small">CARD · AMRFinderPlus · SARG · VFDB · MGE · BacMet · MOB markers</text>
+
+  <rect x="50" y="574" width="1100" height="48" rx="8" fill="#fff4df" stroke="#e7c27a"/>
+  <text x="600" y="604" text-anchor="middle" class="boundary">Outcome- and evidence-selected reproducibility showcase—not an independent accuracy or prevalence estimate.</text>
+</svg>

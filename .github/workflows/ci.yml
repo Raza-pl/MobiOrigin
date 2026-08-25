@@ -83,8 +83,12 @@ jobs:
         shell: micromamba-shell {0}
         run: |
           mobiorigin --help
+          mobiorigin doctor --software-only
           diamond version
+          amrfinder --version
           python -c 'import numpy, pyrodigal, torch; assert numpy.__version__ == "1.26.4"; assert torch.version.cuda is None; print(numpy.__version__, torch.__version__)'
+          test -f src/mobiorigin/data/examples/demo.fasta
+          bash -n install.sh
           bash -n scripts/setup_mobiorigin_databases.sh
 
       - name: Verify the isolated MOB-suite environment can be solved
