@@ -37,10 +37,11 @@ biological benchmark.
 
 AMRFinderPlus and its executable dependencies are installed in the visible
 runtime. Comprehensive annotation additionally uses CARD, SARG, VFDB,
-mobileOG-db, optional authorized legacy ISfinder, and BacMet research data. MobiOrigin does not silently accept
-licenses, bypass registrations, or redistribute these resources; prepare them
-using the exact layout in `docs/MOBIORIGIN_ANNOTATION.md`, then MobiOrigin will
-validate every required file before analysis.
+mobileOG-db, optional authorized legacy ISfinder, and BacMet research data.
+The guided installer can retrieve the supported public resources after the
+user accepts the upstream terms. MobiOrigin records and verifies every staged
+file. See `docs/MOBIORIGIN_ANNOTATION.md` for sources, terms, thresholds, and
+the optional legacy ISfinder route.
 
 Useful choices:
 
@@ -136,19 +137,36 @@ mamba env create --platform osx-64 -f environment.mob-database.yml
 
 Do not run `pip install mob-suite`, force an old NumPy into `mobiorigin`, or add the historical `ursky` channel. Those workarounds can install obsolete MOB-suite releases and binary-incompatible pandas builds.
 
-## 3. Create an analysis directory
+## 3. Run the complete workflow
 
-Keep input, prediction, annotation, and visualization outputs separate.
+The recommended command creates prediction, comprehensive annotation, and an
+integrated visualization in one fresh result directory:
 
 ```bash
-mkdir -p mobiorigin_analysis/input
-cp assembly.fasta mobiorigin_analysis/input/
-cd mobiorigin_analysis
+mobiorigin run \
+  --input-fasta assembly.fasta \
+  --output-dir mobiorigin_results \
+  --threads 8
 ```
 
 Input records must have unique FASTA identifiers. Supported sequence lengths are 1,000–500,000 bp. Standard IUPAC DNA ambiguity symbols are accepted.
 
-## 4. Run prediction
+Start with these files:
+
+- `mobiorigin_results/visualization/mobiorigin_dashboard.html`: integrated dashboard.
+- `mobiorigin_results/predictions/predictions.tsv`: per-contig probabilities and labels.
+- `mobiorigin_results/annotation/mobiorigin_report.html`: biological-evidence report.
+- `mobiorigin_results/annotation/mobiorigin_annotated_results.tsv`: integrated contig table.
+- `mobiorigin_results/README_RESULTS.txt`: short result guide.
+
+The standard marker and annotation database locations are discovered
+automatically. Use `--database-dir` or `--annotation-database-dir` only for a
+custom installation.
+
+## 4. Optional prediction-only workflow
+
+Use the following separate commands only when annotation is not required or
+when individual stages must be controlled independently.
 
 ```bash
 mobiorigin predict \
@@ -169,7 +187,7 @@ Important files:
 - `predictions/provenance.json`: input, model, database, and threshold identities.
 - `predictions/SHA256SUMS.txt`: output checksums.
 
-## 5. Visualize predictions
+## 5. Optional prediction-only visualization
 
 Create publication-oriented TSV summaries, an editable SVG figure, and a browser-ready HTML dashboard:
 
@@ -194,7 +212,7 @@ visualization/mobiorigin_summary.svg
 
 The approach mirrors the useful pattern in the MetaPhlAn tutorial: first create a stable tabular result, then generate a named visualization from that table. MobiOrigin keeps the plotting step deterministic and dependency-free.
 
-## 6. Add independent biological annotation
+## 6. Optional independent biological annotation
 
 Annotation does not alter the frozen MobiOrigin prediction. The comprehensive profile can summarize CARD, SARG, official AMRFinderPlus, VFDB core, mobileOG-db MGE, BacMet2, replicon, relaxase, and mating-pair-formation evidence.
 
@@ -224,7 +242,7 @@ mobiorigin annotate \
 
 Open `annotations/mobiorigin_report.html`. The report contains summary cards, transparent A–E evidence-priority definitions, and the highest-priority records. These tiers are a review queue—not a clinical risk score.
 
-## 7. Visualize prediction and annotation together
+## 7. Optional re-visualization of prediction and annotation
 
 ```bash
 mobiorigin visualize \

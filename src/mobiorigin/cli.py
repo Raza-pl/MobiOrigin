@@ -147,11 +147,30 @@ def parser() -> argparse.ArgumentParser:
         help="optional matching mobiorigin_annotated_results.tsv for evidence-tier summaries",
     )
     run_parser = subparsers.add_parser(
-        "run", help="run prediction and create tables, SVG, and an HTML dashboard"
+        "run", help="run prediction, comprehensive annotation, and visualization"
     )
     run_parser.add_argument("--input-fasta", type=Path, required=True)
     run_parser.add_argument("--output-dir", type=Path, required=True)
-    run_parser.add_argument("--database-dir", type=Path)
+    run_parser.add_argument("--database-dir", type=Path, help="marker database directory")
+    run_parser.add_argument(
+        "--annotation-database-dir",
+        type=Path,
+        help=(
+            "annotation database directory (default: "
+            "$MOBIORIGIN_ANNOTATION_DATABASE_DIR or user data directory)"
+        ),
+    )
+    run_parser.add_argument(
+        "--annotation-profile",
+        choices=("arg", "comprehensive"),
+        default="comprehensive",
+        help="annotation evidence profile (default: comprehensive)",
+    )
+    run_parser.add_argument(
+        "--skip-annotation",
+        action="store_true",
+        help="run prediction and visualization only",
+    )
     run_parser.add_argument(
         "--threads", type=int, default=1, help="external-search workers (1-128; default: 1)"
     )
@@ -251,6 +270,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             input_fasta=args.input_fasta,
             output_dir=args.output_dir,
             database_dir=args.database_dir,
+            annotation_database_dir=args.annotation_database_dir,
+            annotation_profile=args.annotation_profile,
+            skip_annotation=args.skip_annotation,
             threads=args.threads,
         )
     elif args.command == "doctor":
