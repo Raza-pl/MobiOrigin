@@ -34,7 +34,42 @@ stress, biocide, and virulence detection. The
 [official VFDB download page](https://www.mgc.ac.cn/VFs/download.htm) distinguishes
 its experimentally verified core dataset from its broader full dataset.
 
-## Required local database layout
+## One-command local installation
+
+MobiOrigin installs a complete, authorized annotation resource directory with:
+
+```bash
+mobiorigin setup-databases \
+  --component annotation \
+  --source-dir /path/to/authorized_annotation_sources \
+  --amrfinder-database /path/to/amrfinderplus/data/version \
+  --profile comprehensive \
+  --accept-third-party-terms
+```
+
+The destination defaults to
+`${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/annotation_databases`, or the
+path in `MOBIORIGIN_ANNOTATION_DATABASE_DIR`. Run `amrfinder --update` first
+and pass its resolved dated database directory (the directory containing
+`version.txt`) to `--amrfinder-database`. MobiOrigin installs that complete
+official database as `annotation_databases/amrfinderplus/`, so subsequent
+annotation commands need no AMRFinderPlus database argument. Installation is atomic: every
+required file is copied independently, its size and SHA-256 identity are
+recorded, and an incomplete or changed source leaves no published destination.
+The command also writes a third-party notice and links to the upstream terms.
+
+Verify an installed resource set without copying or parsing biological records:
+
+```bash
+mobiorigin setup-databases \
+  --component annotation \
+  --profile comprehensive \
+  --check
+```
+
+The source directory supplied to the installer must have the following layout.
+
+## Required source layout
 
 Biological database payloads are not bundled with MobiOrigin. Prepare this
 layout from appropriately licensed official or institutional copies:
@@ -80,11 +115,9 @@ to contact VFDB. AMRFinderPlus software and database are U.S. Government works.
 mobiorigin annotate \
   --input-fasta assembly.fasta \
   --output-dir mobiorigin_arg_annotation \
-  --database-dir /path/to/annotation_databases \
   --profile arg \
   --amrfinder-mode official \
   --amrfinder-bin amrfinder \
-  --amrfinder-database /path/to/amrfinderplus/data/version \
   --threads 8
 ```
 
@@ -96,12 +129,10 @@ Run MobiOrigin prediction first, then join its unchanged table to annotation:
 mobiorigin annotate \
   --input-fasta assembly.fasta \
   --output-dir mobiorigin_comprehensive_annotation \
-  --database-dir /path/to/annotation_databases \
   --profile comprehensive \
   --predictions-tsv mobiorigin_predictions/predictions.tsv \
   --amrfinder-mode official \
   --amrfinder-bin amrfinder \
-  --amrfinder-database /path/to/amrfinderplus/data/version \
   --threads 8
 ```
 

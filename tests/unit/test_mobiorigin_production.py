@@ -23,6 +23,13 @@ from mobiorigin.annotate import (
     parse_sarg_hits,
     predict_annotation_orfs,
 )
+from mobiorigin.annotation_database_setup import (
+    ANNOTATION_MANIFEST_NAME,
+    COMPREHENSIVE_DATABASE_FILES,
+    check_annotation_databases,
+    default_annotation_database_dir,
+    setup_annotation_databases,
+)
 from mobiorigin.biological_evidence import (
     EvidenceHit,
     arg_evidence,
@@ -197,6 +204,74 @@ def test_database_setup_is_atomic_and_identity_checked(
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
         setup_databases(failed, source_dir=source)
     assert not failed.exists()
+
+
+def test_annotation_database_setup_is_atomic_and_identity_checked(tmp_path: Path) -> None:
+    source = tmp_path / "authorized_source"
+    for relative in COMPREHENSIVE_DATABASE_FILES:
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write(path, f"database resource: {relative}\n")
+    output = tmp_path / "annotation_databases"
+    amrfinder = tmp_path / "amrfinder" / "2026-08-07.1"
+    amrfinder.mkdir(parents=True)
+    write(amrfinder / "version.txt", "2026-08-07.1\n")
+    write(amrfinder / "AMR.LIB", "official AMRFinderPlus test database\n")
+    with pytest.raises(PermissionError, match="accept-third-party-terms"):
+        setup_annotation_databases(
+            output,
+            source_dir=source,
+            amrfinder_database=amrfinder,
+        )
+    result = setup_annotation_databases(
+        output,
+        source_dir=source,
+        amrfinder_database=amrfinder,
+        accept_third_party_terms=True,
+    )
+    assert result["status"] == "PASS"
+    assert result["profile"] == "comprehensive"
+    assert result["resources_verified"] == len(COMPREHENSIVE_DATABASE_FILES) + 2
+    assert (output / ANNOTATION_MANIFEST_NAME).is_file()
+    assert (output / "THIRD_PARTY_ANNOTATION_DATABASE_NOTICE.txt").is_file()
+    manifest = json.loads((output / ANNOTATION_MANIFEST_NAME).read_text())
+    assert manifest["network_accessed"] is False
+    assert manifest["third_party_terms_accepted"] is True
+    with pytest.raises(FileExistsError):
+        setup_annotation_databases(
+            output,
+            source_dir=source,
+            amrfinder_database=amrfinder,
+            accept_third_party_terms=True,
+        )
+    (output / COMPREHENSIVE_DATABASE_FILES[0]).write_text("changed\n", encoding="ascii")
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        check_annotation_databases(output)
+
+
+def test_annotation_database_setup_fails_without_complete_source(tmp_path: Path) -> None:
+    source = tmp_path / "incomplete"
+    source.mkdir()
+    amrfinder = tmp_path / "amrfinder"
+    amrfinder.mkdir()
+    write(amrfinder / "version.txt", "test\n")
+    output = tmp_path / "annotation_databases"
+    with pytest.raises(FileNotFoundError, match="Missing annotation database file"):
+        setup_annotation_databases(
+            output,
+            source_dir=source,
+            amrfinder_database=amrfinder,
+            accept_third_party_terms=True,
+        )
+    assert not output.exists()
+
+
+def test_default_annotation_database_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("MOBIORIGIN_ANNOTATION_DATABASE_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert default_annotation_database_dir() == tmp_path / "mobiorigin/annotation_databases"
+    monkeypatch.setenv("MOBIORIGIN_ANNOTATION_DATABASE_DIR", "~/custom_annotation")
+    assert default_annotation_database_dir() == Path("~/custom_annotation").expanduser()
 
 
 def test_installation_environments_keep_incompatible_stacks_separate() -> None:
@@ -589,6 +664,66 @@ def test_cli_dispatches_database_setup(monkeypatch: pytest.MonkeyPatch, tmp_path
     }
 
 
+def test_cli_dispatches_annotation_database_setup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli,
+        "setup_annotation_databases",
+        lambda **kwargs: observed.update(kwargs) or {"status": "PASS"},
+    )
+    cli.main(
+        [
+            "setup-databases",
+            "--component",
+            "annotation",
+            "--source-dir",
+            str(tmp_path / "authorized_source"),
+            "--output-dir",
+            str(tmp_path / "annotation_databases"),
+            "--profile",
+            "arg",
+            "--amrfinder-database",
+            str(tmp_path / "amrfinder"),
+            "--accept-third-party-terms",
+        ]
+    )
+    assert observed == {
+        "output_dir": tmp_path / "annotation_databases",
+        "source_dir": tmp_path / "authorized_source",
+        "amrfinder_database": tmp_path / "amrfinder",
+        "profile": "arg",
+        "accept_third_party_terms": True,
+    }
+
+
+def test_cli_dispatches_annotation_database_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli,
+        "check_annotation_databases",
+        lambda database_dir, **kwargs: observed.update({"database_dir": database_dir, **kwargs})
+        or {"status": "PASS"},
+    )
+    cli.main(
+        [
+            "setup-databases",
+            "--component",
+            "annotation",
+            "--check",
+            "--output-dir",
+            str(tmp_path / "annotation_databases"),
+        ]
+    )
+    assert observed == {
+        "database_dir": tmp_path / "annotation_databases",
+        "profile": "comprehensive",
+    }
+
+
 def test_database_check_verifies_diamond_and_frozen_databases(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -862,6 +997,25 @@ def test_cli_dispatches_annotate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert observed["amrfinder_mode"] == "official"
     assert observed["profile"] == "arg"
     assert observed["predictions_tsv"] is None
+
+
+def test_cli_annotate_uses_default_annotation_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setenv("MOBIORIGIN_ANNOTATION_DATABASE_DIR", str(tmp_path / "annotation_db"))
+    monkeypatch.setattr(cli, "annotate", lambda **kwargs: observed.update(kwargs))
+    cli.main(
+        [
+            "annotate",
+            "--input-fasta",
+            str(tmp_path / "input.fasta"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert observed["database_dir"] == tmp_path / "annotation_db"
+    assert observed["amrfinder_database"] == tmp_path / "annotation_db/amrfinderplus"
 
 
 def test_comprehensive_evidence_priority_is_transparent_and_prediction_preserving(

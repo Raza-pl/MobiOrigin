@@ -194,17 +194,28 @@ The approach mirrors the useful pattern in the MetaPhlAn tutorial: first create 
 
 Annotation does not alter the frozen MobiOrigin prediction. The comprehensive profile can summarize CARD, SARG, official AMRFinderPlus, VFDB core, curated MGE, BacMet2, replicon, relaxase, and mating-pair-formation evidence.
 
-The annotation database directory must follow [`MOBIORIGIN_ANNOTATION.md`](MOBIORIGIN_ANNOTATION.md). Then run:
+After obtaining authorized copies from the official sources, stage and verify
+the complete annotation resource set once:
+
+```bash
+mobiorigin setup-databases \
+  --component annotation \
+  --source-dir /path/to/authorized_annotation_sources \
+  --amrfinder-database /path/to/amrfinderplus/data/version \
+  --profile comprehensive \
+  --accept-third-party-terms
+```
+
+The required source layout and upstream terms are documented in
+[`MOBIORIGIN_ANNOTATION.md`](MOBIORIGIN_ANNOTATION.md). Then run:
 
 ```bash
 mobiorigin annotate \
   --input-fasta input/assembly.fasta \
   --output-dir annotations \
-  --database-dir /path/to/mobiorigin_annotation_databases \
   --profile comprehensive \
   --predictions-tsv predictions/predictions.tsv \
   --amrfinder-mode official \
-  --amrfinder-database /path/to/amrfinderplus/database/version \
   --threads 8
 ```
 

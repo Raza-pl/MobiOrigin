@@ -1,5 +1,10 @@
 # MobiOrigin marker-database setup
 
+This page covers the frozen marker resources used by prediction. The same CLI
+also installs the separate downstream annotation resources with
+`mobiorigin setup-databases --component annotation`; see
+[`MOBIORIGIN_ANNOTATION.md`](MOBIORIGIN_ANNOTATION.md).
+
 MobiOrigin dev1 uses three MOB-suite-derived protein-marker databases: replication (`rep`), relaxase/mobilization (`mob`), and mating-pair formation (`mpf`). These biological records are not bundled with MobiOrigin. Prediction is offline and fails closed unless all three DIAMOND databases exactly match the frozen research identities.
 
 ## Provenance and redistribution boundary
