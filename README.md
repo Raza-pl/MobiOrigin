@@ -9,7 +9,7 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 - Package version: `0.1.1` (publication bundle for the frozen dev1 candidate).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
-- Runtime: deterministic CPU inference; 1–8 requested DIAMOND threads.
+- Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.
 - Models: three frozen checkpoints distributed with the package. Each is governed by a cryptographic manifest and SHA-256 verified before use.
 - Marker databases: not redistributed. Users must provide the exact identity-verified MOB-suite-derived research databases described in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
@@ -147,6 +147,11 @@ mobiorigin predict \
 ```
 
 The output directory must not already exist. Input FASTA identifiers must be unique first-token identifiers, and sequences may contain standard IUPAC DNA symbols.
+
+`--threads` accepts values from 1 to 128 and controls DIAMOND and other
+external-search workers. Choose a value no larger than the CPUs allocated to
+the process. Neural-network inference remains single-threaded for deterministic
+output, so values above the available CPUs may be slower rather than faster.
 
 ## Outputs
 

@@ -4,6 +4,12 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+### Changed
+
+- Expanded `--threads` from the original validated 1–8 range to 1–128 for
+  DIAMOND, AMRFinderPlus, and other external searches. Deterministic neural-network
+  inference remains single-threaded, and the model and scientific policy are unchanged.
+
 ### Fixed
 
 - Separated the CPU-only MobiOrigin runtime from MOB-suite's incompatible legacy

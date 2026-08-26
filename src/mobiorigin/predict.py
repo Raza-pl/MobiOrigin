@@ -19,6 +19,7 @@ from mobiorigin.fasta import FastaRecord, read_fasta
 from mobiorigin.marker_features import extract_marker_features, load_database_manifest
 from mobiorigin.model import INPUT_DIM, MobiOriginMLP, load_model
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
+from mobiorigin.runtime import validate_threads
 from mobiorigin.sequence_features import extract_sequence_features
 
 CLASS_NAMES = ("chromosome", "plasmid", "phage")
@@ -158,8 +159,7 @@ def predict(
     model_dir: Path | None = None,
 ) -> None:
     """Run one complete atomic MobiOrigin prediction."""
-    if not 1 <= threads <= 8:
-        raise ValueError("Threads must be between 1 and 8")
+    validate_threads(threads)
     if output_dir.exists():
         raise FileExistsError("Output directory already exists")
     configure_runtime()

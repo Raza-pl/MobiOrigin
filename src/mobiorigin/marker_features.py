@@ -14,6 +14,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from mobiorigin.fasta import IUPAC_DNA, FastaRecord
+from mobiorigin.runtime import validate_threads
 
 FEATURE_NAMES = (
     "coding_density",
@@ -262,8 +263,7 @@ def extract_marker_features(
     work_dir: Path,
 ) -> NDArray[np.float32]:
     """Extract the frozen 17 MOB-only marker features."""
-    if not 1 <= threads <= 8:
-        raise ValueError("Threads must be between 1 and 8")
+    validate_threads(threads)
     work_dir.mkdir(parents=True, exist_ok=True)
     proteins = work_dir / "proteins.faa"
     summaries, query_to_contig = predict_orfs(records, proteins)

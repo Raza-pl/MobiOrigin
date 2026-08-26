@@ -159,6 +159,10 @@ mobiorigin predict \
 
 The output directory is created atomically and must not already exist.
 
+`--threads` accepts 1–128 external-search workers. Use no more than the CPUs
+allocated to the job. This setting accelerates DIAMOND and related searches;
+deterministic neural-network inference remains single-threaded.
+
 Important files:
 
 - `predictions/predictions.tsv`: chromosome, plasmid, phage, or unclassified label; three probabilities; plasmid margin; abstention reason.
