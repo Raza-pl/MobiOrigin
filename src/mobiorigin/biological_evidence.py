@@ -296,6 +296,7 @@ def _load_tsv(path: Path, key: str) -> dict[str, dict[str, str]]:
 
 
 def parse_mge(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> list[EvidenceHit]:
+    """Parse the optional legacy ISfinder-derived evidence route."""
     metadata = _load_tsv(metadata_path, "ID")
     hits: list[EvidenceHit] = []
     for query, subject, identity, coverage, evalue, bitscore, title in _rows(path):
@@ -313,12 +314,70 @@ def parse_mge(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> list[
                 item.end,
                 item.strand,
                 "MGE",
-                "ISFINDER_CURATED",
+                "ISFINDER_LEGACY",
                 entry.get("Sub_class", "").strip() or "mobile_genetic_element",
                 feature,
                 subject,
                 entry.get("Class", "").strip() or "unknown",
                 title or feature,
+                "DIAMOND_BLASTP",
+                identity,
+                coverage,
+                evalue,
+                bitscore,
+            )
+        )
+    return hits
+
+
+_MOBILEOG_MAJOR_CATEGORIES = {
+    "IE": "integration_excision",
+    "P": "phage_associated",
+    "RRR": "replication_recombination_repair",
+    "T": "transfer",
+}
+
+
+def parse_mobileog(path: Path, orfs: Mapping[str, Orf]) -> list[EvidenceHit]:
+    """Parse mobileOG-db 2.x headers without requiring a second metadata payload."""
+    hits: list[EvidenceHit] = []
+    for query, subject, identity, coverage, evalue, bitscore, title in _rows(path):
+        item = _orf(orfs, query)
+        fields = subject.split("|")
+        if len(fields) < 5 or not fields[0].startswith("mobileOG_"):
+            title_fields = title.split(None, 1)[0].split("|")
+            fields = title_fields if len(title_fields) >= 5 else fields
+        if len(fields) < 5 or not fields[0].startswith("mobileOG_"):
+            raise ValueError("mobileOG-db header is not the supported pipe-delimited schema")
+        accession = fields[0]
+        feature = fields[1].strip() or accession
+        uniprot = fields[2].strip() if len(fields) > 2 else ""
+        major = fields[3].strip().upper() if len(fields) > 3 else ""
+        minor = fields[4].strip() if len(fields) > 4 else ""
+        origin = fields[6].strip() if len(fields) > 6 else ""
+        description = "; ".join(
+            value
+            for value in (
+                f"mobileOG-db protein family {feature}",
+                f"UniProt {uniprot}" if uniprot and uniprot != "N/A" else "",
+                f"origin {origin}" if origin and origin != "N/A" else "",
+            )
+            if value
+        )
+        hits.append(
+            EvidenceHit(
+                item.sequence_id,
+                query,
+                item.start,
+                item.end,
+                item.strand,
+                "MGE",
+                "MOBILEOG_DB",
+                _MOBILEOG_MAJOR_CATEGORIES.get(major, "mobile_genetic_element"),
+                feature,
+                accession,
+                minor or major or "unknown",
+                description,
                 "DIAMOND_BLASTP",
                 identity,
                 coverage,

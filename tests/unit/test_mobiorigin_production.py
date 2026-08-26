@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import csv
+import gzip
+import io
 import json
+import shutil
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +26,10 @@ from mobiorigin.annotate import (
     parse_card_hits,
     parse_sarg_hits,
     predict_annotation_orfs,
+)
+from mobiorigin.annotation_database_retrieval import (
+    download,
+    prepare_official_annotation_sources,
 )
 from mobiorigin.annotation_database_setup import (
     ANNOTATION_MANIFEST_NAME,
@@ -266,12 +274,174 @@ def test_annotation_database_setup_fails_without_complete_source(tmp_path: Path)
     assert not output.exists()
 
 
+def test_annotation_database_setup_adds_optional_legacy_isfinder(tmp_path: Path) -> None:
+    source = tmp_path / "authorized_source"
+    for relative in COMPREHENSIVE_DATABASE_FILES:
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write(path, f"database resource: {relative}\n")
+    amrfinder = tmp_path / "amrfinder"
+    amrfinder.mkdir()
+    write(amrfinder / "version.txt", "test\n")
+    legacy = tmp_path / "authorized_legacy_isfinder"
+    legacy.mkdir()
+    write(legacy / "isfinder.dmnd", "authorized legacy database\n")
+    write(legacy / "mge_database.tsv", "ID\tClass\tSub_class\tgene_name\n")
+    output = tmp_path / "annotation_databases"
+
+    result = setup_annotation_databases(
+        output,
+        source_dir=source,
+        amrfinder_database=amrfinder,
+        legacy_isfinder_source_dir=legacy,
+        accept_third_party_terms=True,
+    )
+
+    assert result["legacy_isfinder_installed"] is True
+    assert (output / "mge/legacy_isfinder.dmnd").read_text() == ("authorized legacy database\n")
+    manifest = json.loads((output / ANNOTATION_MANIFEST_NAME).read_text())
+    assert manifest["mge_default_provider"] == "mobileOG-db"
+    assert manifest["legacy_isfinder_installed"] is True
+
+
+def test_legacy_isfinder_is_rejected_for_arg_only_profile(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires the comprehensive profile"):
+        setup_annotation_databases(
+            tmp_path / "output",
+            legacy_isfinder_source_dir=tmp_path / "legacy",
+            profile="arg",
+            accept_third_party_terms=True,
+        )
+
+
 def test_default_annotation_database_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("MOBIORIGIN_ANNOTATION_DATABASE_DIR", raising=False)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     assert default_annotation_database_dir() == tmp_path / "mobiorigin/annotation_databases"
     monkeypatch.setenv("MOBIORIGIN_ANNOTATION_DATABASE_DIR", "~/custom_annotation")
     assert default_annotation_database_dir() == Path("~/custom_annotation").expanduser()
+
+
+def test_annotation_download_verifies_and_reuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = b"official database payload\n"
+
+    class Response(io.BytesIO):
+        status = 200
+
+        def __enter__(self) -> Response:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.close()
+
+    monkeypatch.setattr(
+        "mobiorigin.annotation_database_retrieval.urllib.request.urlopen",
+        lambda *args, **kwargs: Response(payload),
+    )
+    expected = __import__("hashlib").sha256(payload).hexdigest()
+    destination = tmp_path / "database.bin"
+    first = download("https://example.test/database", destination, expected_sha256=expected)
+    second = download("https://example.test/database", destination, expected_sha256=expected)
+    assert first["reused"] is False
+    assert second["reused"] is True
+    assert destination.read_bytes() == payload
+
+
+def test_prepare_official_annotation_sources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+
+    def make_tar(path: Path, members: dict[str, bytes], mode: str) -> None:
+        with tarfile.open(path, mode) as archive:
+            for name, payload in members.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+
+    card = fixtures / "card.tar.bz2"
+    make_tar(
+        card,
+        {
+            "protein_fasta_protein_homolog_model.fasta": b">card\nMAAA\n",
+            "aro_index.tsv": b"ARO Accession\tARO Name\nARO:1\ttest\n",
+        },
+        "w:bz2",
+    )
+    sarg = fixtures / "sarg.tar.gz"
+    make_tar(sarg, {"ARGs_OAP/DB/SARG.2.2.fasta": b">sarg\nMAAA\n"}, "w:gz")
+    vfdb = fixtures / "vfdb.gz"
+    with gzip.open(vfdb, "wb") as handle:
+        handle.write(b">VFG000001(gb|WP_1) gene [Toxin] [Bacterium]\nMAAA\n")
+    mobileog = write(
+        fixtures / "mobileog.faa",
+        ">mobileOG_000000007|xis|A0A653FUH0|IE|RRR|N/A|Multiple|Manual\nMAAA\n",
+    )
+    bacmet_fasta = write(fixtures / "bacmet.faa", ">BAC0001|abeM|tr|Q1\nMAAA\n")
+    bacmet_metadata = write(
+        fixtures / "bacmet.tsv", "Accession\tBacMet_ID\tGene_name\nQ1\tBAC0001\tabeM\n"
+    )
+    sources = {
+        "CARD": card,
+        "SARG": sarg,
+        "VFDB": vfdb,
+        "mobileOG-db": mobileog,
+        "BacMet-fasta": bacmet_fasta,
+        "BacMet-metadata": bacmet_metadata,
+    }
+
+    def fake_download(url: str, destination: Path, **kwargs: object) -> dict[str, object]:
+        if "card" in url:
+            source = sources["CARD"]
+        elif "pythonhosted" in url:
+            source = sources["SARG"]
+        elif "VFDB" in url:
+            source = sources["VFDB"]
+        elif "zenodo" in url:
+            source = sources["mobileOG-db"]
+        elif url.endswith(".fasta"):
+            source = sources["BacMet-fasta"]
+        else:
+            source = sources["BacMet-metadata"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        return {"url": url, "path": str(destination), "bytes": destination.stat().st_size}
+
+    def fake_build(diamond: Path, fasta: Path, destination: Path) -> None:
+        assert fasta.is_file()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(f"built from {fasta.name}\n", encoding="ascii")
+
+    monkeypatch.setattr("mobiorigin.annotation_database_retrieval.download", fake_download)
+    monkeypatch.setattr(
+        "mobiorigin.annotation_database_retrieval._diamond_executable", lambda value: value
+    )
+    monkeypatch.setattr("mobiorigin.annotation_database_retrieval._build_diamond", fake_build)
+    marker = tmp_path / "marker"
+    marker.mkdir()
+    for filename in ("rep_proteins.dmnd", "mob_proteins.dmnd", "mpf_proteins.dmnd"):
+        write(marker / filename, f"{filename}\n")
+    amrfinder = tmp_path / "amrfinder"
+    amrfinder.mkdir()
+    write(amrfinder / "version.txt", "test\n")
+    prepared = tmp_path / "prepared"
+    resolved, details = prepare_official_annotation_sources(
+        prepared,
+        profile="comprehensive",
+        cache_dir=tmp_path / "cache",
+        diamond=Path("diamond"),
+        marker_database_dir=marker,
+        amrfinder_database=amrfinder,
+        amrfinder_update=Path("amrfinder_update"),
+    )
+    assert resolved == amrfinder
+    assert set(details["downloads"]) == set(sources)
+    assert (prepared / "mge/mobileog.dmnd").is_file()
+    assert not (prepared / "mge/legacy_isfinder.dmnd").exists()
+    assert "Toxin" in (prepared / "vfdb/vfdb_indx.txt").read_text()
 
 
 def test_installation_environments_keep_incompatible_stacks_separate() -> None:
@@ -693,6 +863,11 @@ def test_cli_dispatches_annotation_database_setup(
         "output_dir": tmp_path / "annotation_databases",
         "source_dir": tmp_path / "authorized_source",
         "amrfinder_database": tmp_path / "amrfinder",
+        "marker_database_dir": Path.home() / ".local/share/mobiorigin/marker_databases",
+        "legacy_isfinder_source_dir": None,
+        "cache_dir": None,
+        "diamond": Path("diamond"),
+        "amrfinder_update": Path("amrfinder_update"),
         "profile": "arg",
         "accept_third_party_terms": True,
     }
@@ -1138,11 +1313,7 @@ def test_comprehensive_annotation_publishes_integrated_report(
         "sarg/sarg.dmnd": "sarg\n",
         "vfdb/vfdb_setA.dmnd": "vfdb\n",
         "vfdb/vfdb_indx.txt": "VFG000001(gb|WP_1.1)\tVFC0001\tToxin\n",
-        "mge/isfinder.dmnd": "mge\n",
-        "mge/mge_database.tsv": (
-            "ID\tSub_class\tgene_name\tClass\tLength\n"
-            "1_tnpA_X\tIS3\ttnpA\tinsertion_sequence\t300\n"
-        ),
+        "mge/mobileog.dmnd": "mge\n",
         "bacmet/bacmet.dmnd": "bacmet\n",
         "bacmet/Bacmet_list.tsv": (
             "BacMet_ID\tGene_name\tClass\tAccession\tOrganism\tLength\tLocation\tCompound\n"
@@ -1209,7 +1380,10 @@ def test_comprehensive_annotation_publishes_integrated_report(
                 "seq__orf_2\tVFG000001(gb|WP_1.1)\t90\t100\t1e-20\t200\t"
                 "VFG000001(gb|WP_1.1) stxA [Shiga toxin (VF1)] [Escherichia coli]\n"
             ),
-            "isfinder.dmnd": "seq__orf_3\t1_tnpA_X\t80\t90\t1e-10\t150\ttnpA\n",
+            "mobileog.dmnd": (
+                "seq__orf_3\tmobileOG_000000007|xis|A0A653FUH0|IE|RRR|N/A|Multiple|Manual"
+                "\t80\t90\t1e-10\t150\tmobileOG family\n"
+            ),
             "bacmet.dmnd": ("seq__orf_3\tBAC0001|abeM|tr|Q1\t90\t95\t1e-15\t180\tAbeM pump\n"),
             "rep_proteins.dmnd": (
                 "seq__orf_1\tNC_1|IncP_s1_f0_o0\t70\t80\t1e-12\t170\tIncP replicon\n"

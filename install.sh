@@ -6,23 +6,34 @@
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 SOFTWARE_ONLY=false
 SKIP_DEMO=false
+SKIP_ANNOTATION_DATABASES=false
+ACCEPT_THIRD_PARTY_TERMS=false
 DATABASE_DIR="${MOBIORIGIN_DATABASE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/marker_databases}"
+ANNOTATION_DATABASE_DIR="${MOBIORIGIN_ANNOTATION_DATABASE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/annotation_databases}"
 DEMO_DIR="${PROJECT_DIR}/mobiorigin_demo"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --software-only) SOFTWARE_ONLY=true ;;
     --skip-demo) SKIP_DEMO=true ;;
+    --skip-annotation-databases) SKIP_ANNOTATION_DATABASES=true ;;
+    --accept-third-party-terms) ACCEPT_THIRD_PARTY_TERMS=true ;;
     --database-dir)
       shift
       DATABASE_DIR="$1"
+      ;;
+    --annotation-database-dir)
+      shift
+      ANNOTATION_DATABASE_DIR="$1"
       ;;
     --demo-dir)
       shift
       DEMO_DIR="$1"
       ;;
     --help|-h)
-      echo "Usage: bash install.sh [--software-only] [--skip-demo] [--database-dir PATH] [--demo-dir PATH]"
+      echo "Usage: bash install.sh [--software-only] [--skip-demo] [--skip-annotation-databases]"
+      echo "                       [--accept-third-party-terms] [--database-dir PATH]"
+      echo "                       [--annotation-database-dir PATH] [--demo-dir PATH]"
       exit 0
       ;;
     *) echo "STOP: Unknown installer option: $1" >&2; exit 2 ;;
@@ -101,6 +112,53 @@ if [ "$full_doctor_rc" -ne 0 ]; then
   exit "$full_doctor_rc"
 fi
 
+if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
+  if [ "$ACCEPT_THIRD_PARTY_TERMS" = false ]; then
+    echo
+    echo "Annotation setup downloads CARD, SARG, AMRFinderPlus, VFDB, mobileOG-db,"
+    echo "and BacMet from their publishers. VFDB and SARG restrict some uses."
+    echo "Review: docs/MOBIORIGIN_ANNOTATION.md"
+    if [ -t 0 ]; then
+      printf "Accept the documented third-party terms and continue? [y/N] "
+      read -r annotation_terms_answer
+      case "$annotation_terms_answer" in
+        y|Y|yes|YES) ACCEPT_THIRD_PARTY_TERMS=true ;;
+        *) echo "Annotation database setup skipped by user."; SKIP_ANNOTATION_DATABASES=true ;;
+      esac
+    else
+      echo "STOP: Non-interactive comprehensive installation requires explicit acceptance." >&2
+      echo "Rerun with --accept-third-party-terms, or --skip-annotation-databases." >&2
+      exit 1
+    fi
+  fi
+fi
+
+if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
+  if [ -d "$ANNOTATION_DATABASE_DIR" ]; then
+    echo "The annotation database directory exists; verifying it without overwriting."
+    "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
+      --component annotation \
+      --output-dir "$ANNOTATION_DATABASE_DIR" \
+      --profile comprehensive \
+      --check
+  else
+    echo "Downloading and building the comprehensive annotation databases..."
+    "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
+      --component annotation \
+      --output-dir "$ANNOTATION_DATABASE_DIR" \
+      --marker-database-dir "$DATABASE_DIR" \
+      --profile comprehensive \
+      --accept-third-party-terms
+  fi
+  annotation_database_rc=$?
+  if [ "$annotation_database_rc" -ne 0 ]; then
+    echo "STOP: Annotation database setup did not complete." >&2
+    echo "Resume with: conda activate mobiorigin" >&2
+    echo "  mobiorigin setup-databases --component annotation --profile comprehensive --accept-third-party-terms" >&2
+    exit "$annotation_database_rc"
+  fi
+fi
+
 if [ "$SKIP_DEMO" = false ]; then
   if [ -e "$DEMO_DIR" ]; then
     echo "Demo output already exists and will not be overwritten: $DEMO_DIR"
@@ -122,6 +180,7 @@ echo
 echo "===== INSTALLATION COMPLETE ====="
 echo "Activate: conda activate mobiorigin"
 echo "Analyze:  mobiorigin run --input-fasta assembly.fasta --output-dir results --threads 8"
+echo "Annotate: mobiorigin annotate --input-fasta assembly.fasta --output-dir annotations --profile comprehensive --threads 8"
 echo "Demo:     $DEMO_DIR"
 echo "Open:     $DEMO_DIR/visualization/mobiorigin_dashboard.html"
 exit 0

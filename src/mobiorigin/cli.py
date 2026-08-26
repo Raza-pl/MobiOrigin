@@ -44,7 +44,8 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "prepared source directory: frozen MOB databases for marker setup, or the "
-            "authorized documented layout for annotation setup"
+            "documented offline mirror for annotation setup; annotation resources are "
+            "downloaded automatically when omitted"
         ),
     )
     setup_parser.add_argument(
@@ -66,7 +67,31 @@ def parser() -> argparse.ArgumentParser:
     setup_parser.add_argument(
         "--amrfinder-database",
         type=Path,
-        help="complete official AMRFinderPlus version directory for annotation setup",
+        help="optional existing AMRFinderPlus version directory (otherwise downloaded)",
+    )
+    setup_parser.add_argument(
+        "--marker-database-dir",
+        type=Path,
+        help="existing MobiOrigin marker directory used by comprehensive annotation",
+    )
+    setup_parser.add_argument(
+        "--legacy-isfinder-source-dir",
+        type=Path,
+        help=(
+            "optional authorized directory containing isfinder.dmnd and mge_database.tsv; "
+            "ISfinder is never downloaded by MobiOrigin"
+        ),
+    )
+    setup_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="download cache for resumable annotation database retrieval",
+    )
+    setup_parser.add_argument(
+        "--amrfinder-update",
+        type=Path,
+        default=Path("amrfinder_update"),
+        help="AMRFinderPlus database updater executable",
     )
     setup_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
     annotate_parser = subparsers.add_parser(
@@ -160,18 +185,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             if args.check:
                 result = check_annotation_databases(output_dir, profile=args.profile)
             else:
-                if args.source_dir is None:
-                    argument_parser.error(
-                        "annotation setup requires --source-dir containing authorized resources"
-                    )
-                if args.amrfinder_database is None:
-                    argument_parser.error(
-                        "annotation setup requires --amrfinder-database containing version.txt"
-                    )
                 result = setup_annotation_databases(
                     output_dir=output_dir,
                     source_dir=args.source_dir,
                     amrfinder_database=args.amrfinder_database,
+                    marker_database_dir=(
+                        args.marker_database_dir
+                        if args.marker_database_dir is not None
+                        else resolve_database_dir(None)
+                    ),
+                    legacy_isfinder_source_dir=args.legacy_isfinder_source_dir,
+                    cache_dir=args.cache_dir,
+                    diamond=args.diamond,
+                    amrfinder_update=args.amrfinder_update,
                     profile=args.profile,
                     accept_third_party_terms=args.accept_third_party_terms,
                 )
