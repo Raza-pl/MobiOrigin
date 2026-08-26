@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import mobiorigin
+from mobiorigin.annotate import annotate
+from mobiorigin.annotation_database_setup import default_annotation_database_dir
 from mobiorigin.database_setup import check_databases
 from mobiorigin.predict import predict
 from mobiorigin.visualize import visualize
@@ -80,15 +82,23 @@ def doctor(*, database_dir: Path | None = None, software_only: bool = False) -> 
 
 
 def run_analysis(
-    *, input_fasta: Path, output_dir: Path, database_dir: Path | None = None, threads: int = 1
+    *,
+    input_fasta: Path,
+    output_dir: Path,
+    database_dir: Path | None = None,
+    annotation_database_dir: Path | None = None,
+    annotation_profile: str = "comprehensive",
+    skip_annotation: bool = False,
+    threads: int = 1,
 ) -> None:
-    """Run prediction and visualization as one atomic, beginner-friendly analysis."""
+    """Run prediction, annotation, and visualization as one atomic analysis."""
     if output_dir.exists():
         raise FileExistsError("Analysis output directory already exists")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent))
     try:
         predictions = temporary / "predictions"
+        annotation = temporary / "annotation"
         figures = temporary / "visualization"
         predict(
             input_fasta=input_fasta,
@@ -96,7 +106,31 @@ def run_analysis(
             database_dir=resolve_database_dir(database_dir),
             threads=threads,
         )
-        visualize(predictions_tsv=predictions / "predictions.tsv", output_dir=figures)
+        annotated_results: Path | None = None
+        if not skip_annotation:
+            annotation_databases = (
+                annotation_database_dir.expanduser()
+                if annotation_database_dir is not None
+                else default_annotation_database_dir()
+            )
+            annotate(
+                input_fasta=input_fasta,
+                output_dir=annotation,
+                database_dir=annotation_databases,
+                threads=threads,
+                diamond=Path("diamond"),
+                amrfinder_mode="official",
+                amrfinder_bin=Path("amrfinder"),
+                amrfinder_database=annotation_databases / "amrfinderplus",
+                profile=annotation_profile,
+                predictions_tsv=predictions / "predictions.tsv",
+            )
+            annotated_results = annotation / "mobiorigin_annotated_results.tsv"
+        visualize(
+            predictions_tsv=predictions / "predictions.tsv",
+            output_dir=figures,
+            annotated_results_tsv=annotated_results,
+        )
         visualization_summary = json.loads(
             (figures / "visualization_summary.json").read_text(encoding="utf-8")
         )
@@ -107,7 +141,15 @@ def run_analysis(
             "  visualization/mobiorigin_summary.svg      editable figure\n"
             "  predictions/predictions.tsv               per-sequence predictions\n"
             "  predictions/provenance.json               reproducibility record\n\n"
-            f"Records analyzed: {visualization_summary['records']}\n"
+            + (
+                "Annotation outputs:\n"
+                "  annotation/mobiorigin_report.html      biological-evidence report\n"
+                "  annotation/mobiorigin_annotated_results.tsv  integrated contig table\n"
+                "  annotation/biological_evidence.tsv     retained evidence hits\n\n"
+                if annotated_results is not None
+                else "Annotation was skipped explicitly.\n\n"
+            )
+            + f"Records analyzed: {visualization_summary['records']}\n"
             f"Bases analyzed: {visualization_summary['bases']}\n\n"
             "These are predictions, not experimental proof or clinical risk scores.\n",
             encoding="utf-8",
@@ -126,6 +168,7 @@ def demo(*, output_dir: Path, database_dir: Path | None = None, threads: int = 1
             input_fasta=input_fasta,
             output_dir=output_dir,
             database_dir=database_dir,
+            skip_annotation=True,
             threads=threads,
         )
     summary = json.loads(

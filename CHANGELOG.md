@@ -6,6 +6,9 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ### Changed
 
+- `mobiorigin run` now performs prediction, comprehensive biological annotation,
+  and integrated visualization by default in one atomic output directory. A
+  `--skip-annotation` option preserves the lightweight prediction-only route.
 - Expanded `--threads` from the original validated 1–8 range to 1–128 for
   DIAMOND, AMRFinderPlus, and other external searches. Deterministic neural-network
   inference remains single-threaded, and the model and scientific policy are unchanged.

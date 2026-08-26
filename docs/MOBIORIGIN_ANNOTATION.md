@@ -127,6 +127,23 @@ mobiorigin setup-databases \
 Those hits are reported separately as `ISFINDER_LEGACY`; mobileOG-db remains
 the default MGE provider and is never overwritten.
 
+## Recommended integrated workflow
+
+After marker and annotation databases are prepared, one command performs
+prediction, comprehensive annotation, and integrated visualization:
+
+```bash
+mobiorigin run \
+  --input-fasta assembly.fasta \
+  --output-dir mobiorigin_results \
+  --threads 8
+```
+
+The command creates `predictions/`, `annotation/`, and `visualization/` inside
+one atomically published result directory. The biological evidence remains
+downstream and cannot change prediction labels or probabilities. Use
+`--skip-annotation` only when a quick prediction and visualization are wanted.
+
 ## ARG-only workflow
 
 ```bash

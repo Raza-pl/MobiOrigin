@@ -125,8 +125,8 @@ the upstream terms links are in
 
 ## Run
 
-The simplest command performs prediction and visualization in one atomic result
-directory:
+The simplest command performs prediction, comprehensive biological annotation,
+and integrated visualization in one atomic result directory:
 
 ```bash
 mobiorigin run \
@@ -136,8 +136,22 @@ mobiorigin run \
 ```
 
 MobiOrigin uses the documented user-data location by default. Advanced users
-can override it per command with `--database-dir` or globally with
-`MOBIORIGIN_DATABASE_DIR`. For prediction files without visualization:
+can override the marker database with `--database-dir` and the annotation
+database with `--annotation-database-dir`. The corresponding environment
+variables are `MOBIORIGIN_DATABASE_DIR` and
+`MOBIORIGIN_ANNOTATION_DATABASE_DIR`.
+
+For a quick prediction and visualization without biological annotation:
+
+```bash
+mobiorigin run \
+  --input-fasta assembly.fasta \
+  --output-dir mobiorigin_results \
+  --skip-annotation \
+  --threads 8
+```
+
+For prediction files without visualization:
 
 ```bash
 mobiorigin predict \
@@ -155,8 +169,17 @@ output, so values above the available CPUs may be slower rather than faster.
 
 ## Outputs
 
-The `run` output directory contains `README_RESULTS.txt`, a `predictions/`
-directory, and a `visualization/` directory. The prediction directory contains:
+The `run` output directory contains `README_RESULTS.txt` and three principal
+directories:
+
+- `predictions/`: ordered labels, probabilities, abstentions, and provenance.
+- `annotation/`: ARG, virulence, MGE, stress, and mobility evidence plus a
+  standalone biological-evidence report.
+- `visualization/`: the integrated HTML dashboard, editable SVG figure, and
+  summary tables. When annotation is enabled, the dashboard includes A to E
+  evidence-tier counts.
+
+The prediction directory contains:
 
 - `predictions.tsv`: ordered per-record labels, probabilities, plasmid margin, and abstention reason.
 - `provenance.json`: package version, input identity, model/database identities, threshold, and prediction identity.
@@ -180,7 +203,10 @@ Open `mobiorigin_visualization/mobiorigin_dashboard.html`. The dashboard reports
 
 `mobiorigin annotate` adds protein-level biological evidence after
 classification. It never changes MobiOrigin labels, probabilities, or the
-selective threshold. The ARG profile retains independent CARD, SARG, and
+selective threshold. This command is useful when prediction already exists or
+annotation must be repeated separately. The default `mobiorigin run` command
+already performs the comprehensive annotation described here. The ARG profile
+retains independent CARD, SARG, and
 official AMRFinderPlus evidence. The comprehensive profile additionally reports
 AMRFinderPlus virulence/stress calls, VFDB core homologs, mobileOG-db MGE evidence,
 BacMet2 biocide/metal-resistance homologs, and MOB-suite replication, relaxase,

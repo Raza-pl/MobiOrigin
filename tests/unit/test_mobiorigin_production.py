@@ -534,7 +534,20 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
         write(output / "predictions.tsv", predictions_text)
         write(output / "provenance.json", "{}\n")
 
+    def fake_annotate(**kwargs: object) -> None:
+        output = Path(str(kwargs["output_dir"]))
+        output.mkdir()
+        write(
+            output / "mobiorigin_annotated_results.tsv",
+            "sequence_id\tprediction\tconsensus_arg_orfs\tmge_hits\t"
+            "mobility_marker_hits\tevidence_priority_tier\n"
+            "demo\tplasmid\t1\t1\t1\tB\n",
+        )
+        write(output / "mobiorigin_report.html", "<html></html>\n")
+        write(output / "biological_evidence.tsv", "sequence_id\n")
+
     monkeypatch.setattr("mobiorigin.workflow.predict", fake_predict)
+    monkeypatch.setattr("mobiorigin.workflow.annotate", fake_annotate)
     output = tmp_path / "analysis"
     run_analysis(
         input_fasta=tmp_path / "input.fasta",
@@ -542,7 +555,14 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
         database_dir=tmp_path / "db",
     )
     assert (output / "README_RESULTS.txt").is_file()
+    assert (output / "annotation" / "mobiorigin_report.html").is_file()
     assert (output / "visualization" / "mobiorigin_dashboard.html").is_file()
+    assert (
+        json.loads(
+            (output / "visualization" / "visualization_summary.json").read_text(encoding="utf-8")
+        )["annotated_results_sha256"]
+        is not None
+    )
     with pytest.raises(FileExistsError):
         run_analysis(
             input_fasta=tmp_path / "input.fasta",
@@ -553,6 +573,7 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
     result = demo(output_dir=demo_output, database_dir=tmp_path / "db")
     assert result["status"] == "PASS"
     assert result["records"] == 1
+    assert not (demo_output / "annotation").exists()
 
 
 def test_cli_dispatches_run_doctor_and_demo(
@@ -570,6 +591,9 @@ def test_cli_dispatches_run_doctor_and_demo(
         ]
     )
     assert observed["database_dir"] is None
+    assert observed["annotation_database_dir"] is None
+    assert observed["annotation_profile"] == "comprehensive"
+    assert observed["skip_annotation"] is False
     monkeypatch.setattr(cli, "doctor", lambda **kwargs: {"status": "PASS"})
     cli.main(["doctor", "--software-only"])
     assert '"status": "PASS"' in capsys.readouterr().out
