@@ -69,11 +69,12 @@ covers manual installation, Apple Silicon, Linux, WSL2, diagnostics, and
 database licensing boundaries.
 
 The installer includes the official AMRFinderPlus software and its BLAST/HMMER
-runtime dependencies. CARD, SARG, VFDB, ISfinder-derived, and BacMet research
-datasets are not silently downloaded or redistributed because their licenses,
-registration terms, and version-specific preparation differ. The
-comprehensive annotation guide validates a user-prepared directory and reports
-every missing resource explicitly.
+runtime dependencies. `mobiorigin setup-databases --component annotation`
+now stages and verifies a complete authorized CARD/SARG/VFDB/MGE/BacMet/MOB
+resource set in one atomic operation. The command does not redistribute those
+third-party records: users must obtain them from their official sources under
+the applicable terms. Every installed file is independently copied, hashed,
+recorded in a manifest, and checked before annotation starts.
 
 MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
 
@@ -89,6 +90,40 @@ bash scripts/setup_mobiorigin_databases.sh \
 ```
 
 The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. It reuses a completed MOB-suite download, reconstructs the frozen indexes with DIAMOND 2.0.15, and publishes the database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any source or database hash differs.
+
+## Prepare annotation databases
+
+After obtaining the annotation resources from their official sources, place
+them in the documented directory layout and install the complete set with one
+command:
+
+```bash
+mobiorigin setup-databases \
+  --component annotation \
+  --source-dir /path/to/authorized_annotation_sources \
+  --amrfinder-database /path/to/amrfinderplus/data/version \
+  --profile comprehensive \
+  --accept-third-party-terms
+```
+
+The default destination is
+`${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/annotation_databases`.
+The official AMRFinderPlus updater can prepare its version directory with
+`amrfinder --update`; pass the resolved dated directory rather than its
+`latest` symlink. MobiOrigin copies that complete database into the same
+managed destination. It refuses a partial source, rejects symlinks and changed bytes, and
+does not publish a partial destination after failure. Recheck it at any time:
+
+```bash
+mobiorigin setup-databases \
+  --component annotation \
+  --profile comprehensive \
+  --check
+```
+
+`MOBIORIGIN_ANNOTATION_DATABASE_DIR` changes the default location. Details and
+the upstream terms links are in
+[`docs/MOBIORIGIN_ANNOTATION.md`](docs/MOBIORIGIN_ANNOTATION.md).
 
 ## Run
 
@@ -152,15 +187,15 @@ and mating-pair-formation markers.
 mobiorigin annotate \
   --input-fasta assembly.fasta \
   --output-dir mobiorigin_annotations \
-  --database-dir /path/to/annotation_databases \
   --profile comprehensive \
   --predictions-tsv mobiorigin_predictions/predictions.tsv \
   --amrfinder-mode official \
-  --amrfinder-database /path/to/amrfinderplus/database/version \
   --threads 8
 ```
 
-The integrated table, machine-readable summary, self-contained HTML report,
+The command uses the standard annotation-database directory prepared above;
+`--database-dir` remains available as an override. The integrated table,
+machine-readable summary, self-contained HTML report,
 raw evidence, and every consumed database identity are published atomically.
 The A–E evidence-priority tier is a transparent review queue based on ARG and
 mobility context; it is not a clinical risk score. Database layout, thresholds,

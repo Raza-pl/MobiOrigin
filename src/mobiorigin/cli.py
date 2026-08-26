@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Sequence
 
 from mobiorigin.annotate import annotate
+from mobiorigin.annotation_database_setup import (
+    check_annotation_databases,
+    default_annotation_database_dir,
+    setup_annotation_databases,
+)
 from mobiorigin.database_setup import check_databases, setup_databases
 from mobiorigin.predict import predict
 from mobiorigin.visualize import visualize
@@ -30,18 +35,38 @@ def parser() -> argparse.ArgumentParser:
     )
     predict_parser.add_argument("--threads", type=int, default=1)
     setup_parser = subparsers.add_parser(
-        "setup-databases", help="retrieve and verify the frozen MOB marker databases"
+        "setup-databases", help="prepare and verify marker or annotation databases"
     )
-    setup_parser.add_argument("--output-dir", type=Path, required=True)
+    setup_parser.add_argument("--component", choices=("marker", "annotation"), default="marker")
+    setup_parser.add_argument("--output-dir", type=Path)
     setup_parser.add_argument(
         "--source-dir",
         type=Path,
-        help="official MOB-suite data directory containing the three exact databases",
+        help=(
+            "prepared source directory: frozen MOB databases for marker setup, or the "
+            "authorized documented layout for annotation setup"
+        ),
     )
     setup_parser.add_argument(
         "--check",
         action="store_true",
         help="verify DIAMOND and an existing output directory without copying databases",
+    )
+    setup_parser.add_argument(
+        "--profile",
+        choices=("arg", "comprehensive"),
+        default="comprehensive",
+        help="annotation resources to stage or verify (default: comprehensive)",
+    )
+    setup_parser.add_argument(
+        "--accept-third-party-terms",
+        action="store_true",
+        help="confirm authorized acquisition and acceptance of upstream database terms",
+    )
+    setup_parser.add_argument(
+        "--amrfinder-database",
+        type=Path,
+        help="complete official AMRFinderPlus version directory for annotation setup",
     )
     setup_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
     annotate_parser = subparsers.add_parser(
@@ -52,8 +77,10 @@ def parser() -> argparse.ArgumentParser:
     annotate_parser.add_argument(
         "--database-dir",
         type=Path,
-        required=True,
-        help="directory containing card/, sarg/, and amrfinder/ resources",
+        help=(
+            "annotation database directory (default: $MOBIORIGIN_ANNOTATION_DATABASE_DIR "
+            "or user data directory)"
+        ),
     )
     annotate_parser.add_argument("--threads", type=int, default=1)
     annotate_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
@@ -122,24 +149,60 @@ def main(argv: Sequence[str] | None = None) -> None:
             threads=args.threads,
         )
     elif args.command == "setup-databases":
-        if args.check:
-            print(json.dumps(check_databases(args.output_dir, diamond=args.diamond), indent=2))
+        output_dir = args.output_dir
+        if output_dir is None:
+            output_dir = (
+                default_annotation_database_dir()
+                if args.component == "annotation"
+                else resolve_database_dir(None)
+            )
+        if args.component == "annotation":
+            if args.check:
+                result = check_annotation_databases(output_dir, profile=args.profile)
+            else:
+                if args.source_dir is None:
+                    argument_parser.error(
+                        "annotation setup requires --source-dir containing authorized resources"
+                    )
+                if args.amrfinder_database is None:
+                    argument_parser.error(
+                        "annotation setup requires --amrfinder-database containing version.txt"
+                    )
+                result = setup_annotation_databases(
+                    output_dir=output_dir,
+                    source_dir=args.source_dir,
+                    amrfinder_database=args.amrfinder_database,
+                    profile=args.profile,
+                    accept_third_party_terms=args.accept_third_party_terms,
+                )
+            print(json.dumps(result, indent=2))
+        elif args.check:
+            print(json.dumps(check_databases(output_dir, diamond=args.diamond), indent=2))
         else:
             if args.source_dir is None:
                 argument_parser.error(
                     "setup-databases requires --source-dir unless --check is used"
                 )
-            setup_databases(output_dir=args.output_dir, source_dir=args.source_dir)
+            setup_databases(output_dir=output_dir, source_dir=args.source_dir)
     elif args.command == "annotate":
+        annotation_database_dir = (
+            args.database_dir.expanduser()
+            if args.database_dir is not None
+            else default_annotation_database_dir()
+        )
         annotate(
             input_fasta=args.input_fasta,
             output_dir=args.output_dir,
-            database_dir=args.database_dir,
+            database_dir=annotation_database_dir,
             threads=args.threads,
             diamond=args.diamond,
             amrfinder_mode=args.amrfinder_mode,
             amrfinder_bin=args.amrfinder_bin,
-            amrfinder_database=args.amrfinder_database,
+            amrfinder_database=(
+                args.amrfinder_database
+                if args.amrfinder_database is not None
+                else annotation_database_dir / "amrfinderplus"
+            ),
             profile=args.profile,
             predictions_tsv=args.predictions_tsv,
         )
