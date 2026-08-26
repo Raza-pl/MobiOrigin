@@ -7,7 +7,7 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Status
 
-- Package version: `0.1.1` (publication bundle for the frozen dev1 candidate).
+- Package version: `0.1.2` (integrated installation, prediction, annotation, and visualization release).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.

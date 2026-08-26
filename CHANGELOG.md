@@ -4,6 +4,24 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+## 0.1.2 — 2026-08-26
+
+Installation, database automation, and integrated analysis update for the
+unchanged frozen `mobiorigin-dev1-mob-selective-v1` classifier.
+
+### Added
+
+- Guided Conda or Mamba installation with a post-installation doctor check and
+  bundled deterministic demonstration.
+- Automatic, resumable setup and cryptographic verification of the comprehensive
+  annotation resources, with explicit acceptance of applicable third-party terms.
+- mobileOG-db as the default MGE resource, while retaining legacy ISfinder as an
+  optional user-supplied resource.
+- A bundled eight-contig assembly example that demonstrates chromosome, plasmid,
+  phage, and unclassified outputs without presenting an accuracy claim.
+- Deterministic SVG, HTML, and tabular visualizations for prediction and annotation
+  outputs.
+
 ### Changed
 
 - `mobiorigin run` now performs prediction, comprehensive biological annotation,
@@ -23,6 +41,15 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
   cross-platform CPU PyTorch build.
 - Added CI installation smoke tests, an isolated MOB-suite dependency solve, and
   installation-contract unit tests.
+
+### Scientific boundaries
+
+- The classifier checkpoints, feature definitions, ensemble, selective threshold,
+  and frozen external-validation results are unchanged from version 0.1.1.
+- Biological annotations remain independent supporting evidence. They do not
+  override prediction labels or probabilities and are not clinical risk scores.
+- The bundled assembly is a software demonstration. It is not an accuracy,
+  prevalence, or biological-discovery dataset.
 
 ## 0.1.1 — 2026-08-23
 
