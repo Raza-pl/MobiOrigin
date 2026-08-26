@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mobiorigin"
-version = "0.1.1"
+version = "0.1.2"
 description = "MobiOrigin: sequence-and-marker classification of bacterial replicons"
 authors = ["Shahbaz Raza <shahbaz.invincible3182@gmail.com>"]
 license = "GPL-3.0"
@@ -27,6 +27,7 @@ include = [
     { path = "src/mobiorigin/marker_database_builder.py", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.0.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.1.md", format = ["sdist"] },
+    { path = "docs/RELEASE_NOTES_0.1.2.md", format = ["sdist"] },
     { path = "docs/validation/external_validation", format = ["sdist"] },
     { path = "docs/validation/operational_validation", format = ["sdist"] },
 ]
