@@ -9,6 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Final
 
+from mobiorigin.annotation_database_retrieval import (
+    default_annotation_cache_dir,
+    prepare_official_annotation_sources,
+)
 from mobiorigin.provenance import sha256_file
 
 ANNOTATION_MANIFEST_NAME: Final = "mobiorigin_annotation_database_manifest.json"
@@ -23,20 +27,24 @@ COMPREHENSIVE_DATABASE_FILES: Final = (
     *ARG_DATABASE_FILES,
     "vfdb/vfdb_setA.dmnd",
     "vfdb/vfdb_indx.txt",
-    "mge/isfinder.dmnd",
-    "mge/mge_database.tsv",
+    "mge/mobileog.dmnd",
     "bacmet/bacmet.dmnd",
     "bacmet/Bacmet_list.tsv",
     "mob_suite/rep_proteins.dmnd",
     "mob_suite/mob_proteins.dmnd",
     "mob_suite/mpf_proteins.dmnd",
 )
+LEGACY_ISFINDER_FILES: Final = {
+    "isfinder.dmnd": "mge/legacy_isfinder.dmnd",
+    "mge_database.tsv": "mge/legacy_isfinder_metadata.tsv",
+}
 
 UPSTREAM_TERMS: Final = {
     "CARD": "https://card.mcmaster.ca/about",
     "SARG": "https://smile.hku.hk/SARGs",
     "VFDB": "https://www.mgc.ac.cn/VFs/main.htm",
-    "ISfinder": "https://isfinder.biotoul.fr/about.php",
+    "mobileOG-db": "https://doi.org/10.5281/zenodo.17506721",
+    "ISfinder-legacy-optional": "https://isfinder.biotoul.fr/about.php",
     "BacMet": "http://bacmet.biomedicine.gu.se/",
     "MOB-suite": "https://github.com/phac-nml/mob-suite",
 }
@@ -44,12 +52,13 @@ UPSTREAM_TERMS: Final = {
 NOTICE: Final = """MobiOrigin annotation-database notice
 
 These third-party biological database files are installed for local use and are
-not part of the MobiOrigin Python distribution. Possession of a database file
-does not grant permission to redistribute it. In particular, ISfinder states
-that downloading its database requires written authorization and that its
-database may not be distributed to third parties. VFDB describes its data as
-CC BY-NC 4.0 for non-commercial research use. Other upstream sources may impose
-additional academic-use, registration, attribution, or commercial-use terms.
+not part of the MobiOrigin Python distribution. The default MGE source is the
+CC BY 4.0 mobileOG-db 2.0.1-90 release. ISfinder is not downloaded or required.
+An authorized ISfinder copy can be added as a separately identified legacy
+layer; ISfinder states that downloading its database requires written
+authorization and that its database may not be distributed to third parties.
+VFDB describes its data as CC BY-NC 4.0 for non-commercial research use. Other
+upstream sources may impose additional academic-use or commercial-use terms.
 
 The installing user confirms that they obtained every source lawfully and that
 their intended use complies with the applicable upstream terms. MobiOrigin
@@ -60,7 +69,8 @@ Upstream terms:
   CARD: https://card.mcmaster.ca/about
   SARG: https://smile.hku.hk/SARGs
   VFDB: https://www.mgc.ac.cn/VFs/main.htm
-  ISfinder: https://isfinder.biotoul.fr/about.php
+  mobileOG-db: https://doi.org/10.5281/zenodo.17506721
+  optional legacy ISfinder: https://isfinder.biotoul.fr/about.php
   BacMet: http://bacmet.biomedicine.gu.se/
   MOB-suite: https://github.com/phac-nml/mob-suite
 """
@@ -106,6 +116,17 @@ def _copy_file(source: Path, destination: Path) -> dict[str, object]:
     }
 
 
+def _record_file(path: Path, relative: str, source: str) -> dict[str, object]:
+    if path.is_symlink() or not path.is_file():
+        raise FileNotFoundError(f"Missing prepared annotation database file: {path}")
+    return {
+        "path": relative,
+        "bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+        "source": source,
+    }
+
+
 def _source_files(directory: Path) -> list[Path]:
     if directory.is_symlink() or not directory.is_dir():
         raise FileNotFoundError(f"Official AMRFinderPlus database directory not found: {directory}")
@@ -125,12 +146,17 @@ def _source_files(directory: Path) -> list[Path]:
 def setup_annotation_databases(
     output_dir: Path,
     *,
-    source_dir: Path,
-    amrfinder_database: Path,
+    source_dir: Path | None = None,
+    amrfinder_database: Path | None = None,
+    marker_database_dir: Path | None = None,
+    legacy_isfinder_source_dir: Path | None = None,
+    cache_dir: Path | None = None,
+    diamond: Path = Path("diamond"),
+    amrfinder_update: Path = Path("amrfinder_update"),
     profile: str = "comprehensive",
     accept_third_party_terms: bool = False,
 ) -> dict[str, object]:
-    """Copy an authorized annotation resource set and publish it atomically."""
+    """Retrieve or stage annotation resources and publish them atomically."""
     if not accept_third_party_terms:
         raise PermissionError(
             "Annotation database setup requires --accept-third-party-terms. "
@@ -138,22 +164,42 @@ def setup_annotation_databases(
         )
     if output_dir.exists():
         raise FileExistsError("Annotation database output directory already exists")
-    if not source_dir.is_dir():
+    if source_dir is not None and not source_dir.is_dir():
         raise FileNotFoundError(f"Annotation database source directory not found: {source_dir}")
+    if legacy_isfinder_source_dir is not None and profile != "comprehensive":
+        raise ValueError("The optional legacy ISfinder layer requires the comprehensive profile")
     required = annotation_files(profile)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent))
     try:
         resources: dict[str, dict[str, object]] = {}
         total_bytes = 0
+        retrieval: dict[str, object] | None = None
+        if source_dir is None:
+            amrfinder_database, retrieval = prepare_official_annotation_sources(
+                temporary,
+                profile=profile,
+                cache_dir=cache_dir or default_annotation_cache_dir(),
+                diamond=diamond,
+                marker_database_dir=marker_database_dir,
+                amrfinder_database=amrfinder_database,
+                amrfinder_update=amrfinder_update,
+            )
         for relative in required:
-            item = _copy_file(source_dir / relative, temporary / relative)
-            item["path"] = relative
+            if source_dir is None:
+                item = _record_file(
+                    temporary / relative, relative, "official-source automatic retrieval"
+                )
+            else:
+                item = _copy_file(source_dir / relative, temporary / relative)
+                item["path"] = relative
             resources[relative] = item
             copied_bytes = item["bytes"]
             if not isinstance(copied_bytes, int):
                 raise TypeError(f"Annotation database byte count is invalid: {relative}")
             total_bytes += copied_bytes
+        if amrfinder_database is None:
+            raise ValueError("AMRFinderPlus database source was not resolved")
         amrfinder_files = _source_files(amrfinder_database)
         for source in amrfinder_files:
             relative = f"amrfinderplus/{source.relative_to(amrfinder_database).as_posix()}"
@@ -164,15 +210,29 @@ def setup_annotation_databases(
             if not isinstance(copied_bytes, int):
                 raise TypeError(f"AMRFinderPlus database byte count is invalid: {relative}")
             total_bytes += copied_bytes
+        legacy_installed = legacy_isfinder_source_dir is not None
+        if legacy_isfinder_source_dir is not None:
+            for source_name, relative in LEGACY_ISFINDER_FILES.items():
+                item = _copy_file(legacy_isfinder_source_dir / source_name, temporary / relative)
+                item["path"] = relative
+                resources[relative] = item
+                copied_bytes = item["bytes"]
+                if not isinstance(copied_bytes, int):
+                    raise TypeError(f"Legacy ISfinder byte count is invalid: {relative}")
+                total_bytes += copied_bytes
+        shutil.rmtree(temporary / ".amrfinder-update", ignore_errors=True)
         manifest = {
-            "schema_version": "mobiorigin-annotation-database-manifest-v1",
+            "schema_version": "mobiorigin-annotation-database-manifest-v2",
             "profile": profile,
             "resources": resources,
             "resource_count": len(resources),
             "total_bytes": total_bytes,
-            "network_accessed": False,
+            "network_accessed": source_dir is None,
             "third_party_terms_accepted": True,
             "official_amrfinderplus_included": True,
+            "mge_default_provider": "mobileOG-db" if profile == "comprehensive" else None,
+            "legacy_isfinder_installed": legacy_installed,
+            "retrieval": retrieval,
             "upstream_terms": UPSTREAM_TERMS,
         }
         (temporary / ANNOTATION_MANIFEST_NAME).write_text(
@@ -201,7 +261,10 @@ def check_annotation_databases(
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise ValueError("Annotation database manifest is invalid") from error
-    if manifest.get("schema_version") != "mobiorigin-annotation-database-manifest-v1":
+    if manifest.get("schema_version") not in {
+        "mobiorigin-annotation-database-manifest-v1",
+        "mobiorigin-annotation-database-manifest-v2",
+    }:
         raise ValueError("Annotation database manifest schema is unsupported")
     resources = manifest.get("resources")
     if not isinstance(resources, dict):
@@ -223,6 +286,22 @@ def check_annotation_databases(
             raise ValueError(f"Annotation database size mismatch: {relative}")
         verified[relative] = observed
         total_bytes += expected_bytes
+    if manifest.get("legacy_isfinder_installed"):
+        for relative in LEGACY_ISFINDER_FILES.values():
+            entry = resources.get(relative)
+            if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str):
+                raise ValueError(f"Legacy ISfinder manifest entry is missing: {relative}")
+            path = database_dir / relative
+            if path.is_symlink() or not path.is_file():
+                raise FileNotFoundError(f"Legacy ISfinder file is missing: {path}")
+            observed = sha256_file(path)
+            if observed != entry["sha256"]:
+                raise ValueError(f"Legacy ISfinder SHA-256 mismatch: {relative}")
+            expected_bytes = entry.get("bytes")
+            if not isinstance(expected_bytes, int) or path.stat().st_size != expected_bytes:
+                raise ValueError(f"Legacy ISfinder size mismatch: {relative}")
+            verified[relative] = observed
+            total_bytes += expected_bytes
     amrfinder_entries = {
         relative: entry
         for relative, entry in resources.items()
@@ -251,5 +330,7 @@ def check_annotation_databases(
         "resources_verified": len(verified),
         "total_bytes": total_bytes,
         "database_sha256": verified,
+        "mge_default_provider": manifest.get("mge_default_provider"),
+        "legacy_isfinder_installed": bool(manifest.get("legacy_isfinder_installed")),
         "third_party_terms": UPSTREAM_TERMS,
     }

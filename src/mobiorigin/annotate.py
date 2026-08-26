@@ -651,11 +651,8 @@ def annotate(
             "vfdb_metadata": _required_file(
                 database_dir / "vfdb" / "vfdb_indx.txt", "VFDB core metadata"
             ),
-            "mge_dmnd": _required_file(
-                database_dir / "mge" / "isfinder.dmnd", "curated MGE database"
-            ),
-            "mge_metadata": _required_file(
-                database_dir / "mge" / "mge_database.tsv", "curated MGE metadata"
+            "mobileog_dmnd": _required_file(
+                database_dir / "mge" / "mobileog.dmnd", "mobileOG-db database"
             ),
             "bacmet_dmnd": _required_file(
                 database_dir / "bacmet" / "bacmet.dmnd", "BacMet2 experimental database"
@@ -774,6 +771,7 @@ def annotate(
                 parse_bacmet,
                 parse_mge,
                 parse_mob_marker,
+                parse_mobileog,
                 parse_vfdb,
                 run_evidence_diamond,
                 write_evidence,
@@ -788,8 +786,8 @@ def annotate(
                     VFDB_MIN_IDENTITY,
                     VFDB_MIN_QUERY_COVERAGE,
                 ),
-                "mge": (
-                    comprehensive_databases["mge_dmnd"],
+                "mobileog": (
+                    comprehensive_databases["mobileog_dmnd"],
                     MGE_MIN_IDENTITY,
                     MGE_MIN_QUERY_COVERAGE,
                 ),
@@ -814,6 +812,19 @@ def annotate(
                     MOB_MIN_QUERY_COVERAGE,
                 ),
             }
+            legacy_isfinder_db = database_dir / "mge" / "legacy_isfinder.dmnd"
+            legacy_isfinder_metadata = database_dir / "mge" / "legacy_isfinder_metadata.tsv"
+            if legacy_isfinder_db.is_file() or legacy_isfinder_metadata.is_file():
+                if not legacy_isfinder_db.is_file() or not legacy_isfinder_metadata.is_file():
+                    raise FileNotFoundError(
+                        "Legacy ISfinder installation is incomplete; both the database and "
+                        "metadata files are required"
+                    )
+                search_routes["legacy_isfinder"] = (
+                    legacy_isfinder_db,
+                    MGE_MIN_IDENTITY,
+                    MGE_MIN_QUERY_COVERAGE,
+                )
             extended_raw: dict[str, Path] = {}
             for route, (database, identity, coverage) in search_routes.items():
                 route_path = raw / f"{route}_diamond.tsv"
@@ -841,9 +852,11 @@ def annotate(
                     load_vfdb_metadata(comprehensive_databases["vfdb_metadata"]),
                 )
             )
-            extended_hits.extend(
-                parse_mge(extended_raw["mge"], orfs, comprehensive_databases["mge_metadata"])
-            )
+            extended_hits.extend(parse_mobileog(extended_raw["mobileog"], orfs))
+            if "legacy_isfinder" in extended_raw:
+                extended_hits.extend(
+                    parse_mge(extended_raw["legacy_isfinder"], orfs, legacy_isfinder_metadata)
+                )
             extended_hits.extend(
                 parse_bacmet(
                     extended_raw["bacmet"],
@@ -910,6 +923,13 @@ def annotate(
             database_identities.update(
                 {name: _database_identity(path) for name, path in comprehensive_databases.items()}
             )
+            legacy_isfinder_db = database_dir / "mge" / "legacy_isfinder.dmnd"
+            legacy_isfinder_metadata = database_dir / "mge" / "legacy_isfinder_metadata.tsv"
+            if legacy_isfinder_db.is_file() and legacy_isfinder_metadata.is_file():
+                database_identities["legacy_isfinder_dmnd"] = _database_identity(legacy_isfinder_db)
+                database_identities["legacy_isfinder_metadata"] = _database_identity(
+                    legacy_isfinder_metadata
+                )
 
         evidence_counts = Counter(hit.source for hit in all_hits)
         provenance = {

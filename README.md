@@ -70,11 +70,11 @@ database licensing boundaries.
 
 The installer includes the official AMRFinderPlus software and its BLAST/HMMER
 runtime dependencies. `mobiorigin setup-databases --component annotation`
-now stages and verifies a complete authorized CARD/SARG/VFDB/MGE/BacMet/MOB
-resource set in one atomic operation. The command does not redistribute those
-third-party records: users must obtain them from their official sources under
-the applicable terms. Every installed file is independently copied, hashed,
-recorded in a manifest, and checked before annotation starts.
+downloads permitted resources from their official sources, builds the DIAMOND
+indexes locally, and verifies the complete CARD/SARG/AMRFinderPlus/VFDB/
+mobileOG-db/BacMet/MOB resource set in one atomic operation. ISfinder is not
+required or downloaded; authorized users can add it as an optional legacy
+evidence layer. Every installed file is hashed and recorded in a manifest.
 
 MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
 
@@ -93,26 +93,24 @@ The helper never installs MOB-suite into the `mobiorigin` runtime environment an
 
 ## Prepare annotation databases
 
-After obtaining the annotation resources from their official sources, place
-them in the documented directory layout and install the complete set with one
-command:
+After the marker-database step above has passed, install the complete annotation
+set with one command:
 
 ```bash
 mobiorigin setup-databases \
   --component annotation \
-  --source-dir /path/to/authorized_annotation_sources \
-  --amrfinder-database /path/to/amrfinderplus/data/version \
   --profile comprehensive \
   --accept-third-party-terms
 ```
 
 The default destination is
 `${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/annotation_databases`.
-The official AMRFinderPlus updater can prepare its version directory with
-`amrfinder --update`; pass the resolved dated directory rather than its
-`latest` symlink. MobiOrigin copies that complete database into the same
-managed destination. It refuses a partial source, rejects symlinks and changed bytes, and
-does not publish a partial destination after failure. Recheck it at any time:
+This retrieves CARD, SARG, AMRFinderPlus, VFDB core, mobileOG-db, and BacMet
+from pinned or official endpoints, builds local DIAMOND indexes, reuses the
+verified MOB marker databases, and retains resumable downloads in the user
+cache. Comprehensive setup downloads the approximately 2.1 GB mobileOG-db
+protein release and therefore needs several gigabytes of temporary/free space.
+It does not publish a partial destination after failure. Recheck it at any time:
 
 ```bash
 mobiorigin setup-databases \
@@ -179,7 +177,7 @@ Open `mobiorigin_visualization/mobiorigin_dashboard.html`. The dashboard reports
 classification. It never changes MobiOrigin labels, probabilities, or the
 selective threshold. The ARG profile retains independent CARD, SARG, and
 official AMRFinderPlus evidence. The comprehensive profile additionally reports
-AMRFinderPlus virulence/stress calls, VFDB core homologs, curated MGE evidence,
+AMRFinderPlus virulence/stress calls, VFDB core homologs, mobileOG-db MGE evidence,
 BacMet2 biocide/metal-resistance homologs, and MOB-suite replication, relaxase,
 and mating-pair-formation markers.
 

@@ -25,7 +25,9 @@ The `comprehensive` profile additionally retains:
 - **VFDB core (set A)** homologs. The core dataset contains representative
   experimentally verified virulence factors, but a homolog alone does not
   establish pathogenic phenotype;
-- curated insertion-sequence/mobile-element homologs and metadata;
+- **mobileOG-db 2.0.1-90** mobile-element protein families, reported as
+  integration/excision, phage-associated, replication/recombination/repair,
+  transfer, or general MGE evidence;
 - **BacMet2 experimental** biocide and metal-resistance homologs;
 - **MOB-suite** replication, relaxase, and mating-pair-formation markers.
 
@@ -36,27 +38,24 @@ its experimentally verified core dataset from its broader full dataset.
 
 ## One-command local installation
 
-MobiOrigin installs a complete, authorized annotation resource directory with:
+MobiOrigin downloads permitted official resources, builds local indexes, and
+installs the complete annotation resource directory with:
 
 ```bash
 mobiorigin setup-databases \
   --component annotation \
-  --source-dir /path/to/authorized_annotation_sources \
-  --amrfinder-database /path/to/amrfinderplus/data/version \
   --profile comprehensive \
   --accept-third-party-terms
 ```
 
 The destination defaults to
 `${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/annotation_databases`, or the
-path in `MOBIORIGIN_ANNOTATION_DATABASE_DIR`. Run `amrfinder --update` first
-and pass its resolved dated database directory (the directory containing
-`version.txt`) to `--amrfinder-database`. MobiOrigin installs that complete
-official database as `annotation_databases/amrfinderplus/`, so subsequent
-annotation commands need no AMRFinderPlus database argument. Installation is atomic: every
-required file is copied independently, its size and SHA-256 identity are
-recorded, and an incomplete or changed source leaves no published destination.
-The command also writes a third-party notice and links to the upstream terms.
+path in `MOBIORIGIN_ANNOTATION_DATABASE_DIR`. Downloads are retained under the
+user cache so the 2.1 GB mobileOG-db release can resume or be reused. MobiOrigin
+runs the official AMRFinderPlus updater and builds CARD, SARG, VFDB, mobileOG-db,
+and BacMet DIAMOND indexes locally. Subsequent annotation commands need no
+database arguments. Installation is atomic: every file size and SHA-256 identity
+is recorded, and an incomplete setup leaves no published destination.
 
 Verify an installed resource set without copying or parsing biological records:
 
@@ -67,7 +66,8 @@ mobiorigin setup-databases \
   --check
 ```
 
-The source directory supplied to the installer must have the following layout.
+For an offline or institutionally mirrored setup, supply `--source-dir` and
+`--amrfinder-database`. The source directory must have this layout:
 
 ## Required source layout
 
@@ -88,8 +88,7 @@ annotation_databases/
 │   ├── vfdb_setA.dmnd
 │   └── vfdb_indx.txt
 ├── mge/
-│   ├── isfinder.dmnd
-│   └── mge_database.tsv
+│   └── mobileog.dmnd
 ├── bacmet/
 │   ├── bacmet.dmnd
 │   └── Bacmet_list.tsv
@@ -104,10 +103,29 @@ AMRProt DIAMOND route. Official mode instead requires a complete official
 AMRFinderPlus database directory supplied through `--amrfinder-database`.
 MobiOrigin hashes every consumed database and executable into provenance.
 
-Third-party database payloads are never bundled. Users must obtain them under
-the terms that apply to their intended use. VFDB describes its data as
-CC BY-NC 4.0 for non-commercial academic/research use and asks commercial users
-to contact VFDB. AMRFinderPlus software and database are U.S. Government works.
+Third-party database payloads are not bundled in the MobiOrigin package.
+Automatic setup retrieves them directly from their publishers. VFDB describes
+its data as CC BY-NC 4.0 for non-commercial academic/research use and asks
+commercial users to contact VFDB. mobileOG-db's fixed Zenodo record is CC BY
+4.0. AMRFinderPlus software and database are U.S. Government works.
+
+### Optional authorized legacy ISfinder layer
+
+ISfinder is not part of the default setup because its terms require written
+authorization for database download and prohibit third-party redistribution.
+If you already have authorized `isfinder.dmnd` and `mge_database.tsv` files,
+add them during a fresh setup:
+
+```bash
+mobiorigin setup-databases \
+  --component annotation \
+  --profile comprehensive \
+  --accept-third-party-terms \
+  --legacy-isfinder-source-dir /path/to/authorized_isfinder_files
+```
+
+Those hits are reported separately as `ISFINDER_LEGACY`; mobileOG-db remains
+the default MGE provider and is never overwritten.
 
 ## ARG-only workflow
 
@@ -141,9 +159,9 @@ database search, parsing, alignment, or hashing leaves no partial published
 result.
 
 Comprehensive homology thresholds are frozen in provenance: VFDB core 60%
-identity/80% query coverage; curated MGE 70%/80%; BacMet2 80%/80%; and
-MOB-suite markers 50%/70%. These calls are homology evidence, not phenotype
-confirmation.
+identity/80% query coverage; mobileOG-db and optional legacy ISfinder 70%/80%;
+BacMet2 80%/80%; and MOB-suite markers 50%/70%. These calls are homology
+evidence, not phenotype confirmation.
 
 ## Explicit supplemental AMRProt route
 

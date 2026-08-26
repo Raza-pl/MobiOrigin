@@ -37,7 +37,7 @@ biological benchmark.
 
 AMRFinderPlus and its executable dependencies are installed in the visible
 runtime. Comprehensive annotation additionally uses CARD, SARG, VFDB,
-ISfinder-derived, and BacMet research data. MobiOrigin does not silently accept
+mobileOG-db, optional authorized legacy ISfinder, and BacMet research data. MobiOrigin does not silently accept
 licenses, bypass registrations, or redistribute these resources; prepare them
 using the exact layout in `docs/MOBIORIGIN_ANNOTATION.md`, then MobiOrigin will
 validate every required file before analysis.
@@ -192,22 +192,21 @@ The approach mirrors the useful pattern in the MetaPhlAn tutorial: first create 
 
 ## 6. Add independent biological annotation
 
-Annotation does not alter the frozen MobiOrigin prediction. The comprehensive profile can summarize CARD, SARG, official AMRFinderPlus, VFDB core, curated MGE, BacMet2, replicon, relaxase, and mating-pair-formation evidence.
+Annotation does not alter the frozen MobiOrigin prediction. The comprehensive profile can summarize CARD, SARG, official AMRFinderPlus, VFDB core, mobileOG-db MGE, BacMet2, replicon, relaxase, and mating-pair-formation evidence.
 
-After obtaining authorized copies from the official sources, stage and verify
-the complete annotation resource set once:
+Download, build, and verify the complete annotation resource set once:
 
 ```bash
 mobiorigin setup-databases \
   --component annotation \
-  --source-dir /path/to/authorized_annotation_sources \
-  --amrfinder-database /path/to/amrfinderplus/data/version \
   --profile comprehensive \
   --accept-third-party-terms
 ```
 
-The required source layout and upstream terms are documented in
-[`MOBIORIGIN_ANNOTATION.md`](MOBIORIGIN_ANNOTATION.md). Then run:
+MobiOrigin retrieves permitted data from official sources. mobileOG-db is the
+default MGE protein-family resource. ISfinder is neither required nor
+downloaded. Offline mirrors and optional authorized legacy ISfinder imports are
+documented in [`MOBIORIGIN_ANNOTATION.md`](MOBIORIGIN_ANNOTATION.md). Then run:
 
 ```bash
 mobiorigin annotate \
