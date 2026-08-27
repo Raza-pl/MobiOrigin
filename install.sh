@@ -9,6 +9,7 @@ SKIP_DEMO=false
 SKIP_ANNOTATION_DATABASES=false
 ACCEPT_THIRD_PARTY_TERMS=false
 DATABASE_DIR="${MOBIORIGIN_DATABASE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/marker_databases}"
+MODEL_DIR="${MOBIORIGIN_MODEL_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/models/dev1}"
 ANNOTATION_DATABASE_DIR="${MOBIORIGIN_ANNOTATION_DATABASE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/annotation_databases}"
 DEMO_DIR="${PROJECT_DIR}/mobiorigin_demo"
 
@@ -22,6 +23,10 @@ while [ "$#" -gt 0 ]; do
       shift
       DATABASE_DIR="$1"
       ;;
+    --model-dir)
+      shift
+      MODEL_DIR="$1"
+      ;;
     --annotation-database-dir)
       shift
       ANNOTATION_DATABASE_DIR="$1"
@@ -33,6 +38,7 @@ while [ "$#" -gt 0 ]; do
     --help|-h)
       echo "Usage: bash install.sh [--software-only] [--skip-demo] [--skip-annotation-databases]"
       echo "                       [--accept-third-party-terms] [--database-dir PATH]"
+      echo "                       [--model-dir PATH]"
       echo "                       [--annotation-database-dir PATH] [--demo-dir PATH]"
       exit 0
       ;;
@@ -97,7 +103,7 @@ if [ "$SOFTWARE_ONLY" = true ]; then
 fi
 
 echo "Preparing the frozen marker databases..."
-bash "$PROJECT_DIR/scripts/setup_mobiorigin_databases.sh" "$DATABASE_DIR"
+bash "$PROJECT_DIR/scripts/setup_mobiorigin_databases.sh" "$DATABASE_DIR" "$MODEL_DIR"
 database_rc=$?
 if [ "$database_rc" -ne 0 ]; then
   echo "STOP: Software is installed, but marker database setup did not complete." >&2
@@ -105,7 +111,9 @@ if [ "$database_rc" -ne 0 ]; then
   exit "$database_rc"
 fi
 
-"$ENV_MANAGER" run -n mobiorigin mobiorigin doctor --database-dir "$DATABASE_DIR"
+"$ENV_MANAGER" run -n mobiorigin mobiorigin doctor \
+  --database-dir "$DATABASE_DIR" \
+  --model-dir "$MODEL_DIR"
 full_doctor_rc=$?
 if [ "$full_doctor_rc" -ne 0 ]; then
   echo "STOP: The final installation check failed." >&2

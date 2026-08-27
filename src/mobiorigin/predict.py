@@ -18,6 +18,7 @@ from mobiorigin import __version__
 from mobiorigin.fasta import FastaRecord, read_fasta
 from mobiorigin.marker_features import extract_marker_features, load_database_manifest
 from mobiorigin.model import INPUT_DIM, MobiOriginMLP, load_model
+from mobiorigin.model_setup import resolve_model_dir
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
 from mobiorigin.runtime import validate_threads
 from mobiorigin.sequence_features import extract_sequence_features
@@ -166,7 +167,7 @@ def predict(
     records = read_fasta(input_fasta)
     supported_indices = [index for index, record in enumerate(records) if record.supported]
     supported = [records[index] for index in supported_indices]
-    models_root = model_dir or Path(__file__).parent / "data" / "models" / "dev1"
+    models_root = resolve_model_dir(model_dir)
     models, normalization = load_artifacts(models_root)
     databases = load_database_manifest(database_dir)
     parent = output_dir.parent

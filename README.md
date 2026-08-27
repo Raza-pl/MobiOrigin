@@ -7,11 +7,11 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Status
 
-- Package version: `0.1.2` (integrated installation, prediction, annotation, and visualization release).
+- Package version: `0.1.3` (PyPI-ready packaging and verified model transport release candidate).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.
-- Models: three frozen checkpoints distributed with the package. Each is governed by a cryptographic manifest and SHA-256 verified before use.
+- Models: three unchanged frozen checkpoints retrieved once during setup from a versioned GitHub release asset. The archive and every extracted artifact are SHA-256 verified before atomic installation.
 - Marker databases: not redistributed. Users must provide the exact identity-verified MOB-suite-derived research databases described in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
 
 ## Quick start: install, verify, and see an example
@@ -19,7 +19,8 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 MobiOrigin uses one visible Conda/Mamba environment. The guided installer adds
 MobiOrigin, CPU-only PyTorch, NumPy, Pyrodigal, DIAMOND, and official
 AMRFinderPlus; prepares the identity-verified marker databases in an isolated
-helper environment; checks the installation; and runs a tiny synthetic example.
+helper environment; retrieves the exact frozen model bundle; checks the
+installation; and runs a tiny synthetic example.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
@@ -78,18 +79,26 @@ evidence layer. Every installed file is hashed and recorded in a manifest.
 
 MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
 
-## Prepare marker databases
+## Prepare models and marker databases
 
-MobiOrigin does not bundle third-party biological database records. The guided
-installer performs this stage automatically. To run or resume only database
-preparation:
+The PyPI-ready package does not duplicate the 121 MB model payload inside every
+wheel and source archive. The guided installer retrieves the exact versioned
+model bundle and then prepares the third-party marker databases automatically.
+To run or resume both stages:
 
 ```bash
 bash scripts/setup_mobiorigin_databases.sh \
   "${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/marker_databases"
 ```
 
-The helper never installs MOB-suite into the `mobiorigin` runtime environment and never overwrites an existing output directory. It reuses a completed MOB-suite download, reconstructs the frozen indexes with DIAMOND 2.0.15, and publishes the database directory atomically only after all three hashes match. Complete manual steps and provenance details are documented in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md). Prediction fails closed if any source or database hash differs.
+The helper first installs the model bundle under
+`${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/models/dev1`. It verifies the
+archive SHA-256 and all five artifact identities before publishing the directory.
+It then prepares the marker databases. It never installs MOB-suite into the
+`mobiorigin` runtime environment and never overwrites an existing output
+directory. Complete manual and offline steps are documented in
+[`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
+Prediction fails closed if any model or database identity differs.
 
 ## Prepare annotation databases
 
@@ -138,7 +147,7 @@ mobiorigin run \
 MobiOrigin uses the documented user-data location by default. Advanced users
 can override the marker database with `--database-dir` and the annotation
 database with `--annotation-database-dir`. The corresponding environment
-variables are `MOBIORIGIN_DATABASE_DIR` and
+variables are `MOBIORIGIN_MODEL_DIR`, `MOBIORIGIN_DATABASE_DIR`, and
 `MOBIORIGIN_ANNOTATION_DATABASE_DIR`.
 
 For a quick prediction and visualization without biological annotation:

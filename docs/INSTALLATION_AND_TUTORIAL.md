@@ -21,10 +21,10 @@ mobiorigin doctor
 ```
 
 The installer uses Mamba when available and otherwise Conda. It creates or
-updates the `mobiorigin` runtime, builds the marker databases in the isolated
-`mobiorigin-db` environment, verifies required software and database identities,
-and runs a bundled synthetic example. It checks return codes explicitly and
-does not use `set -e`.
+updates the `mobiorigin` runtime, retrieves and verifies the exact frozen model
+bundle, builds the marker databases in the isolated `mobiorigin-db` environment,
+verifies required software and identities, and runs a bundled synthetic
+example. It checks return codes explicitly and does not use `set -e`.
 
 The test output is created at `mobiorigin_demo/`. Open
 `mobiorigin_demo/visualization/mobiorigin_dashboard.html`; inspect
@@ -78,9 +78,13 @@ The guided database helper expects the recommended named Conda runtime. Virtual-
 
 MobiOrigin is not yet published on PyPI or Bioconda. Do not use `pip install mobiorigin` or `mamba install mobiorigin` until the corresponding release page exists.
 
-## 2. Prepare and verify the marker databases
+## 2. Prepare and verify models and marker databases
 
-MobiOrigin does not redistribute the MOB-suite biological sequence databases. The recommended helper keeps MOB-suite's older dependency stack isolated, retrieves its official database, and lets MobiOrigin copy only the three frozen, identity-verified files.
+MobiOrigin installs the unchanged frozen model bundle once in the user data
+directory. It does not redistribute the MOB-suite biological sequence databases.
+The recommended helper verifies the model archive, keeps MOB-suite's older
+dependency stack isolated, retrieves its official database, and lets MobiOrigin
+copy only the three frozen, identity-verified files.
 
 ```bash
 bash scripts/setup_mobiorigin_databases.sh \
@@ -88,6 +92,29 @@ bash scripts/setup_mobiorigin_databases.sh \
 ```
 
 The helper creates or reuses `mobiorigin-db` for MOB-suite retrieval and a small separate `mobiorigin-marker-build` environment for DIAMOND 2.0.15. Keeping the builder separate avoids retrofitting historical DIAMOND/Boost into MOB-suite's Qt/ICU dependency stack. It runs or reuses `mob_init`, finds MOB-suite's current `databases/` raw-file layout, reconstructs the frozen indexes, then switches back to the `mobiorigin` runtime for hash verification and the final preflight. It is safe to rerun: an existing download or valid output is reused rather than overwritten. The helper also disables user-site Python packages so an unrelated `~/.local` NumPy or pandas cannot contaminate either helper.
+
+The default model location is
+`${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/models/dev1`. To prepare or
+check only the models:
+
+```bash
+mobiorigin setup-databases --component models
+mobiorigin setup-databases --component models --check
+```
+
+For an offline installation, copy the exact
+`mobiorigin-models-dev1.tar` asset to the machine and run:
+
+```bash
+mobiorigin setup-databases \
+  --component models \
+  --model-archive /path/to/mobiorigin-models-dev1.tar
+```
+
+The required archive SHA-256 is
+`10a3e599eae31a72a4d09a4a58685666058f88d6995fbb9ed450e965a6a513cf`.
+Prediction never downloads a model and stops before inference if model setup is
+missing or changed.
 
 On Apple Silicon, Bioconda does not currently provide the older BLAST build required by MOB-suite 3.1.8 as a native arm64 package. The helper therefore creates only the `mobiorigin-db` bootstrap environment as `osx-64` under Rosetta. The MobiOrigin runtime remains native arm64. If Rosetta is absent, the helper stops and prints the one-time installation command rather than changing the system automatically.
 
@@ -121,6 +148,7 @@ python src/mobiorigin/marker_database_builder.py \
   --diamond diamond
 
 conda activate mobiorigin
+mobiorigin setup-databases --component models
 mobiorigin setup-databases \
   --source-dir /tmp/mobiorigin_frozen_marker_build \
   --output-dir "$HOME/mobiorigin_databases"
@@ -311,8 +339,8 @@ Prediction is CPU-oriented. Start with eight DIAMOND threads, maintain sufficien
 
 ## 10. Packaging status
 
-- Source installation, CPU runtime environment, isolated database environment, and guided database helper: available now.
-- PyPI: not yet enabled. The current model-inclusive wheel is approximately 112.5 MB, above PyPI's default 100 MB per-file limit. Before publishing, either move the checkpoints to a separately verified download route or obtain a PyPI project limit increase. Trusted publishing should be configured only after that packaging decision is frozen.
+- Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
+- PyPI: the slim package, exact external model transport, and token-free Trusted Publishing workflow are prepared. Publication remains unavailable until the release candidate passes its build, clean-install, and GitHub/PyPI authorization gates.
 - Bioconda: requires a separate recipe pull request after a public source distribution exists.
 
 No documentation should claim PyPI or Bioconda availability before those external release steps pass.

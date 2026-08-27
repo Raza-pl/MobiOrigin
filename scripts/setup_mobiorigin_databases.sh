@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
-# Prepare the frozen MobiOrigin marker databases without mixing MOB-suite's
-# legacy dependency stack into the MobiOrigin runtime environment.
+# Prepare the frozen MobiOrigin model and marker databases without mixing
+# MOB-suite's legacy dependency stack into the runtime environment.
 
 OUTPUT_DIR="${1:-${HOME}/mobiorigin_databases}"
+MODEL_DIR="${2:-${MOBIORIGIN_MODEL_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/models/dev1}}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
 export PYTHONNOUSERSITE=1
 unset PYTHONPATH
@@ -28,7 +29,8 @@ fi
 
 echo "MobiOrigin database setup"
 echo "Environment manager: $ENV_MANAGER"
-echo "Output directory: $OUTPUT_DIR"
+echo "Marker directory: $OUTPUT_DIR"
+echo "Model directory: $MODEL_DIR"
 
 "$ENV_MANAGER" run -n mobiorigin mobiorigin --help >/dev/null 2>&1
 runtime_rc=$?
@@ -36,6 +38,25 @@ if [ "$runtime_rc" -ne 0 ]; then
   echo "STOP: The 'mobiorigin' runtime environment is unavailable." >&2
   echo "Create it first with: $ENV_MANAGER env create -f environment.yml" >&2
   exit 1
+fi
+
+if [ -d "$MODEL_DIR" ]; then
+  echo "The model directory exists; verifying it without overwriting."
+  "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
+    --component models \
+    --check \
+    --output-dir "$MODEL_DIR"
+else
+  echo "Retrieving and verifying the exact frozen MobiOrigin model artifacts..."
+  "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
+    --component models \
+    --output-dir "$MODEL_DIR"
+fi
+model_rc=$?
+if [ "$model_rc" -ne 0 ]; then
+  echo "STOP: Frozen model setup did not complete." >&2
+  echo "Resume with: mobiorigin setup-databases --component models" >&2
+  exit "$model_rc"
 fi
 
 if [ -d "$OUTPUT_DIR" ]; then
@@ -49,7 +70,7 @@ if [ -d "$OUTPUT_DIR" ]; then
     echo "Keep it for diagnosis or choose a new output directory." >&2
     exit "$check_rc"
   fi
-  echo "PASS: Existing MobiOrigin marker databases are valid."
+  echo "PASS: Existing MobiOrigin models and marker databases are valid."
   exit 0
 fi
 
@@ -206,5 +227,7 @@ fi
 "$ENV_MANAGER" run -n mobiorigin-marker-build python -c \
   'import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' "$BUILD_DIR"
 
-echo "PASS: MobiOrigin marker databases are ready at $OUTPUT_DIR"
+echo "PASS: MobiOrigin models and marker databases are ready."
+echo "Models: $MODEL_DIR"
+echo "Markers: $OUTPUT_DIR"
 exit 0

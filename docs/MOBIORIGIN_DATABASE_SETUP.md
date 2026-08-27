@@ -1,11 +1,36 @@
-# MobiOrigin marker-database setup
+# MobiOrigin model and marker-database setup
 
-This page covers the frozen marker resources used by prediction. The same CLI
+This page covers the frozen model and marker resources used by prediction. The same CLI
 also installs the separate downstream annotation resources with
 `mobiorigin setup-databases --component annotation`; see
 [`MOBIORIGIN_ANNOTATION.md`](MOBIORIGIN_ANNOTATION.md).
 
 MobiOrigin dev1 uses three MOB-suite-derived protein-marker databases: replication (`rep`), relaxase/mobilization (`mob`), and mating-pair formation (`mpf`). These biological records are not bundled with MobiOrigin. Prediction is offline and fails closed unless all three DIAMOND databases exactly match the frozen research identities.
+
+The three unchanged neural-network checkpoints and normalization artifact are
+distributed as one versioned GitHub release asset instead of being duplicated
+inside every wheel and source archive. Setup requires the archive SHA-256
+`10a3e599eae31a72a4d09a4a58685666058f88d6995fbb9ed450e965a6a513cf`
+and then verifies the existing per-file identities in `model_manifest.json`.
+The destination is published atomically only after all checks pass.
+
+```bash
+mobiorigin setup-databases --component models
+mobiorigin setup-databases --component models --check
+```
+
+The default directory is
+`${XDG_DATA_HOME:-$HOME/.local/share}/mobiorigin/models/dev1`. Override it with
+`MOBIORIGIN_MODEL_DIR`. An explicit offline archive can be installed with:
+
+```bash
+mobiorigin setup-databases \
+  --component models \
+  --model-archive /path/to/mobiorigin-models-dev1.tar
+```
+
+Model download is a setup operation. Prediction itself never accesses the
+network and will stop if a required model is absent or changed.
 
 ## Provenance and redistribution boundary
 
@@ -34,7 +59,19 @@ MobiOrigin and MOB-suite must not be installed into the same Conda environment. 
 bash scripts/setup_mobiorigin_databases.sh "$HOME/mobiorigin_databases"
 ```
 
-The helper creates a dedicated `mobiorigin-db` retrieval environment from `environment.mob-database.yml`, runs MOB-suite 3.1.8's official `mob_init` route there, and locates the current `mob_suite/databases` raw files. A second small `mobiorigin-marker-build` helper from `environment.marker-build.yml` contains only Python and pinned DIAMOND 2.0.15 (database build 153). It verifies the raw identities, applies the frozen six-frame replication-protein translation, and reconstructs the three final indexes without changing MOB-suite's older Qt/ICU dependency stack. MobiOrigin then verifies every frozen SHA-256 identity, writes the manifest and third-party notice, and atomically publishes the output directory. It fails without leaving a partial published output if any source or rebuilt identity differs. Existing valid downloads and helper environments are reused rather than overwritten or updated in place.
+The helper first retrieves and verifies the model bundle. It then creates a
+dedicated `mobiorigin-db` retrieval environment from
+`environment.mob-database.yml`, runs MOB-suite 3.1.8's official `mob_init` route
+there, and locates the current `mob_suite/databases` raw files. A second small
+`mobiorigin-marker-build` helper from `environment.marker-build.yml` contains
+only Python and pinned DIAMOND 2.0.15 (database build 153). It verifies the raw
+identities, applies the frozen six-frame replication-protein translation, and
+reconstructs the three final indexes without changing MOB-suite's older Qt/ICU
+dependency stack. MobiOrigin then verifies every frozen SHA-256 identity, writes
+the manifest and third-party notice, and atomically publishes the output
+directory. It fails without leaving a partial published output if any source or
+rebuilt identity differs. Existing valid downloads and helper environments are
+reused rather than overwritten or updated in place.
 
 The helper exports `PYTHONNOUSERSITE=1` and clears `PYTHONPATH`/`PYTHONHOME` so packages from `~/.local` cannot contaminate the isolated builder. MOB-suite 3.1.8 names the raw files `rep.dna.fas`, `mob.proteins.faa`, and `mpf.proteins.faa`; `mob_init` does not itself create MobiOrigin's three `.dmnd` filenames.
 
@@ -68,6 +105,7 @@ python src/mobiorigin/marker_database_builder.py \
   --diamond diamond
 
 conda activate mobiorigin
+mobiorigin setup-databases --component models
 mobiorigin setup-databases \
   --source-dir /tmp/mobiorigin_frozen_marker_build \
   --output-dir "$HOME/mobiorigin_databases"

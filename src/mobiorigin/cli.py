@@ -14,6 +14,7 @@ from mobiorigin.annotation_database_setup import (
     setup_annotation_databases,
 )
 from mobiorigin.database_setup import check_databases, setup_databases
+from mobiorigin.model_setup import check_models, default_model_dir, setup_models
 from mobiorigin.predict import predict
 from mobiorigin.visualize import visualize
 from mobiorigin.workflow import demo, doctor, resolve_database_dir, run_analysis
@@ -39,7 +40,9 @@ def parser() -> argparse.ArgumentParser:
     setup_parser = subparsers.add_parser(
         "setup-databases", help="prepare and verify marker or annotation databases"
     )
-    setup_parser.add_argument("--component", choices=("marker", "annotation"), default="marker")
+    setup_parser.add_argument(
+        "--component", choices=("marker", "annotation", "models"), default="marker"
+    )
     setup_parser.add_argument("--output-dir", type=Path)
     setup_parser.add_argument(
         "--source-dir",
@@ -96,6 +99,11 @@ def parser() -> argparse.ArgumentParser:
         help="AMRFinderPlus database updater executable",
     )
     setup_parser.add_argument("--diamond", type=Path, default=Path("diamond"))
+    setup_parser.add_argument(
+        "--model-archive",
+        type=Path,
+        help="optional offline copy of the exact frozen model archive",
+    )
     annotate_parser = subparsers.add_parser(
         "annotate", help="annotate biological evidence without changing MobiOrigin predictions"
     )
@@ -176,6 +184,7 @@ def parser() -> argparse.ArgumentParser:
     )
     doctor_parser = subparsers.add_parser("doctor", help="check installation and databases")
     doctor_parser.add_argument("--database-dir", type=Path)
+    doctor_parser.add_argument("--model-dir", type=Path)
     doctor_parser.add_argument(
         "--software-only", action="store_true", help="check installed commands without databases"
     )
@@ -206,9 +215,27 @@ def main(argv: Sequence[str] | None = None) -> None:
             output_dir = (
                 default_annotation_database_dir()
                 if args.component == "annotation"
-                else resolve_database_dir(None)
+                else (
+                    default_model_dir()
+                    if args.component == "models"
+                    else resolve_database_dir(None)
+                )
             )
-        if args.component == "annotation":
+        if args.component == "models":
+            if args.check:
+                print(json.dumps(check_models(output_dir), indent=2))
+            else:
+                print(
+                    json.dumps(
+                        setup_models(
+                            output_dir,
+                            archive=args.model_archive,
+                            cache_dir=args.cache_dir,
+                        ),
+                        indent=2,
+                    )
+                )
+        elif args.component == "annotation":
             if args.check:
                 result = check_annotation_databases(output_dir, profile=args.profile)
             else:
@@ -276,7 +303,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             threads=args.threads,
         )
     elif args.command == "doctor":
-        result = doctor(database_dir=args.database_dir, software_only=args.software_only)
+        result = doctor(
+            database_dir=args.database_dir,
+            model_dir=args.model_dir,
+            software_only=args.software_only,
+        )
         print(json.dumps(result, indent=2))
         if result["status"] != "PASS":
             raise SystemExit(1)

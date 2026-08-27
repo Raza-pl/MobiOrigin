@@ -1,13 +1,11 @@
 [tool.poetry]
 name = "mobiorigin"
-version = "0.1.2"
+version = "0.1.3"
 description = "MobiOrigin: sequence-and-marker classification of bacterial replicons"
 authors = ["Shahbaz Raza <shahbaz.invincible3182@gmail.com>"]
 license = "GPL-3.0"
 readme = "README.md"
 include = [
-    { path = "src/mobiorigin/data/models/dev1/*.pt", format = ["sdist", "wheel"] },
-    { path = "src/mobiorigin/data/models/dev1/*.npy", format = ["sdist", "wheel"] },
     { path = "src/mobiorigin/data/models/dev1/model_manifest.json", format = ["sdist", "wheel"] },
     { path = "src/mobiorigin/data/examples/demo.fasta", format = ["sdist", "wheel"] },
     { path = "src/mobiorigin/data/examples/annotated_assembly_example.fasta", format = ["sdist", "wheel"] },
@@ -24,12 +22,18 @@ include = [
     { path = "environment.marker-build.yml", format = ["sdist"] },
     { path = "scripts/setup_mobiorigin_databases.sh", format = ["sdist"] },
     { path = "scripts/run_mobiorigin_assembly_example.sh", format = ["sdist"] },
+    { path = "scripts/build_mobiorigin_model_bundle.py", format = ["sdist"] },
     { path = "src/mobiorigin/marker_database_builder.py", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.0.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.1.md", format = ["sdist"] },
     { path = "docs/RELEASE_NOTES_0.1.2.md", format = ["sdist"] },
+    { path = "docs/RELEASE_NOTES_0.1.3.md", format = ["sdist"] },
     { path = "docs/validation/external_validation", format = ["sdist"] },
     { path = "docs/validation/operational_validation", format = ["sdist"] },
+]
+exclude = [
+    "src/mobiorigin/data/models/dev1/*.pt",
+    "src/mobiorigin/data/models/dev1/*.npy",
 ]
 homepage = "https://github.com/Raza-pl/MobiOrigin"
 repository = "https://github.com/Raza-pl/MobiOrigin"
