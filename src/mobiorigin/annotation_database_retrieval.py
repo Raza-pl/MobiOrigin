@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 from typing import Final
 
+from mobiorigin.mobileog import audit_mobileog_fasta
 from mobiorigin.provenance import sha256_file
 
 CARD_URL: Final = "https://card.mcmaster.ca/latest/data"
@@ -219,6 +220,10 @@ def prepare_official_annotation_sources(
 
         mobileog_fasta = cache_dir / "mobileOG2-dino.90_sequences.faa"
         downloads["mobileOG-db"] = download(MOBILEOG_URL, mobileog_fasta, expected_md5=MOBILEOG_MD5)
+        audit_mobileog_fasta(
+            mobileog_fasta,
+            destination / "mge" / "mobileog_compatibility.json",
+        )
         _build_diamond(executable, mobileog_fasta, destination / "mge" / "mobileog.dmnd")
 
         bacmet_fasta = cache_dir / "BacMet_EXP_database.fasta"

@@ -34,6 +34,7 @@ from mobiorigin.annotation_database_retrieval import (
 from mobiorigin.annotation_database_setup import (
     ANNOTATION_MANIFEST_NAME,
     COMPREHENSIVE_DATABASE_FILES,
+    MOBILEOG_COMPATIBILITY_FILE,
     check_annotation_databases,
     default_annotation_database_dir,
     setup_annotation_databases,
@@ -43,6 +44,7 @@ from mobiorigin.biological_evidence import (
     arg_evidence,
     load_predictions,
     parse_amrfinderplus_non_amr,
+    parse_mobileog,
     write_integrated_results,
     write_publication_summary,
 )
@@ -72,6 +74,7 @@ from mobiorigin.marker_features import (
     predict_orfs,
     run_diamond,
 )
+from mobiorigin.mobileog import audit_mobileog_fasta, mobileog_fields
 from mobiorigin.model import MobiOriginMLP, ModelLoadError, load_model
 from mobiorigin.model_setup import (
     MODEL_ARCHIVE_ROOT,
@@ -259,7 +262,9 @@ def test_annotation_database_setup_is_atomic_and_identity_checked(tmp_path: Path
     )
     assert result["status"] == "PASS"
     assert result["profile"] == "comprehensive"
-    assert result["resources_verified"] == len(COMPREHENSIVE_DATABASE_FILES) + 2
+    assert result["resources_verified"] == len(COMPREHENSIVE_DATABASE_FILES) + 3
+    assert result["mobileog_compatibility"]["status"] == "LEGACY_SOURCE_NOT_AUDITED"
+    assert (output / MOBILEOG_COMPATIBILITY_FILE).is_file()
     assert (output / ANNOTATION_MANIFEST_NAME).is_file()
     assert (output / "THIRD_PARTY_ANNOTATION_DATABASE_NOTICE.txt").is_file()
     manifest = json.loads((output / ANNOTATION_MANIFEST_NAME).read_text())
@@ -508,6 +513,11 @@ def test_prepare_official_annotation_sources(
     assert resolved == amrfinder
     assert set(details["downloads"]) == set(sources)
     assert (prepared / "mge/mobileog.dmnd").is_file()
+    compatibility = json.loads(
+        (prepared / "mge/mobileog_compatibility.json").read_text(encoding="utf-8")
+    )
+    assert compatibility["status"] == "PASS"
+    assert compatibility["headers_supported"] == 1
     assert not (prepared / "mge/legacy_isfinder.dmnd").exists()
     assert "Toxin" in (prepared / "vfdb/vfdb_indx.txt").read_text()
 
@@ -543,6 +553,8 @@ def test_guided_installer_is_non_errexit_and_runs_demo() -> None:
     assert "mobiorigin doctor --software-only" in installer
     assert "scripts/setup_mobiorigin_databases.sh" in installer
     assert "mobiorigin demo" in installer
+    assert "--comprehensive" in installer
+    assert "--annotation-database-dir" in installer
     assert "--software-only" in installer
     assert not any(line.lstrip().startswith("rm ") for line in installer.splitlines())
 
@@ -642,8 +654,37 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
     demo_output = tmp_path / "demo"
     result = demo(output_dir=demo_output, database_dir=tmp_path / "db")
     assert result["status"] == "PASS"
+    assert result["verification_profile"] == "basic"
     assert result["records"] == 1
     assert not (demo_output / "annotation").exists()
+    comprehensive_demo = tmp_path / "comprehensive-demo"
+    comprehensive_result = demo(
+        output_dir=comprehensive_demo,
+        database_dir=tmp_path / "db",
+        annotation_database_dir=tmp_path / "annotation-db",
+        comprehensive=True,
+    )
+    assert comprehensive_result["verification_profile"] == "comprehensive"
+    assert comprehensive_result["annotation_report"].endswith("mobiorigin_report.html")
+    assert (comprehensive_demo / "annotation" / "mobiorigin_report.html").is_file()
+
+    def failing_annotation(**kwargs: object) -> None:
+        raise ValueError("synthetic annotation failure")
+
+    monkeypatch.setattr("mobiorigin.workflow.annotate", failing_annotation)
+    failed_output = tmp_path / "failed-analysis"
+    with pytest.raises(RuntimeError, match="incomplete state was retained"):
+        run_analysis(
+            input_fasta=tmp_path / "input.fasta",
+            output_dir=failed_output,
+            database_dir=tmp_path / "db",
+        )
+    retained = tmp_path / "failed-analysis.failed"
+    assert not failed_output.exists()
+    assert (retained / "predictions" / "predictions.tsv").is_file()
+    failure = json.loads((retained / "ANALYSIS_FAILED.json").read_text(encoding="utf-8"))
+    assert failure["completed_stages"] == ["prediction"]
+    assert failure["scientific_status"] == "incomplete_not_for_interpretation"
 
 
 def test_cli_dispatches_run_doctor_and_demo(
@@ -667,9 +708,25 @@ def test_cli_dispatches_run_doctor_and_demo(
     monkeypatch.setattr(cli, "doctor", lambda **kwargs: {"status": "PASS"})
     cli.main(["doctor", "--software-only"])
     assert '"status": "PASS"' in capsys.readouterr().out
-    monkeypatch.setattr(cli, "demo", lambda **kwargs: {"status": "PASS"})
-    cli.main(["demo", "--output-dir", str(tmp_path / "demo")])
+    demo_arguments: dict[str, object] = {}
+    monkeypatch.setattr(
+        cli,
+        "demo",
+        lambda **kwargs: demo_arguments.update(kwargs) or {"status": "PASS"},
+    )
+    cli.main(
+        [
+            "demo",
+            "--output-dir",
+            str(tmp_path / "demo"),
+            "--annotation-database-dir",
+            str(tmp_path / "annotation"),
+            "--comprehensive",
+        ]
+    )
     assert '"status": "PASS"' in capsys.readouterr().out
+    assert demo_arguments["annotation_database_dir"] == tmp_path / "annotation"
+    assert demo_arguments["comprehensive"] is True
 
 
 def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
@@ -1400,6 +1457,55 @@ def test_amrfinderplus_non_amr_evidence_remains_outside_arg_consensus(tmp_path: 
     assert hits[0].feature_name == "stxA"
 
 
+def test_mobileog_parser_recovers_titles_and_excludes_unresolved_rows(tmp_path: Path) -> None:
+    assert mobileog_fields(
+        "truncated",
+        "description mobileOG_000000007|xis|A0A653FUH0|IE|RRR|N/A|Multiple|Manual rest",
+    ) == (
+        "mobileOG_000000007",
+        "xis",
+        "A0A653FUH0",
+        "IE",
+        "RRR",
+        "N/A",
+        "Multiple",
+        "Manual",
+    )
+    orfs = {
+        "seq__orf_1": Orf("seq__orf_1", "seq", 1, 300, 1, 100),
+        "seq__orf_2": Orf("seq__orf_2", "seq", 400, 700, 1, 100),
+    }
+    results = write(
+        tmp_path / "mobileog.tsv",
+        "seq__orf_1\tshort-id\t80\t90\t1e-10\t150\t"
+        "protein mobileOG_000000007|xis|A0A653FUH0|IE|RRR|N/A|Multiple|Manual\n"
+        "seq__orf_2\tunresolved-id\t80\t90\t1e-10\t150\tunsupported title\n",
+    )
+    warnings = []
+    hits = parse_mobileog(results, orfs, warnings=warnings)
+    assert len(hits) == 1
+    assert hits[0].accession == "mobileOG_000000007"
+    assert hits[0].feature_type == "integration_excision"
+    assert len(warnings) == 1
+    assert warnings[0].query == "seq__orf_2"
+    assert warnings[0].subject == "unresolved-id"
+    assert warnings[0].reason == "unsupported_mobileog_header_excluded"
+
+
+def test_mobileog_source_audit_is_deterministic_and_fail_closed(tmp_path: Path) -> None:
+    source = write(
+        tmp_path / "mobileog.faa",
+        ">mobileOG_1|xis|A0A|IE|RRR|N/A|Multiple|Manual\nMAAA\n" ">unsupported_header\nMBBB\n",
+    )
+    output = tmp_path / "compatibility.json"
+    result = audit_mobileog_fasta(source, output)
+    assert result["status"] == "PASS_WITH_EXCLUSIONS"
+    assert result["headers_total"] == 2
+    assert result["headers_supported"] == 1
+    assert result["headers_excluded"] == 1
+    assert json.loads(output.read_text(encoding="utf-8")) == result
+
+
 def test_comprehensive_annotation_publishes_integrated_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1488,8 +1594,8 @@ def test_comprehensive_annotation_publishes_integrated_report(
                 "VFG000001(gb|WP_1.1) stxA [Shiga toxin (VF1)] [Escherichia coli]\n"
             ),
             "mobileog.dmnd": (
-                "seq__orf_3\tmobileOG_000000007|xis|A0A653FUH0|IE|RRR|N/A|Multiple|Manual"
-                "\t80\t90\t1e-10\t150\tmobileOG family\n"
+                "seq__orf_3\tunresolved-mobileog-id"
+                "\t80\t90\t1e-10\t150\tunsupported mobileOG title\n"
             ),
             "bacmet.dmnd": ("seq__orf_3\tBAC0001|abeM|tr|Q1\t90\t95\t1e-15\t180\tAbeM pump\n"),
             "rep_proteins.dmnd": (
@@ -1522,6 +1628,7 @@ def test_comprehensive_annotation_publishes_integrated_report(
         "mobiorigin_annotated_results.tsv",
         "publication_summary.json",
         "mobiorigin_report.html",
+        "annotation_warnings.tsv",
     ):
         assert (output / name).is_file()
     integrated = (output / "mobiorigin_annotated_results.tsv").read_text()
@@ -1533,3 +1640,7 @@ def test_comprehensive_annotation_publishes_integrated_report(
     assert provenance["annotation_profile"] == "comprehensive"
     assert provenance["predictions_integrated"] is True
     assert provenance["classification_labels_or_probabilities_changed"] is False
+    assert provenance["annotation_warnings"]["mobileog_rows_excluded"] == 1
+    warnings = (output / "annotation_warnings.tsv").read_text(encoding="utf-8")
+    assert "unresolved-mobileog-id" in warnings
+    assert "unsupported_mobileog_header_excluded" in warnings

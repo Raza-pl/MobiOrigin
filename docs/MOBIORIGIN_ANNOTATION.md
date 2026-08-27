@@ -57,6 +57,12 @@ and BacMet DIAMOND indexes locally. Subsequent annotation commands need no
 database arguments. Installation is atomic: every file size and SHA-256 identity
 is recorded, and an incomplete setup leaves no published destination.
 
+For mobileOG-db, setup also streams every FASTA header through the exact runtime
+parser and records the result in `mge/mobileog_compatibility.json`. If a runtime
+DIAMOND row still has an unresolved external identifier, that row is excluded
+from evidence and copied exactly to `annotation_warnings.tsv`. No feature name,
+category, or accession is inferred for an unresolved row.
+
 Verify an installed resource set without copying or parsing biological records:
 
 ```bash
@@ -143,6 +149,9 @@ The command creates `predictions/`, `annotation/`, and `visualization/` inside
 one atomically published result directory. The biological evidence remains
 downstream and cannot change prediction labels or probabilities. Use
 `--skip-annotation` only when a quick prediction and visualization are wanted.
+If a later stage fails, the integrated command retains completed predictions in
+an explicitly incomplete `<output-dir>.failed` directory with
+`ANALYSIS_FAILED.json` and returns a failure status.
 
 ## ARG-only workflow
 

@@ -1,0 +1,8 @@
+tool_or_stage	gca054405655_seconds	assembly_b_seconds	mean_seconds	mean_human	measurement_note
+PlasClass	13.000	13.000	13.000	13 s	workflow stage wallclock
+MobiOrigin prediction	44.000	44.000	44.000	44 s	workflow stage wallclock
+MobiOrigin comprehensive annotation	131.000	134.000	132.500	2 min 13 s	workflow stage wallclock; prediction-independent annotation
+PlasFlow v1	230.290	185.739	208.015	3 min 28 s	retained successful official container execution
+geNomad	366.000	360.000	363.000	6 min 03 s	workflow stage wallclock
+PLASMe	3335.000	2503.000	2919.000	48 min 39 s	workflow stage wallclock
+Platon	28955.000	22655.000	25805.000	7 h 10 min 05 s	workflow stage wallclock

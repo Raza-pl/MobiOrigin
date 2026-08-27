@@ -2,6 +2,12 @@
 
 MobiOrigin writes a new output directory atomically. Existing output directories are rejected.
 
+For the integrated `mobiorigin run` command, a failure after prediction retains
+an explicitly incomplete sibling directory named `<output-dir>.failed` (or a
+numbered variant if that path exists). `ANALYSIS_FAILED.json` records the error,
+completed stages, and any resumable `predictions/predictions.tsv`. This failed
+directory is not a completed analysis and must not be used as one.
+
 ## `predictions.tsv`
 
 | Column | Meaning |

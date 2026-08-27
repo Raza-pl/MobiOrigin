@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -107,11 +108,12 @@ def run_analysis(
     skip_annotation: bool = False,
     threads: int = 1,
 ) -> None:
-    """Run prediction, annotation, and visualization as one atomic analysis."""
+    """Run one analysis and retain an explicitly failed workspace on error."""
     if output_dir.exists():
         raise FileExistsError("Analysis output directory already exists")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent))
+    completed_stages: list[str] = []
     try:
         predictions = temporary / "predictions"
         annotation = temporary / "annotation"
@@ -122,6 +124,7 @@ def run_analysis(
             database_dir=resolve_database_dir(database_dir),
             threads=threads,
         )
+        completed_stages.append("prediction")
         annotated_results: Path | None = None
         if not skip_annotation:
             annotation_databases = (
@@ -142,11 +145,13 @@ def run_analysis(
                 predictions_tsv=predictions / "predictions.tsv",
             )
             annotated_results = annotation / "mobiorigin_annotated_results.tsv"
+            completed_stages.append("annotation")
         visualize(
             predictions_tsv=predictions / "predictions.tsv",
             output_dir=figures,
             annotated_results_tsv=annotated_results,
         )
+        completed_stages.append("visualization")
         visualization_summary = json.loads(
             (figures / "visualization_summary.json").read_text(encoding="utf-8")
         )
@@ -161,7 +166,8 @@ def run_analysis(
                 "Annotation outputs:\n"
                 "  annotation/mobiorigin_report.html      biological-evidence report\n"
                 "  annotation/mobiorigin_annotated_results.tsv  integrated contig table\n"
-                "  annotation/biological_evidence.tsv     retained evidence hits\n\n"
+                "  annotation/biological_evidence.tsv     retained evidence hits\n"
+                "  annotation/annotation_warnings.tsv     excluded external-header rows\n\n"
                 if annotated_results is not None
                 else "Annotation was skipped explicitly.\n\n"
             )
@@ -171,20 +177,58 @@ def run_analysis(
             encoding="utf-8",
         )
         os.replace(temporary, output_dir)
-    except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
+    except BaseException as error:
+        failed_output = output_dir.with_name(f"{output_dir.name}.failed")
+        suffix = 1
+        while failed_output.exists():
+            suffix += 1
+            failed_output = output_dir.with_name(f"{output_dir.name}.failed.{suffix}")
+        failure = {
+            "schema_version": "mobiorigin-analysis-failure-v1",
+            "status": "FAIL",
+            "requested_output_dir": str(output_dir.resolve()),
+            "retained_output_dir": str(failed_output.resolve()),
+            "completed_stages": completed_stages,
+            "error_type": type(error).__name__,
+            "error": str(error),
+            "resumable_prediction_table": (
+                "predictions/predictions.tsv"
+                if (temporary / "predictions" / "predictions.tsv").is_file()
+                else None
+            ),
+            "scientific_status": "incomplete_not_for_interpretation",
+        }
+        (temporary / "ANALYSIS_FAILED.json").write_text(
+            json.dumps(failure, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, failed_output)
+        if isinstance(error, Exception):
+            raise RuntimeError(
+                f"MobiOrigin analysis failed after {', '.join(completed_stages) or 'initialization'}; "
+                f"incomplete state was retained at {failed_output}"
+            ) from error
         raise
 
 
-def demo(*, output_dir: Path, database_dir: Path | None = None, threads: int = 1) -> dict[str, Any]:
-    """Run the bundled synthetic smoke input and summarize the files produced."""
-    demo_resource = resources.files("mobiorigin").joinpath("data/examples/demo.fasta")
+def demo(
+    *,
+    output_dir: Path,
+    database_dir: Path | None = None,
+    annotation_database_dir: Path | None = None,
+    comprehensive: bool = False,
+    threads: int = 1,
+) -> dict[str, Any]:
+    """Run a bundled basic or comprehensive installation verification."""
+    filename = "annotated_assembly_example.fasta" if comprehensive else "demo.fasta"
+    demo_resource = resources.files("mobiorigin").joinpath(f"data/examples/{filename}")
     with resources.as_file(demo_resource) as input_fasta:
         run_analysis(
             input_fasta=input_fasta,
             output_dir=output_dir,
             database_dir=database_dir,
-            skip_annotation=True,
+            annotation_database_dir=annotation_database_dir,
+            skip_annotation=not comprehensive,
             threads=threads,
         )
     summary = json.loads(
@@ -193,16 +237,27 @@ def demo(*, output_dir: Path, database_dir: Path | None = None, threads: int = 1
     with (output_dir / "predictions" / "predictions.tsv").open(
         encoding="utf-8", newline=""
     ) as handle:
-        prediction = next(csv.DictReader(handle, delimiter="\t"))
-    return {
+        predictions = list(csv.DictReader(handle, delimiter="\t"))
+    result = {
         "status": "PASS",
+        "verification_profile": "comprehensive" if comprehensive else "basic",
         "records": summary["records"],
         "bases": summary["bases"],
-        "expected_test_prediction": prediction["prediction"],
-        "expected_test_abstention_reason": prediction["abstention_reason"],
+        "prediction_counts": dict(
+            sorted(Counter(row["prediction"] for row in predictions).items())
+        ),
         "output_dir": str(output_dir.resolve()),
         "prediction_table": str((output_dir / "predictions" / "predictions.tsv").resolve()),
         "html_report": str((output_dir / "visualization" / "mobiorigin_dashboard.html").resolve()),
         "svg_figure": str((output_dir / "visualization" / "mobiorigin_summary.svg").resolve()),
-        "interpretation": "Synthetic installation test only; do not use as biological evidence.",
+        "annotation_report": (
+            str((output_dir / "annotation" / "mobiorigin_report.html").resolve())
+            if comprehensive
+            else None
+        ),
+        "interpretation": "Installation verification only; do not use as biological evidence.",
     }
+    if not comprehensive:
+        result["expected_test_prediction"] = predictions[0]["prediction"]
+        result["expected_test_abstention_reason"] = predictions[0]["abstention_reason"]
+    return result

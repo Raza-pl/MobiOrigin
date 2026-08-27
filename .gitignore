@@ -24,14 +24,21 @@ env/
 # Runtime databases and generated outputs
 data/
 results/
+.codex_build/
+evaluation/
+docs/manuscript/
 scripts/dev/
 docs/presentation/
+*.docx
 *.ppt
 *.pptx
 *.potx
+*_chat_export.txt
 gtdb_genomes_reps_r220/
 mobiorigin_mob_databases/
 mobiorigin_results/
+/mobiorigin_assembly_example_*/
+/mobiorigin_installation_test_*/
 *_Improvement_Plan.md
 email_*.md
 *.fna

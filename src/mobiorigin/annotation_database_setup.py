@@ -13,10 +13,12 @@ from mobiorigin.annotation_database_retrieval import (
     default_annotation_cache_dir,
     prepare_official_annotation_sources,
 )
+from mobiorigin.mobileog import MOBILEOG_COMPATIBILITY_SCHEMA, MOBILEOG_PARSER_SCHEMA
 from mobiorigin.provenance import sha256_file
 
 ANNOTATION_MANIFEST_NAME: Final = "mobiorigin_annotation_database_manifest.json"
 ANNOTATION_NOTICE_NAME: Final = "THIRD_PARTY_ANNOTATION_DATABASE_NOTICE.txt"
+MOBILEOG_COMPATIBILITY_FILE: Final = "mge/mobileog_compatibility.json"
 
 ARG_DATABASE_FILES: Final = (
     "card/card.dmnd",
@@ -198,6 +200,53 @@ def setup_annotation_databases(
             if not isinstance(copied_bytes, int):
                 raise TypeError(f"Annotation database byte count is invalid: {relative}")
             total_bytes += copied_bytes
+        if profile == "comprehensive":
+            compatibility_target = temporary / MOBILEOG_COMPATIBILITY_FILE
+            if source_dir is not None and (source_dir / MOBILEOG_COMPATIBILITY_FILE).is_file():
+                compatibility_item = _copy_file(
+                    source_dir / MOBILEOG_COMPATIBILITY_FILE,
+                    compatibility_target,
+                )
+            elif not compatibility_target.is_file():
+                compatibility_target.parent.mkdir(parents=True, exist_ok=True)
+                compatibility_target.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": MOBILEOG_COMPATIBILITY_SCHEMA,
+                            "parser_schema": MOBILEOG_PARSER_SCHEMA,
+                            "status": "LEGACY_SOURCE_NOT_AUDITED",
+                            "headers_total": None,
+                            "headers_supported": None,
+                            "headers_excluded": None,
+                            "unsupported_examples": [],
+                            "policy": (
+                                "Unresolved runtime rows are excluded from biological evidence "
+                                "and reported; they are never interpreted by inference."
+                            ),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                compatibility_item = _record_file(
+                    compatibility_target,
+                    MOBILEOG_COMPATIBILITY_FILE,
+                    "generated declaration for a legacy prepared source",
+                )
+            else:
+                compatibility_item = _record_file(
+                    compatibility_target,
+                    MOBILEOG_COMPATIBILITY_FILE,
+                    "official mobileOG FASTA header audit",
+                )
+            compatibility_item["path"] = MOBILEOG_COMPATIBILITY_FILE
+            resources[MOBILEOG_COMPATIBILITY_FILE] = compatibility_item
+            compatibility_bytes = compatibility_item["bytes"]
+            if not isinstance(compatibility_bytes, int):
+                raise TypeError("mobileOG compatibility byte count is invalid")
+            total_bytes += compatibility_bytes
         if amrfinder_database is None:
             raise ValueError("AMRFinderPlus database source was not resolved")
         amrfinder_files = _source_files(amrfinder_database)
@@ -222,7 +271,7 @@ def setup_annotation_databases(
                 total_bytes += copied_bytes
         shutil.rmtree(temporary / ".amrfinder-update", ignore_errors=True)
         manifest = {
-            "schema_version": "mobiorigin-annotation-database-manifest-v2",
+            "schema_version": "mobiorigin-annotation-database-manifest-v3",
             "profile": profile,
             "resources": resources,
             "resource_count": len(resources),
@@ -264,6 +313,7 @@ def check_annotation_databases(
     if manifest.get("schema_version") not in {
         "mobiorigin-annotation-database-manifest-v1",
         "mobiorigin-annotation-database-manifest-v2",
+        "mobiorigin-annotation-database-manifest-v3",
     }:
         raise ValueError("Annotation database manifest schema is unsupported")
     resources = manifest.get("resources")
@@ -286,6 +336,45 @@ def check_annotation_databases(
             raise ValueError(f"Annotation database size mismatch: {relative}")
         verified[relative] = observed
         total_bytes += expected_bytes
+    mobileog_compatibility: dict[str, object] | None = None
+    if profile == "comprehensive":
+        if manifest.get("schema_version") == "mobiorigin-annotation-database-manifest-v3":
+            compatibility_entry = resources.get(MOBILEOG_COMPATIBILITY_FILE)
+            if not isinstance(compatibility_entry, dict) or not isinstance(
+                compatibility_entry.get("sha256"), str
+            ):
+                raise ValueError("mobileOG compatibility audit is missing from the manifest")
+            compatibility_path = database_dir / MOBILEOG_COMPATIBILITY_FILE
+            if compatibility_path.is_symlink() or not compatibility_path.is_file():
+                raise FileNotFoundError(
+                    f"mobileOG compatibility audit is missing: {compatibility_path}"
+                )
+            observed = sha256_file(compatibility_path)
+            if observed != compatibility_entry["sha256"]:
+                raise ValueError("mobileOG compatibility audit SHA-256 mismatch")
+            expected_bytes = compatibility_entry.get("bytes")
+            if (
+                not isinstance(expected_bytes, int)
+                or compatibility_path.stat().st_size != expected_bytes
+            ):
+                raise ValueError("mobileOG compatibility audit size mismatch")
+            try:
+                loaded_compatibility = json.loads(compatibility_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise ValueError("mobileOG compatibility audit is invalid") from error
+            if loaded_compatibility.get("schema_version") != MOBILEOG_COMPATIBILITY_SCHEMA:
+                raise ValueError("mobileOG compatibility audit schema is unsupported")
+            if loaded_compatibility.get("parser_schema") != MOBILEOG_PARSER_SCHEMA:
+                raise ValueError("mobileOG compatibility parser identity is incompatible")
+            mobileog_compatibility = loaded_compatibility
+            verified[MOBILEOG_COMPATIBILITY_FILE] = observed
+            total_bytes += expected_bytes
+        else:
+            mobileog_compatibility = {
+                "status": "LEGACY_MANIFEST_RUNTIME_FAIL_CLOSED",
+                "parser_schema": MOBILEOG_PARSER_SCHEMA,
+                "policy": "Unresolved runtime rows are excluded and reported.",
+            }
     if manifest.get("legacy_isfinder_installed"):
         for relative in LEGACY_ISFINDER_FILES.values():
             entry = resources.get(relative)
@@ -332,5 +421,6 @@ def check_annotation_databases(
         "database_sha256": verified,
         "mge_default_provider": manifest.get("mge_default_provider"),
         "legacy_isfinder_installed": bool(manifest.get("legacy_isfinder_installed")),
+        "mobileog_compatibility": mobileog_compatibility,
         "third_party_terms": UPSTREAM_TERMS,
     }
