@@ -4,6 +4,40 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+## 0.1.3 — 2026-08-27
+
+PyPI transport and supply-chain update for the unchanged frozen
+`mobiorigin-dev1-mob-selective-v1` classifier.
+
+### Added
+
+- Atomic, resumable retrieval of the exact frozen dev1 model bundle from a
+  versioned GitHub release asset.
+- SHA-256 and byte-count verification of all three checkpoints, marker
+  normalization, model manifest, and the complete transport archive.
+- PyPI Trusted Publishing workflow with tag/version matching, separate build and
+  publishing jobs, OIDC authentication, attestations, and a fail-closed 100 MB
+  per-file gate.
+- Offline model setup through `--model-archive` and configurable model storage
+  through `MOBIORIGIN_MODEL_DIR`.
+
+### Changed
+
+- Python distributions no longer duplicate the 121 MB frozen model payload.
+  Guided installation retrieves the exact bytes once and verifies them before
+  making them available to prediction.
+- The database helper now prepares and checks model artifacts before marker
+  databases, keeping the standard installation route automatic.
+- `mobiorigin doctor` verifies the resolved model directory as part of the full
+  installation check.
+
+### Scientific boundaries
+
+- Model transport changed; checkpoint bytes, hashes, architecture, feature
+  definitions, ensemble, normalization, threshold, and predictions did not.
+- Prediction remains offline after installation. Missing or changed model bytes
+  stop execution rather than triggering a fallback model or network request.
+
 ## 0.1.2 — 2026-08-26
 
 Installation, database automation, and integrated analysis update for the

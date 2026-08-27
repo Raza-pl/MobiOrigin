@@ -16,6 +16,7 @@ import mobiorigin
 from mobiorigin.annotate import annotate
 from mobiorigin.annotation_database_setup import default_annotation_database_dir
 from mobiorigin.database_setup import check_databases
+from mobiorigin.model_setup import check_models, resolve_model_dir
 from mobiorigin.predict import predict
 from mobiorigin.visualize import visualize
 
@@ -49,7 +50,12 @@ def _command_version(command: str, arguments: list[str]) -> dict[str, Any]:
     }
 
 
-def doctor(*, database_dir: Path | None = None, software_only: bool = False) -> dict[str, Any]:
+def doctor(
+    *,
+    database_dir: Path | None = None,
+    model_dir: Path | None = None,
+    software_only: bool = False,
+) -> dict[str, Any]:
     """Inspect the installed runtime and, unless omitted, frozen marker databases."""
     tools = {
         "diamond": _command_version("diamond", ["version"]),
@@ -58,13 +64,20 @@ def doctor(*, database_dir: Path | None = None, software_only: bool = False) -> 
     database = resolve_database_dir(database_dir)
     database_result: dict[str, Any] | None = None
     database_error: str | None = None
+    models = resolve_model_dir(model_dir)
+    model_result: dict[str, Any] | None = None
+    model_error: str | None = None
     if not software_only:
         try:
             database_result = check_databases(database)
         except (FileNotFoundError, RuntimeError, ValueError) as error:
             database_error = str(error)
+        try:
+            model_result = check_models(models)
+        except (FileNotFoundError, ValueError) as error:
+            model_error = str(error)
     passed = all(item["status"] == "PASS" for item in tools.values()) and (
-        software_only or database_result is not None
+        software_only or (database_result is not None and model_result is not None)
     )
     return {
         "status": "PASS" if passed else "FAIL",
@@ -73,6 +86,9 @@ def doctor(*, database_dir: Path | None = None, software_only: bool = False) -> 
         "database_dir": str(database),
         "database": database_result,
         "database_error": database_error,
+        "model_dir": str(models),
+        "models": model_result,
+        "model_error": model_error,
         "next_step": (
             "Run: mobiorigin demo --output-dir mobiorigin_demo"
             if passed and not software_only

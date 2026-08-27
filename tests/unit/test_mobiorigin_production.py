@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from mobiorigin import cli
+from mobiorigin import cli, model_setup
 from mobiorigin.annotate import (
     ArgHit,
     Orf,
@@ -73,6 +73,13 @@ from mobiorigin.marker_features import (
     run_diamond,
 )
 from mobiorigin.model import MobiOriginMLP, ModelLoadError, load_model
+from mobiorigin.model_setup import (
+    MODEL_ARCHIVE_ROOT,
+    check_models,
+    default_model_dir,
+    resolve_model_dir,
+    setup_models,
+)
 from mobiorigin.predict import (
     _write_predictions,
     configure_runtime,
@@ -268,6 +275,54 @@ def test_annotation_database_setup_is_atomic_and_identity_checked(tmp_path: Path
     (output / COMPREHENSIVE_DATABASE_FILES[0]).write_text("changed\n", encoding="ascii")
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
         check_annotation_databases(output)
+
+
+def test_model_setup_is_atomic_and_identity_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payloads = {
+        "seed.pt": b"frozen model bytes\n",
+        "normalization.npy": b"frozen normalization bytes\n",
+    }
+    contracts = {
+        name: {"bytes": len(payload), "sha256": __import__("hashlib").sha256(payload).hexdigest()}
+        for name, payload in payloads.items()
+    }
+    monkeypatch.setattr(model_setup, "MODEL_ARTIFACTS", contracts)
+    archive = tmp_path / "models.tar"
+    with tarfile.open(archive, "w") as handle:
+        for name, payload in payloads.items():
+            information = tarfile.TarInfo(f"{MODEL_ARCHIVE_ROOT}/{name}")
+            information.size = len(payload)
+            handle.addfile(information, io.BytesIO(payload))
+    monkeypatch.setattr(model_setup, "MODEL_ARCHIVE_SHA256", sha256_file(archive))
+
+    output = tmp_path / "models"
+    result = setup_models(output, archive=archive)
+    assert result["status"] == "PASS"
+    assert result["network_accessed"] is False
+    assert result["artifacts_verified"] == 2
+    assert check_models(output)["status"] == "PASS"
+    assert (output / model_setup.MODEL_INSTALLATION_MANIFEST).is_file()
+    with pytest.raises(FileExistsError):
+        setup_models(output, archive=archive)
+    (output / "seed.pt").write_bytes(b"changed\n")
+    with pytest.raises(ValueError, match="identity changed"):
+        check_models(output)
+
+
+def test_model_resolution_supports_slim_and_legacy_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MOBIORIGIN_MODEL_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    empty_package = tmp_path / "package_models"
+    empty_package.mkdir()
+    monkeypatch.setattr(model_setup, "packaged_model_dir", lambda: empty_package)
+    assert default_model_dir() == tmp_path / "data/mobiorigin/models/dev1"
+    assert resolve_model_dir() == default_model_dir()
+    monkeypatch.setenv("MOBIORIGIN_MODEL_DIR", "~/frozen_models")
+    assert resolve_model_dir() == Path("~/frozen_models").expanduser()
 
 
 def test_annotation_database_setup_fails_without_complete_source(tmp_path: Path) -> None:
@@ -492,6 +547,18 @@ def test_guided_installer_is_non_errexit_and_runs_demo() -> None:
     assert not any(line.lstrip().startswith("rm ") for line in installer.splitlines())
 
 
+def test_pypi_workflow_is_oidc_only_and_fail_closed() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/publish-pypi.yml").read_text(encoding="utf-8")
+    assert "id-token: write" in workflow
+    assert "environment:\n      name: pypi" in workflow
+    assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert "password:" not in workflow
+    assert "PYPI_TOKEN" not in workflow
+    assert "persist-credentials: false" in workflow
+    assert "100_000_000" in workflow
+    assert "Tag/package mismatch" in workflow
+
+
 def test_default_database_resolution(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("MOBIORIGIN_DATABASE_DIR", raising=False)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
@@ -514,6 +581,9 @@ def test_doctor_reports_software_and_database_state(
     )
     monkeypatch.setattr(
         "mobiorigin.workflow.check_databases", lambda path: {"status": "PASS", "path": str(path)}
+    )
+    monkeypatch.setattr(
+        "mobiorigin.workflow.check_models", lambda path: {"status": "PASS", "path": str(path)}
     )
     result = doctor(database_dir=tmp_path / "db")
     assert result["status"] == "PASS"
@@ -619,7 +689,7 @@ def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
     assert "run -n mobiorigin mobiorigin setup-databases" in payload
     assert "--platform osx-64" in payload
     assert "Rosetta" in payload
-    assert "Existing MobiOrigin marker databases are valid" in payload
+    assert "Existing MobiOrigin models and marker databases are valid" in payload
     assert not any(line.lstrip().startswith("rm ") for line in payload.splitlines())
 
 
