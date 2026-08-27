@@ -4,6 +4,36 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+## 0.1.4 — 2026-08-27
+
+Runtime compatibility and installation-verification update for the unchanged
+frozen `mobiorigin-dev1-mob-selective-v1` classifier.
+
+### Fixed
+
+- Recovered supported mobileOG identifiers from either DIAMOND subject or title
+  fields and prevented one unusual external header from aborting all annotation.
+- Excluded unresolved mobileOG rows from biological evidence and recorded their
+  exact subject and title in `annotation_warnings.tsv` instead of guessing.
+- Retained completed prediction output in an explicitly failed workspace when a
+  later integrated annotation stage stops.
+
+### Added
+
+- A streaming mobileOG source-header compatibility audit bound to new annotation
+  database manifests.
+- A comprehensive installation verification that exercises prediction,
+  annotation, visualization, and all standard annotation database routes.
+- Explicit `build` and `twine` development dependencies so the documented
+  release validation is reproducible in a prepared development environment.
+
+### Scientific boundaries
+
+- No classifier model, feature, normalization, ensemble weight, threshold,
+  label, or prediction semantic changed.
+- An unresolved mobileOG row contributes no MGE evidence and cannot change an
+  A to E evidence tier. The exclusion remains visible for audit.
+
 ## 0.1.3 — 2026-08-27
 
 PyPI transport and supply-chain update for the unchanged frozen

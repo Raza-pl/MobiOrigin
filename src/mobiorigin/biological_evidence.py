@@ -18,6 +18,7 @@ from pathlib import Path
 
 from mobiorigin.annotate import ArgHit, Orf
 from mobiorigin.fasta import FastaRecord
+from mobiorigin.mobileog import MOBILEOG_PARSER_SCHEMA, mobileog_fields
 from mobiorigin.provenance import atomic_json, sha256_file
 
 VFDB_MIN_IDENTITY = 60.0
@@ -49,6 +50,15 @@ class EvidenceHit:
     query_coverage: float | None
     evalue: float | None
     bitscore: float | None
+
+
+@dataclass(frozen=True)
+class MobileOGParseWarning:
+    result_row: int
+    query: str
+    subject: str
+    title: str
+    reason: str
 
 
 EVIDENCE_COLUMNS = tuple(EvidenceHit.__dataclass_fields__)
@@ -338,17 +348,38 @@ _MOBILEOG_MAJOR_CATEGORIES = {
 }
 
 
-def parse_mobileog(path: Path, orfs: Mapping[str, Orf]) -> list[EvidenceHit]:
-    """Parse mobileOG-db 2.x headers without requiring a second metadata payload."""
+def parse_mobileog(
+    path: Path,
+    orfs: Mapping[str, Orf],
+    *,
+    warnings: list[MobileOGParseWarning] | None = None,
+) -> list[EvidenceHit]:
+    """Parse supported mobileOG-db headers and fail closed for unresolved rows.
+
+    An unresolved row is not biological evidence. When a warning collector is
+    supplied, the exact row is retained for audit instead of aborting the full
+    independent annotation workflow.
+    """
     hits: list[EvidenceHit] = []
-    for query, subject, identity, coverage, evalue, bitscore, title in _rows(path):
+    for result_row, row in enumerate(_rows(path), start=1):
+        query, subject, identity, coverage, evalue, bitscore, title = row
         item = _orf(orfs, query)
-        fields = subject.split("|")
-        if len(fields) < 5 or not fields[0].startswith("mobileOG_"):
-            title_fields = title.split(None, 1)[0].split("|")
-            fields = title_fields if len(title_fields) >= 5 else fields
-        if len(fields) < 5 or not fields[0].startswith("mobileOG_"):
-            raise ValueError("mobileOG-db header is not the supported pipe-delimited schema")
+        fields = mobileog_fields(subject, title)
+        if fields is None:
+            warning = MobileOGParseWarning(
+                result_row=result_row,
+                query=query,
+                subject=subject,
+                title=title,
+                reason="unsupported_mobileog_header_excluded",
+            )
+            if warnings is None:
+                raise ValueError(
+                    "mobileOG-db header is not supported; pass a warning collector to "
+                    "exclude unresolved evidence without aborting"
+                )
+            warnings.append(warning)
+            continue
         accession = fields[0]
         feature = fields[1].strip() or accession
         uniprot = fields[2].strip() if len(fields) > 2 else ""
@@ -386,6 +417,22 @@ def parse_mobileog(path: Path, orfs: Mapping[str, Orf]) -> list[EvidenceHit]:
             )
         )
     return hits
+
+
+def write_mobileog_warnings(path: Path, warnings: Sequence[MobileOGParseWarning]) -> None:
+    """Write deterministic diagnostics for excluded mobileOG result rows."""
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("result_row", "query", "subject", "title", "reason", "parser_schema"),
+            delimiter="\t",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        for warning in warnings:
+            row = asdict(warning)
+            row["parser_schema"] = MOBILEOG_PARSER_SCHEMA
+            writer.writerow(row)
 
 
 def parse_bacmet(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> list[EvidenceHit]:

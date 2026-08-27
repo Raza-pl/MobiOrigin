@@ -172,10 +172,19 @@ if [ "$SKIP_DEMO" = false ]; then
     echo "Demo output already exists and will not be overwritten: $DEMO_DIR"
     echo "Choose a fresh path with: bash install.sh --demo-dir /path/to/new_demo"
   else
-    echo "Running the bundled installation test..."
-    "$ENV_MANAGER" run -n mobiorigin mobiorigin demo \
-      --database-dir "$DATABASE_DIR" \
-      --output-dir "$DEMO_DIR"
+    if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
+      echo "Running the bundled comprehensive installation test..."
+      "$ENV_MANAGER" run -n mobiorigin mobiorigin demo \
+        --database-dir "$DATABASE_DIR" \
+        --annotation-database-dir "$ANNOTATION_DATABASE_DIR" \
+        --comprehensive \
+        --output-dir "$DEMO_DIR"
+    else
+      echo "Running the bundled basic installation test..."
+      "$ENV_MANAGER" run -n mobiorigin mobiorigin demo \
+        --database-dir "$DATABASE_DIR" \
+        --output-dir "$DEMO_DIR"
+    fi
     demo_rc=$?
     if [ "$demo_rc" -ne 0 ]; then
       echo "STOP: Installation passed, but the bundled end-to-end test failed." >&2

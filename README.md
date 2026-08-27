@@ -8,12 +8,15 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Status
 
-- Package version: `0.1.3` (public PyPI package with verified external model transport).
+- Package version: `0.1.4` (release candidate with verified external model transport).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.
 - Models: three unchanged frozen checkpoints retrieved once during setup from a versioned GitHub release asset. The archive and every extracted artifact are SHA-256 verified before atomic installation.
-- Marker databases: not redistributed. Users must provide the exact identity-verified MOB-suite-derived research databases described in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
+- Marker databases: prepared automatically from the official MOB-suite database
+  in an isolated helper environment, then identity verified before use. They are
+  not redistributed inside the Python package. See
+  [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
 
 ## Quick start: install, verify, and see an example
 
@@ -23,7 +26,7 @@ required external software and marker databases are already managed locally,
 the Python package and frozen models can instead be installed from PyPI:
 
 ```bash
-python -m pip install mobiorigin==0.1.3
+python -m pip install mobiorigin==0.1.4
 mobiorigin setup-databases --component models
 ```
 
@@ -35,7 +38,7 @@ MobiOrigin uses one visible Conda/Mamba environment. The guided installer adds
 MobiOrigin, CPU-only PyTorch, NumPy, Pyrodigal, DIAMOND, and official
 AMRFinderPlus; prepares the identity-verified marker databases in an isolated
 helper environment; retrieves the exact frozen model bundle; checks the
-installation; and runs a tiny synthetic example.
+installation; and runs a bundled eight-contig comprehensive verification.
 
 ```bash
 git clone https://github.com/Raza-pl/MobiOrigin.git
@@ -54,6 +57,11 @@ When installation succeeds, the final check creates:
 ```text
 mobiorigin_demo/
 ├── README_RESULTS.txt
+├── annotation/
+│   ├── annotation_warnings.tsv
+│   ├── biological_evidence.tsv
+│   ├── mobiorigin_annotated_results.tsv
+│   └── mobiorigin_report.html
 ├── predictions/
 │   ├── predictions.tsv
 │   ├── provenance.json
@@ -68,11 +76,11 @@ mobiorigin_demo/
 ```
 
 Open `mobiorigin_demo/visualization/mobiorigin_dashboard.html` to see the same
-kind of report produced for a real assembly. The bundled FASTA is synthetic and
-deliberately shorter than MobiOrigin's 1,000 bp supported limit, so its stable
-test result is `unclassified` with `unsupported_length`. This makes the check
-fast while exercising package/model/database verification, output publication,
-provenance, tables, SVG, and HTML. It is not biological validation. Check the
+kind of report produced for a real assembly. The bundled FASTA contains two
+software-demonstration records for each output class. The comprehensive check
+exercises the installed models, marker databases, CARD, SARG, AMRFinderPlus,
+VFDB, mobileOG-db, BacMet, prediction, annotation, tables, SVG, and HTML. It is
+an installation test, not an accuracy or prevalence study. Check the
 installation again at any time with:
 
 ```bash
@@ -92,9 +100,8 @@ mobileOG-db/BacMet/MOB resource set in one atomic operation. ISfinder is not
 required or downloaded; authorized users can add it as an optional legacy
 evidence layer. Every installed file is hashed and recorded in a manifest.
 
-MobiOrigin 0.1.3 is published on
-[PyPI](https://pypi.org/project/mobiorigin/0.1.3/) through token-free Trusted
-Publishing. A Bioconda package is not yet available.
+MobiOrigin is published on [PyPI](https://pypi.org/project/mobiorigin/) through
+token-free Trusted Publishing. The Bioconda recipe is being updated for 0.1.4.
 
 ## Prepare models and marker databases
 
@@ -149,6 +156,11 @@ mobiorigin setup-databases \
 the upstream terms links are in
 [`docs/MOBIORIGIN_ANNOTATION.md`](docs/MOBIORIGIN_ANNOTATION.md).
 
+New database installations also audit every mobileOG FASTA header and bind the
+audit to the database manifest. During annotation, an unusual mobileOG result
+that cannot be resolved is excluded from evidence and written to
+`annotation/annotation_warnings.tsv`. MobiOrigin never guesses its identity.
+
 ## Run
 
 The simplest command performs prediction, comprehensive biological annotation,
@@ -186,7 +198,7 @@ mobiorigin predict \
   --threads 8
 ```
 
-The output directory must not already exist. Input FASTA identifiers must be unique first-token identifiers, and sequences may contain standard IUPAC DNA symbols.
+The output directory must not already exist. Input FASTA identifiers must be unique first-token identifiers, and sequences may contain standard IUPAC DNA symbols. If prediction finishes but a later annotation stage fails, the incomplete workspace is retained as `<output-dir>.failed` with `ANALYSIS_FAILED.json`; it is not presented as a completed result.
 
 `--threads` accepts values from 1 to 128 and controls DIAMOND and other
 external-search workers. Choose a value no larger than the CPUs allocated to

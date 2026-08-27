@@ -194,6 +194,16 @@ def parser() -> argparse.ArgumentParser:
     demo_parser.add_argument("--output-dir", type=Path, default=Path("mobiorigin_demo"))
     demo_parser.add_argument("--database-dir", type=Path)
     demo_parser.add_argument(
+        "--annotation-database-dir",
+        type=Path,
+        help="annotation database directory for --comprehensive",
+    )
+    demo_parser.add_argument(
+        "--comprehensive",
+        action="store_true",
+        help="verify prediction, comprehensive annotation, and visualization",
+    )
+    demo_parser.add_argument(
         "--threads", type=int, default=1, help="external-search workers (1-128; default: 1)"
     )
     return value
@@ -317,6 +327,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 demo(
                     output_dir=args.output_dir,
                     database_dir=args.database_dir,
+                    annotation_database_dir=args.annotation_database_dir,
+                    comprehensive=args.comprehensive,
                     threads=args.threads,
                 ),
                 indent=2,

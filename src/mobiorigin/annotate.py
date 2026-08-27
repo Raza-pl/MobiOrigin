@@ -754,6 +754,7 @@ def annotate(
 
         comprehensive_outputs: list[Path] = []
         comprehensive_counts: dict[str, int] = {}
+        mobileog_warning_count = 0
         if profile == "comprehensive":
             from mobiorigin.biological_evidence import (
                 BACMET_MIN_IDENTITY,
@@ -764,6 +765,7 @@ def annotate(
                 MOB_MIN_QUERY_COVERAGE,
                 VFDB_MIN_IDENTITY,
                 VFDB_MIN_QUERY_COVERAGE,
+                MobileOGParseWarning,
                 arg_evidence,
                 load_predictions,
                 load_vfdb_metadata,
@@ -777,8 +779,11 @@ def annotate(
                 write_evidence,
                 write_html_report,
                 write_integrated_results,
+                write_mobileog_warnings,
                 write_publication_summary,
             )
+
+            mobileog_warnings: list[MobileOGParseWarning] = []
 
             search_routes = {
                 "vfdb": (
@@ -852,7 +857,13 @@ def annotate(
                     load_vfdb_metadata(comprehensive_databases["vfdb_metadata"]),
                 )
             )
-            extended_hits.extend(parse_mobileog(extended_raw["mobileog"], orfs))
+            extended_hits.extend(
+                parse_mobileog(
+                    extended_raw["mobileog"],
+                    orfs,
+                    warnings=mobileog_warnings,
+                )
+            )
             if "legacy_isfinder" in extended_raw:
                 extended_hits.extend(
                     parse_mge(extended_raw["legacy_isfinder"], orfs, legacy_isfinder_metadata)
@@ -884,6 +895,9 @@ def annotate(
             integrated_path = temporary / "mobiorigin_annotated_results.tsv"
             publication_path = temporary / "publication_summary.json"
             report_path = temporary / "mobiorigin_report.html"
+            warnings_path = temporary / "annotation_warnings.tsv"
+            write_mobileog_warnings(warnings_path, mobileog_warnings)
+            mobileog_warning_count = len(mobileog_warnings)
             write_evidence(evidence_path, extended_hits)
             predictions = load_predictions(predictions_tsv, records) if predictions_tsv else {}
             integrated_rows = write_integrated_results(
@@ -900,6 +914,7 @@ def annotate(
                 integrated_path,
                 publication_path,
                 report_path,
+                warnings_path,
             ]
             comprehensive_counts = Counter(hit.evidence_group for hit in extended_hits)
 
@@ -933,7 +948,7 @@ def annotate(
 
         evidence_counts = Counter(hit.source for hit in all_hits)
         provenance = {
-            "schema_version": "mobiorigin-biological-annotation-v2",
+            "schema_version": "mobiorigin-biological-annotation-v3",
             "mobiorigin_version": __version__,
             "input_fasta": _database_identity(input_fasta),
             "records": len(records),
@@ -973,6 +988,17 @@ def annotate(
             "evidence_counts": {source: evidence_counts[source] for source in AMR_SOURCES},
             "consensus_arg_orfs": len(consensus),
             "comprehensive_evidence_counts": dict(sorted(comprehensive_counts.items())),
+            "annotation_warnings": (
+                {
+                    "mobileog_rows_excluded": mobileog_warning_count,
+                    "policy": (
+                        "Unresolved mobileOG rows are excluded from evidence, retained in "
+                        "annotation_warnings.tsv, and never interpreted by inference."
+                    ),
+                }
+                if profile == "comprehensive"
+                else None
+            ),
             "evidence_priority_policy": (
                 {
                     "type": "categorical_research_priority_not_clinical_risk",

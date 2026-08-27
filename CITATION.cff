@@ -8,7 +8,7 @@ authors:
     email: shahbaz.invincible3182@gmail.com
 repository-code: "https://github.com/Raza-pl/MobiOrigin"
 url: "https://github.com/Raza-pl/MobiOrigin"
-version: 0.1.3
+version: 0.1.4
 date-released: 2026-08-27
 license: GPL-3.0-only
 keywords:
@@ -21,7 +21,7 @@ keywords:
 abstract: >-
   MobiOrigin is a CPU-oriented sequence-and-marker classifier that assigns
   bacterial DNA fragments to chromosome, plasmid, phage, or an explicit
-  unclassified state. Version 0.1.3 retains the exact frozen three-seed dev1
+  unclassified state. Version 0.1.4 retains the exact frozen three-seed dev1
   model through an independently verified model bundle and provides an integrated
   prediction, annotation, and visualization workflow with automatic database
   setup and publication evidence from prospective and operational comparisons.

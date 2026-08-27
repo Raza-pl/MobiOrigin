@@ -23,17 +23,17 @@ mobiorigin doctor
 The installer uses Mamba when available and otherwise Conda. It creates or
 updates the `mobiorigin` runtime, retrieves and verifies the exact frozen model
 bundle, builds the marker databases in the isolated `mobiorigin-db` environment,
-verifies required software and identities, and runs a bundled synthetic
-example. It checks return codes explicitly and does not use `set -e`.
+verifies required software and identities, and runs a bundled eight-contig
+comprehensive example. It checks return codes explicitly and does not use `set -e`.
 
 The test output is created at `mobiorigin_demo/`. Open
 `mobiorigin_demo/visualization/mobiorigin_dashboard.html`; inspect
 `mobiorigin_demo/predictions/predictions.tsv` for the per-sequence schema and
 `mobiorigin_demo/predictions/provenance.json` for reproducibility metadata. The
-synthetic sequence is deliberately shorter than 1,000 bp, so the expected result
-is `unclassified` with `unsupported_length`. This fast example confirms package,
-model/database verification, provenance, and report generation; it is not a
-biological benchmark.
+example contains two demonstration records for each output class and runs the
+installed comprehensive annotation databases. It confirms package, model,
+database, parser, provenance, and report generation. It is not an accuracy,
+prevalence, or biological-discovery dataset.
 
 AMRFinderPlus and its executable dependencies are installed in the visible
 runtime. Comprehensive annotation additionally uses CARD, SARG, VFDB,
@@ -68,7 +68,7 @@ Use this route only when a compatible DIAMOND executable is already available. M
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install mobiorigin==0.1.3
+python -m pip install mobiorigin==0.1.4
 mobiorigin setup-databases --component models
 mobiorigin --help
 ```
@@ -79,9 +79,9 @@ installation, use the guided Conda or Mamba route. Advanced virtual-environment
 users can obtain the source release and follow the manual marker-database route
 in section 2.
 
-MobiOrigin 0.1.3 is available from
-[PyPI](https://pypi.org/project/mobiorigin/0.1.3/). Bioconda publication remains
-pending, so `mamba install -c bioconda mobiorigin` is not yet a valid route.
+MobiOrigin is available from [PyPI](https://pypi.org/project/mobiorigin/).
+Bioconda publication remains pending, so `mamba install -c bioconda mobiorigin`
+is not yet a valid route.
 
 ## 2. Prepare and verify models and marker databases
 
@@ -191,10 +191,18 @@ Start with these files:
 - `mobiorigin_results/annotation/mobiorigin_report.html`: biological-evidence report.
 - `mobiorigin_results/annotation/mobiorigin_annotated_results.tsv`: integrated contig table.
 - `mobiorigin_results/README_RESULTS.txt`: short result guide.
+- `mobiorigin_results/annotation/annotation_warnings.tsv`: exact evidence rows
+  excluded because their external header could not be resolved safely.
 
 The standard marker and annotation database locations are discovered
 automatically. Use `--database-dir` or `--annotation-database-dir` only for a
 custom installation.
+
+If a late annotation stage fails after prediction, MobiOrigin retains the
+incomplete workspace as `mobiorigin_results.failed` and writes
+`ANALYSIS_FAILED.json`. Any retained prediction table is resumable evidence of
+completed computation, but the failed directory is not a complete analysis and
+must not be interpreted as one.
 
 ## 4. Optional prediction-only workflow
 
@@ -345,8 +353,10 @@ Prediction is CPU-oriented. Start with eight DIAMOND threads, maintain sufficien
 ## 10. Packaging status
 
 - Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
-- PyPI: version 0.1.3 is public. Its 127,499-byte wheel and 156,316-byte source distribution were published through token-free Trusted Publishing after CI, Twine, size, content, and clean-install gates passed.
-- Bioconda: requires a separate recipe pull request after a public source distribution exists.
+- PyPI: version 0.1.3 is public. Version 0.1.4 uses the same token-free Trusted
+  Publishing, CI, Twine, size, content, and clean-install gates.
+- Bioconda: the recipe pull request is held as a draft until version 0.1.4 is
+  public and its Linux runtime verification passes.
 
 Do not claim Bioconda availability before its external recipe and installation
 tests pass.
