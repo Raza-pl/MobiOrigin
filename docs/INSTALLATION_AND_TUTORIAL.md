@@ -65,18 +65,23 @@ Use Ubuntu under WSL2 and run the Linux commands above inside the WSL terminal. 
 Use this route only when a compatible DIAMOND executable is already available. MOB-suite is still used only in the separate database-bootstrap environment described below.
 
 ```bash
-git clone https://github.com/Raza-pl/MobiOrigin.git
-cd MobiOrigin
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install .
+python -m pip install mobiorigin==0.1.3
+mobiorigin setup-databases --component models
 mobiorigin --help
 ```
 
-The guided database helper expects the recommended named Conda runtime. Virtual-environment users should follow the manual database route in section 2, then reactivate `.venv` before running `mobiorigin setup-databases`.
+The PyPI package does not redistribute third-party MOB-suite database records or
+install the external DIAMOND and AMRFinderPlus executables. For a new complete
+installation, use the guided Conda or Mamba route. Advanced virtual-environment
+users can obtain the source release and follow the manual marker-database route
+in section 2.
 
-MobiOrigin is not yet published on PyPI or Bioconda. Do not use `pip install mobiorigin` or `mamba install mobiorigin` until the corresponding release page exists.
+MobiOrigin 0.1.3 is available from
+[PyPI](https://pypi.org/project/mobiorigin/0.1.3/). Bioconda publication remains
+pending, so `mamba install -c bioconda mobiorigin` is not yet a valid route.
 
 ## 2. Prepare and verify models and marker databases
 
@@ -340,7 +345,8 @@ Prediction is CPU-oriented. Start with eight DIAMOND threads, maintain sufficien
 ## 10. Packaging status
 
 - Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
-- PyPI: the slim package, exact external model transport, and token-free Trusted Publishing workflow are prepared. Publication remains unavailable until the release candidate passes its build, clean-install, and GitHub/PyPI authorization gates.
+- PyPI: version 0.1.3 is public. Its 127,499-byte wheel and 156,316-byte source distribution were published through token-free Trusted Publishing after CI, Twine, size, content, and clean-install gates passed.
 - Bioconda: requires a separate recipe pull request after a public source distribution exists.
 
-No documentation should claim PyPI or Bioconda availability before those external release steps pass.
+Do not claim Bioconda availability before its external recipe and installation
+tests pass.

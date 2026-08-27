@@ -1,13 +1,14 @@
 # MobiOrigin
 
 [![Python 3.10–3.11](https://img.shields.io/badge/python-3.10%E2%80%933.11-blue.svg)](https://www.python.org/)
+[![PyPI version](https://img.shields.io/pypi/v/mobiorigin.svg)](https://pypi.org/project/mobiorigin/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacterial DNA fragments to chromosome, plasmid, phage, or an explicit unclassified state. The frozen dev1 candidate combines 9,557 sequence features with 17 MOB-suite-derived protein-marker features and an equal-weight ensemble of three independently trained neural networks.
 
 ## Status
 
-- Package version: `0.1.3` (PyPI-ready packaging and verified model transport release candidate).
+- Package version: `0.1.3` (public PyPI package with verified external model transport).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.
@@ -15,6 +16,20 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 - Marker databases: not redistributed. Users must provide the exact identity-verified MOB-suite-derived research databases described in [`docs/MOBIORIGIN_DATABASE_SETUP.md`](docs/MOBIORIGIN_DATABASE_SETUP.md).
 
 ## Quick start: install, verify, and see an example
+
+The complete Conda or Mamba route is recommended because it installs the
+Python package, DIAMOND, AMRFinderPlus, models, and databases together. If the
+required external software and marker databases are already managed locally,
+the Python package and frozen models can instead be installed from PyPI:
+
+```bash
+python -m pip install mobiorigin==0.1.3
+mobiorigin setup-databases --component models
+```
+
+The PyPI wheel does not redistribute third-party MOB-suite database records or
+replace the external DIAMOND and AMRFinderPlus executables. Use the guided route
+below for a new complete installation.
 
 MobiOrigin uses one visible Conda/Mamba environment. The guided installer adds
 MobiOrigin, CPU-only PyTorch, NumPy, Pyrodigal, DIAMOND, and official
@@ -77,7 +92,9 @@ mobileOG-db/BacMet/MOB resource set in one atomic operation. ISfinder is not
 required or downloaded; authorized users can add it as an optional legacy
 evidence layer. Every installed file is hashed and recorded in a manifest.
 
-MobiOrigin is not yet published on PyPI or Bioconda. The README will expose those one-line installation routes only after their external release pages exist.
+MobiOrigin 0.1.3 is published on
+[PyPI](https://pypi.org/project/mobiorigin/0.1.3/) through token-free Trusted
+Publishing. A Bioconda package is not yet available.
 
 ## Prepare models and marker databases
 
