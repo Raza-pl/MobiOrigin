@@ -77,6 +77,12 @@ The helper exports `PYTHONNOUSERSITE=1` and clears `PYTHONPATH`/`PYTHONHOME` so 
 
 On Apple Silicon, the helper creates only the database-builder environment as `osx-64` under Rosetta because the compatible historical BLAST build is not available natively for arm64. The MobiOrigin prediction environment stays native arm64. The helper checks for Rosetta and fails with an explicit instruction if it is unavailable.
 
+The helper environments are used only to retrieve MOB-suite records and
+reconstruct the frozen DIAMOND indexes. Prediction, annotation, visualization,
+and the main `mobiorigin` command remain native arm64. Normal setup output is
+concise; add `--verbose` to a `mobiorigin setup-databases` check when the full
+per-file checksum inventory is required.
+
 Verify DIAMOND and all three published database files before prediction:
 
 ```bash

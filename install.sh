@@ -8,10 +8,11 @@ SOFTWARE_ONLY=false
 SKIP_DEMO=false
 SKIP_ANNOTATION_DATABASES=false
 ACCEPT_THIRD_PARTY_TERMS=false
+VERBOSE=false
 DATABASE_DIR="${MOBIORIGIN_DATABASE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/marker_databases}"
 MODEL_DIR="${MOBIORIGIN_MODEL_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/models/dev1}"
 ANNOTATION_DATABASE_DIR="${MOBIORIGIN_ANNOTATION_DATABASE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/mobiorigin/annotation_databases}"
-DEMO_DIR="${PROJECT_DIR}/mobiorigin_demo"
+DEMO_DIR="${MOBIORIGIN_DEMO_DIR:-${HOME}/mobiorigin_demo}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -19,6 +20,7 @@ while [ "$#" -gt 0 ]; do
     --skip-demo) SKIP_DEMO=true ;;
     --skip-annotation-databases) SKIP_ANNOTATION_DATABASES=true ;;
     --accept-third-party-terms) ACCEPT_THIRD_PARTY_TERMS=true ;;
+    --verbose) VERBOSE=true ;;
     --database-dir)
       shift
       DATABASE_DIR="$1"
@@ -39,13 +41,19 @@ while [ "$#" -gt 0 ]; do
       echo "Usage: bash install.sh [--software-only] [--skip-demo] [--skip-annotation-databases]"
       echo "                       [--accept-third-party-terms] [--database-dir PATH]"
       echo "                       [--model-dir PATH]"
-      echo "                       [--annotation-database-dir PATH] [--demo-dir PATH]"
+      echo "                       [--annotation-database-dir PATH] [--demo-dir PATH] [--verbose]"
       exit 0
       ;;
     *) echo "STOP: Unknown installer option: $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+VERBOSE_ARGS=()
+if [ "$VERBOSE" = true ]; then
+  VERBOSE_ARGS=(--verbose)
+  export MOBIORIGIN_VERBOSE=1
+fi
 
 if command -v mamba >/dev/null 2>&1; then
   ENV_MANAGER="mamba"
@@ -111,15 +119,6 @@ if [ "$database_rc" -ne 0 ]; then
   exit "$database_rc"
 fi
 
-"$ENV_MANAGER" run -n mobiorigin mobiorigin doctor \
-  --database-dir "$DATABASE_DIR" \
-  --model-dir "$MODEL_DIR"
-full_doctor_rc=$?
-if [ "$full_doctor_rc" -ne 0 ]; then
-  echo "STOP: The final installation check failed." >&2
-  exit "$full_doctor_rc"
-fi
-
 if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
   if [ "$ACCEPT_THIRD_PARTY_TERMS" = false ]; then
     echo
@@ -148,7 +147,8 @@ if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
       --component annotation \
       --output-dir "$ANNOTATION_DATABASE_DIR" \
       --profile comprehensive \
-      --check
+      --check \
+      "${VERBOSE_ARGS[@]}"
   else
     echo "Downloading and building the comprehensive annotation databases..."
     "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
@@ -156,7 +156,8 @@ if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
       --output-dir "$ANNOTATION_DATABASE_DIR" \
       --marker-database-dir "$DATABASE_DIR" \
       --profile comprehensive \
-      --accept-third-party-terms
+      --accept-third-party-terms \
+      "${VERBOSE_ARGS[@]}"
   fi
   annotation_database_rc=$?
   if [ "$annotation_database_rc" -ne 0 ]; then
@@ -165,6 +166,26 @@ if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
     echo "  mobiorigin setup-databases --component annotation --profile comprehensive --accept-third-party-terms" >&2
     exit "$annotation_database_rc"
   fi
+fi
+
+echo "Running the final installation check..."
+if [ "$SKIP_ANNOTATION_DATABASES" = false ]; then
+  "$ENV_MANAGER" run -n mobiorigin mobiorigin doctor \
+    --database-dir "$DATABASE_DIR" \
+    --model-dir "$MODEL_DIR" \
+    --annotation-database-dir "$ANNOTATION_DATABASE_DIR" \
+    "${VERBOSE_ARGS[@]}"
+else
+  "$ENV_MANAGER" run -n mobiorigin mobiorigin doctor \
+    --database-dir "$DATABASE_DIR" \
+    --model-dir "$MODEL_DIR" \
+    --skip-annotation-databases \
+    "${VERBOSE_ARGS[@]}"
+fi
+full_doctor_rc=$?
+if [ "$full_doctor_rc" -ne 0 ]; then
+  echo "STOP: The final installation check failed." >&2
+  exit "$full_doctor_rc"
 fi
 
 if [ "$SKIP_DEMO" = false ]; then

@@ -4,6 +4,25 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+### Changed
+
+- Put the complete guided Conda or Mamba installation before the managed PyPI
+  route in the README.
+- Made setup and doctor output concise by default while retaining the complete
+  per-file inventory through `--verbose`.
+- Moved the installer demonstration to `~/mobiorigin_demo` and ignored a
+  repository-local demonstration directory.
+- Extended `mobiorigin doctor` to verify the comprehensive annotation database.
+- Made the versioned release asset the sole distributed source of the frozen
+  checkpoint payload. New source checkouts no longer contain a second copy.
+- Clarified that Apple Silicon prediction remains native arm64 while isolated
+  MOB-suite database helpers run under Rosetta.
+
+### Scientific boundaries
+
+- No model, feature, normalization, ensemble weight, decision threshold,
+  annotation threshold, database content, or prediction semantic changed.
+
 ## 0.1.4 — 2026-08-27
 
 Runtime compatibility and installation-verification update for the unchanged

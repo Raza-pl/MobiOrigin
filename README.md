@@ -20,19 +20,16 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Quick start: install, verify, and see an example
 
-The complete Conda or Mamba route is recommended because it installs the
-Python package, DIAMOND, AMRFinderPlus, models, and databases together. If the
-required external software and marker databases are already managed locally,
-the Python package and frozen models can instead be installed from PyPI:
+The guided Conda or Mamba route is recommended for a new installation. It
+installs the Python package, DIAMOND, AMRFinderPlus, models, marker databases,
+annotation databases, and a complete verification example:
 
 ```bash
-python -m pip install mobiorigin==0.1.4
-mobiorigin setup-databases --component models
+git clone --filter=blob:none --single-branch https://github.com/Raza-pl/MobiOrigin.git
+cd MobiOrigin
+bash install.sh
+conda activate mobiorigin
 ```
-
-The PyPI wheel does not redistribute third-party MOB-suite database records or
-replace the external DIAMOND and AMRFinderPlus executables. Use the guided route
-below for a new complete installation.
 
 MobiOrigin uses one visible Conda/Mamba environment. The guided installer adds
 MobiOrigin, CPU-only PyTorch, NumPy, Pyrodigal, DIAMOND, and official
@@ -40,22 +37,20 @@ AMRFinderPlus; prepares the identity-verified marker databases in an isolated
 helper environment; retrieves the exact frozen model bundle; checks the
 installation; and runs a bundled eight-contig comprehensive verification.
 
-```bash
-git clone https://github.com/Raza-pl/MobiOrigin.git
-cd MobiOrigin
-bash install.sh
-conda activate mobiorigin
-```
-
 The installer uses Mamba when available and otherwise Conda. It never enables
 shell `errexit`, never deletes an existing database or result directory, and
 prints a resume command if a stage fails. Windows users should run it inside
 Ubuntu on WSL2. The runtime is CPU-only and does not install CUDA.
 
+On Apple Silicon, prediction and annotation run in the native arm64
+`mobiorigin` environment. Only the temporary MOB-suite database helpers use
+`osx-64` packages under Rosetta because MOB-suite 3.1.8 requires historical
+dependencies that are unavailable as native arm64 packages.
+
 When installation succeeds, the final check creates:
 
 ```text
-mobiorigin_demo/
+~/mobiorigin_demo/
 ├── README_RESULTS.txt
 ├── annotation/
 │   ├── annotation_warnings.tsv
@@ -75,7 +70,7 @@ mobiorigin_demo/
     └── SHA256SUMS.txt
 ```
 
-Open `mobiorigin_demo/visualization/mobiorigin_dashboard.html` to see the same
+Open `~/mobiorigin_demo/visualization/mobiorigin_dashboard.html` to see the same
 kind of report produced for a real assembly. The bundled FASTA contains two
 software-demonstration records for each output class. The comprehensive check
 exercises the installed models, marker databases, CARD, SARG, AMRFinderPlus,
@@ -87,10 +82,28 @@ installation again at any time with:
 mobiorigin doctor
 ```
 
+Normal setup and doctor outputs are concise. Add `--verbose` to either
+`bash install.sh`, `mobiorigin setup-databases`, or `mobiorigin doctor` when the
+complete per-file checksum inventory is required for an audit.
+
 Use `bash install.sh --software-only` to defer database preparation. The
 complete [installation and analysis tutorial](docs/INSTALLATION_AND_TUTORIAL.md)
 covers manual installation, Apple Silicon, Linux, WSL2, diagnostics, and
 database licensing boundaries.
+
+### PyPI route for managed environments
+
+If DIAMOND, AMRFinderPlus, and the required databases are already managed
+locally, install the Python package from PyPI and retrieve the frozen models:
+
+```bash
+python -m pip install mobiorigin==0.1.4
+mobiorigin setup-databases --component models
+```
+
+The PyPI wheel does not redistribute third-party MOB-suite database records or
+replace the external DIAMOND and AMRFinderPlus executables. Use the guided route
+above for a new complete installation.
 
 The installer includes the official AMRFinderPlus software and its BLAST/HMMER
 runtime dependencies. `mobiorigin setup-databases --component annotation`

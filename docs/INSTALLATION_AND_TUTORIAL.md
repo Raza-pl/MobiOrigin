@@ -13,7 +13,7 @@ requires NumPy 1.24 or newer; combining them can produce `numpy.dtype size
 changed` failures.
 
 ```bash
-git clone https://github.com/Raza-pl/MobiOrigin.git
+git clone --filter=blob:none --single-branch https://github.com/Raza-pl/MobiOrigin.git
 cd MobiOrigin
 bash install.sh
 conda activate mobiorigin
@@ -26,14 +26,19 @@ bundle, builds the marker databases in the isolated `mobiorigin-db` environment,
 verifies required software and identities, and runs a bundled eight-contig
 comprehensive example. It checks return codes explicitly and does not use `set -e`.
 
-The test output is created at `mobiorigin_demo/`. Open
-`mobiorigin_demo/visualization/mobiorigin_dashboard.html`; inspect
-`mobiorigin_demo/predictions/predictions.tsv` for the per-sequence schema and
-`mobiorigin_demo/predictions/provenance.json` for reproducibility metadata. The
+The test output is created at `~/mobiorigin_demo/`. Open
+`~/mobiorigin_demo/visualization/mobiorigin_dashboard.html`; inspect
+`~/mobiorigin_demo/predictions/predictions.tsv` for the per-sequence schema and
+`~/mobiorigin_demo/predictions/provenance.json` for reproducibility metadata. The
 example contains two demonstration records for each output class and runs the
 installed comprehensive annotation databases. It confirms package, model,
 database, parser, provenance, and report generation. It is not an accuracy,
 prevalence, or biological-discovery dataset.
+
+Normal setup and doctor output reports verification counts and compatibility
+status without printing hundreds of hashes. Use `mobiorigin doctor --verbose`
+or add `--verbose` to `bash install.sh` or `mobiorigin setup-databases` for the
+complete per-file inventory.
 
 AMRFinderPlus and its executable dependencies are installed in the visible
 runtime. Comprehensive annotation additionally uses CARD, SARG, VFDB,
