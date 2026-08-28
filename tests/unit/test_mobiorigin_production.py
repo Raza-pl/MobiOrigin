@@ -1460,17 +1460,32 @@ def test_comprehensive_evidence_priority_is_transparent_and_prediction_preservin
             150.0,
         ),
     ]
+    normalized_arg = evidence[0]
+    assert normalized_arg.gene_symbol == "blaX"
+    assert normalized_arg.gene_name == "beta-lactamase"
+    assert normalized_arg.gene_family == "class A"
+    assert normalized_arg.functional_class == "antimicrobial_resistance"
+    assert normalized_arg.functional_subclass == "beta-lactam"
+    assert normalized_arg.mechanism == "inactivation"
     integrated = tmp_path / "integrated.tsv"
     rows = write_integrated_results(integrated, records, evidence, predictions)
     assert rows[0]["prediction"] == "plasmid"
     assert rows[0]["p_plasmid"] == "0.9"
     assert rows[0]["evidence_priority_tier"] == "A"
     assert rows[0]["mobility_class"] == "conjugative"
+    assert rows[0]["annotated_gene_symbols"] == "blaX"
+    assert rows[0]["annotated_gene_families"] == "class A"
+    assert rows[0]["annotated_functional_classes"] == "antimicrobial_resistance"
+    assert rows[0]["annotated_functional_subclasses"] == "beta-lactam"
+    assert rows[0]["annotated_mechanisms"] == "inactivation"
+    assert rows[0]["annotation_sources"] == "CARD;MOB_SUITE_MPF;MOB_SUITE_RELAXASE"
     summary = tmp_path / "summary.json"
     write_publication_summary(summary, rows, evidence)
     payload = json.loads(summary.read_text())
     assert payload["interpretation"]["priority_is_clinical_risk_score"] is False
     assert payload["interpretation"]["annotation_changes_origin_prediction"] is False
+    assert payload["annotation_vocabulary"]["schema_version"] == ("mobiorigin-normalized-gene-v1")
+    assert payload["annotation_vocabulary"]["source_specific_fields_retained"] is True
 
 
 def test_amrfinderplus_non_amr_evidence_remains_outside_arg_consensus(tmp_path: Path) -> None:
@@ -1487,6 +1502,11 @@ def test_amrfinderplus_non_amr_evidence_remains_outside_arg_consensus(tmp_path: 
     assert hits[0].evidence_group == "VIRULENCE"
     assert hits[0].source == "AMRFINDERPLUS"
     assert hits[0].feature_name == "stxA"
+    assert hits[0].gene_symbol == "stxA"
+    assert hits[0].gene_name == "Shiga toxin"
+    assert hits[0].gene_family == "unknown"
+    assert hits[0].functional_class == "TOXIN"
+    assert hits[0].functional_subclass == "virulence"
 
 
 def test_mobileog_parser_recovers_titles_and_excludes_unresolved_rows(tmp_path: Path) -> None:
@@ -1518,6 +1538,10 @@ def test_mobileog_parser_recovers_titles_and_excludes_unresolved_rows(tmp_path: 
     assert len(hits) == 1
     assert hits[0].accession == "mobileOG_000000007"
     assert hits[0].feature_type == "integration_excision"
+    assert hits[0].gene_symbol == "xis"
+    assert hits[0].gene_family == "xis"
+    assert hits[0].functional_class == "integration_excision"
+    assert hits[0].functional_subclass == "RRR"
     assert len(warnings) == 1
     assert warnings[0].query == "seq__orf_2"
     assert warnings[0].subject == "unresolved-id"
@@ -1666,12 +1690,26 @@ def test_comprehensive_annotation_publishes_integrated_report(
     integrated = (output / "mobiorigin_annotated_results.tsv").read_text()
     assert "\tplasmid\t" in integrated
     assert "\tA\tARG plus relaxase and mating-pair-formation evidence\t" in integrated
+    assert "annotated_gene_symbols" in integrated.splitlines()[0]
+    assert "annotated_gene_families" in integrated.splitlines()[0]
+    assert "annotated_functional_classes" in integrated.splitlines()[0]
+    evidence_header = (output / "biological_evidence.tsv").read_text().splitlines()[0]
+    assert "gene_symbol" in evidence_header
+    assert "gene_name" in evidence_header
+    assert "gene_family" in evidence_header
+    assert "functional_class" in evidence_header
+    assert "functional_subclass" in evidence_header
+    assert "mechanism" in evidence_header
     report = (output / "mobiorigin_report.html").read_text()
     assert "not clinical risk scores" in report
     provenance = json.loads((output / "annotation_provenance.json").read_text())
     assert provenance["annotation_profile"] == "comprehensive"
     assert provenance["predictions_integrated"] is True
     assert provenance["classification_labels_or_probabilities_changed"] is False
+    assert provenance["schema_version"] == "mobiorigin-biological-annotation-v4"
+    assert provenance["normalized_gene_vocabulary"]["schema_version"] == (
+        "mobiorigin-normalized-gene-v1"
+    )
     assert provenance["annotation_warnings"]["mobileog_rows_excluded"] == 1
     warnings = (output / "annotation_warnings.tsv").read_text(encoding="utf-8")
     assert "unresolved-mobileog-id" in warnings

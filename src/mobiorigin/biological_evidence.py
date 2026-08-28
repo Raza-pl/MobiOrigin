@@ -50,6 +50,12 @@ class EvidenceHit:
     query_coverage: float | None
     evalue: float | None
     bitscore: float | None
+    gene_symbol: str = "unknown"
+    gene_name: str = "unknown"
+    gene_family: str = "unknown"
+    functional_class: str = "unknown"
+    functional_subclass: str = "unknown"
+    mechanism: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,25 @@ PREDICTION_FIELDS = (
     "plasmid_score",
     "abstention_reason",
 )
+
+UNKNOWN_ANNOTATION_VALUES = {"", "-", "na", "n/a", "none", "null", "unknown"}
+
+
+def _annotation_value(value: object) -> str:
+    """Normalize missing values and whitespace without changing biological names."""
+    cleaned = " ".join(str(value).strip().split())
+    return "unknown" if cleaned.casefold() in UNKNOWN_ANNOTATION_VALUES else cleaned
+
+
+def _annotation_terms(hits: Sequence[EvidenceHit], field: str) -> str:
+    """Return a deterministic, de-duplicated semicolon list for a canonical field."""
+    values: set[str] = set()
+    for hit in hits:
+        for item in str(getattr(hit, field)).split(";"):
+            cleaned = _annotation_value(item)
+            if cleaned != "unknown":
+                values.add(cleaned)
+    return ";".join(sorted(values, key=lambda value: (value.casefold(), value)))
 
 
 def run_evidence_diamond(
@@ -176,6 +201,12 @@ def arg_evidence(hits: Sequence[ArgHit]) -> list[EvidenceHit]:
             query_coverage=hit.query_coverage,
             evalue=hit.evalue,
             bitscore=hit.bitscore,
+            gene_symbol=_annotation_value(hit.gene_symbol),
+            gene_name=_annotation_value(hit.gene_name),
+            gene_family=_annotation_value(hit.amr_family),
+            functional_class="antimicrobial_resistance",
+            functional_subclass=_annotation_value(hit.drug_class),
+            mechanism=_annotation_value(hit.resistance_mechanism),
         )
         for hit in hits
     ]
@@ -200,6 +231,11 @@ def parse_amrfinderplus_non_amr(path: Path, orfs: Mapping[str, Orf]) -> list[Evi
                 return None if not value or value.upper() == "NA" else float(value)
 
             subtype = row.get("Subtype", "").strip().lower()
+            functional_class = _annotation_value(row.get("Class", ""))
+            functional_subclass = _annotation_value(row.get("Subclass", "") or subtype)
+            gene_symbol = _annotation_value(row["Element symbol"])
+            gene_name = _annotation_value(row["Element name"])
+            gene_family = _annotation_value(row.get("Hierarchy node", ""))
             category = "; ".join(
                 value
                 for value in (row.get("Class", "").strip(), row.get("Subclass", "").strip())
@@ -224,6 +260,11 @@ def parse_amrfinderplus_non_amr(path: Path, orfs: Mapping[str, Orf]) -> list[Evi
                     number("% Coverage of reference"),
                     None,
                     None,
+                    gene_symbol=gene_symbol,
+                    gene_name=gene_name,
+                    gene_family=gene_family,
+                    functional_class=functional_class,
+                    functional_subclass=functional_subclass,
                 )
             )
     return hits
@@ -265,11 +306,18 @@ def parse_vfdb(
             feature = match.group("gene")
             accession = match.group("vfg")
             category = metadata.get(accession) or metadata.get(match.group("accession"), "unknown")
+            family = match.group("group") or "unknown"
             description = "; ".join(
                 value for value in (match.group("group"), match.group("organism")) if value
             )
         else:
-            feature, accession, category, description = subject, subject, "unknown", title
+            feature, accession, category, family, description = (
+                subject,
+                subject,
+                "unknown",
+                "unknown",
+                title,
+            )
         hits.append(
             EvidenceHit(
                 item.sequence_id,
@@ -289,6 +337,11 @@ def parse_vfdb(
                 coverage,
                 evalue,
                 bitscore,
+                gene_symbol=_annotation_value(feature),
+                gene_name=_annotation_value(family if family != "unknown" else feature),
+                gene_family=_annotation_value(family),
+                functional_class=_annotation_value(category),
+                functional_subclass="virulence_factor",
             )
         )
     return hits
@@ -316,6 +369,8 @@ def parse_mge(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> list[
         if not feature:
             tokens = subject.split("_")
             feature = tokens[1] if len(tokens) > 1 else subject
+        functional_class = _annotation_value(entry.get("Class", ""))
+        functional_subclass = _annotation_value(entry.get("Sub_class", ""))
         hits.append(
             EvidenceHit(
                 item.sequence_id,
@@ -335,6 +390,11 @@ def parse_mge(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> list[
                 coverage,
                 evalue,
                 bitscore,
+                gene_symbol=_annotation_value(feature),
+                gene_name=_annotation_value(feature),
+                gene_family=functional_subclass,
+                functional_class=functional_class,
+                functional_subclass=functional_subclass,
             )
         )
     return hits
@@ -414,6 +474,13 @@ def parse_mobileog(
                 coverage,
                 evalue,
                 bitscore,
+                gene_symbol=_annotation_value(feature),
+                gene_name=_annotation_value(feature),
+                gene_family=_annotation_value(feature),
+                functional_class=_annotation_value(
+                    _MOBILEOG_MAJOR_CATEGORIES.get(major, "mobile_genetic_element")
+                ),
+                functional_subclass=_annotation_value(minor or major),
             )
         )
     return hits
@@ -444,6 +511,10 @@ def parse_bacmet(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> li
         subject_fields = subject.split("|")
         entry = metadata.get(accession, {})
         compounds = entry.get("Compound", "").strip()
+        feature = entry.get("Gene_name", "").strip() or (
+            subject_fields[1] if len(subject_fields) > 1 else subject
+        )
+        source_class = _annotation_value(entry.get("Class", ""))
         hits.append(
             EvidenceHit(
                 item.sequence_id,
@@ -454,8 +525,7 @@ def parse_bacmet(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> li
                 "STRESS",
                 "BACMET2_EXPERIMENTAL",
                 entry.get("Class", "").strip().lower() or "biocide_metal_resistance",
-                entry.get("Gene_name", "").strip()
-                or (subject_fields[1] if len(subject_fields) > 1 else subject),
+                feature,
                 accession,
                 compounds.split(" [class:", 1)[0] or "unknown",
                 title or compounds,
@@ -464,6 +534,11 @@ def parse_bacmet(path: Path, orfs: Mapping[str, Orf], metadata_path: Path) -> li
                 coverage,
                 evalue,
                 bitscore,
+                gene_symbol=_annotation_value(feature),
+                gene_name=_annotation_value(feature),
+                gene_family=source_class,
+                functional_class="biocide_metal_resistance",
+                functional_subclass=_annotation_value(compounds.split(" [class:", 1)[0]),
             )
         )
     return hits
@@ -489,6 +564,7 @@ def parse_mob_marker(path: Path, orfs: Mapping[str, Orf], family: str) -> list[E
     hits: list[EvidenceHit] = []
     for query, subject, identity, coverage, evalue, bitscore, title in _rows(path):
         item = _orf(orfs, query)
+        marker_name = _marker_name(family, subject, title)
         hits.append(
             EvidenceHit(
                 item.sequence_id,
@@ -499,7 +575,7 @@ def parse_mob_marker(path: Path, orfs: Mapping[str, Orf], family: str) -> list[E
                 "MOBILITY",
                 source,
                 feature_type,
-                _marker_name(family, subject, title),
+                marker_name,
                 subject,
                 family,
                 title or subject,
@@ -508,6 +584,11 @@ def parse_mob_marker(path: Path, orfs: Mapping[str, Orf], family: str) -> list[E
                 coverage,
                 evalue,
                 bitscore,
+                gene_symbol=_annotation_value(marker_name),
+                gene_name=_annotation_value(title or marker_name),
+                gene_family=_annotation_value(marker_name),
+                functional_class="plasmid_mobility",
+                functional_subclass=feature_type,
             )
         )
     return hits
@@ -585,6 +666,13 @@ def write_integrated_results(
         "arg_genes",
         "arg_drug_classes",
         "arg_evidence_sources",
+        "annotated_gene_symbols",
+        "annotated_gene_names",
+        "annotated_gene_families",
+        "annotated_functional_classes",
+        "annotated_functional_subclasses",
+        "annotated_mechanisms",
+        "annotation_sources",
         "virulence_hits",
         "virulence_features",
         "mge_hits",
@@ -627,6 +715,15 @@ def write_integrated_results(
                     )
                 ),
                 "arg_evidence_sources": ";".join(sorted({hit.source for hit in arg_hits})),
+                "annotated_gene_symbols": _annotation_terms(selected, "gene_symbol"),
+                "annotated_gene_names": _annotation_terms(selected, "gene_name"),
+                "annotated_gene_families": _annotation_terms(selected, "gene_family"),
+                "annotated_functional_classes": _annotation_terms(selected, "functional_class"),
+                "annotated_functional_subclasses": _annotation_terms(
+                    selected, "functional_subclass"
+                ),
+                "annotated_mechanisms": _annotation_terms(selected, "mechanism"),
+                "annotation_sources": ";".join(sorted({hit.source for hit in selected})),
                 "virulence_hits": len(virulence),
                 "virulence_features": ";".join(sorted({hit.feature_name for hit in virulence})),
                 "mge_hits": len(mge),
@@ -651,7 +748,7 @@ def write_publication_summary(
     group_counts = Counter(hit.evidence_group for hit in evidence)
     source_counts = Counter(hit.source for hit in evidence)
     summary = {
-        "schema_version": "mobiorigin-publication-summary-v1",
+        "schema_version": "mobiorigin-publication-summary-v2",
         "records": len(rows),
         "prediction_counts": dict(sorted(prediction_counts.items())),
         "evidence_priority_tier_counts": dict(sorted(tier_counts.items())),
@@ -667,6 +764,12 @@ def write_publication_summary(
             "priority_is_clinical_risk_score": False,
             "homology_proves_phenotype": False,
             "annotation_changes_origin_prediction": False,
+        },
+        "annotation_vocabulary": {
+            "schema_version": "mobiorigin-normalized-gene-v1",
+            "source_specific_fields_retained": True,
+            "missing_value": "unknown",
+            "normalization_changes_evidence_calls": False,
         },
     }
     atomic_json(path, summary)
@@ -692,6 +795,9 @@ def write_html_report(path: Path, rows: Sequence[Mapping[str, object]], summary_
                 "evidence_priority_tier",
                 "consensus_arg_orfs",
                 "arg_genes",
+                "annotated_gene_symbols",
+                "annotated_gene_families",
+                "annotated_functional_classes",
                 "mobility_class",
                 "virulence_hits",
                 "mge_hits",
@@ -716,14 +822,15 @@ body{{font-family:system-ui,sans-serif;margin:2rem;color:#172033;background:#f6f
 h1,h2{{color:#123b57}} .notice{{background:#fff4d6;border-left:5px solid #d99b00;padding:1rem}}
 .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem;margin:1.5rem 0}}
 .card{{background:white;border:1px solid #dce3ea;border-radius:8px;padding:1rem;display:flex;flex-direction:column}}
-.card span{{font-size:1.7rem;color:#096b72}} table{{border-collapse:collapse;width:100%;background:white;font-size:.86rem}}
+.card span{{font-size:1.7rem;color:#096b72}} table{{border-collapse:collapse;width:100%;background:white;font-size:.82rem}}
 th,td{{border:1px solid #dce3ea;padding:.45rem;text-align:left;vertical-align:top}} th{{background:#e9f2f5}}
+.table-wrap{{overflow-x:auto}}
 code{{background:#edf1f4;padding:.1rem .25rem}} footer{{margin-top:2rem;color:#52606d}}
 </style></head><body><h1>MobiOrigin biological-evidence report</h1>
 <p class="notice"><strong>Interpretation boundary:</strong> evidence tiers prioritize records for review. They are not clinical risk scores, do not prove phenotype or plasmid origin, and never alter MobiOrigin predictions.</p>
 <div class="cards">{cards}</div><h2>Priority logic</h2>
 <p><strong>A</strong>: ARG plus relaxase and mating-pair-formation evidence; <strong>B</strong>: ARG plus partial mobility, replication, or MGE evidence; <strong>C</strong>: ARG without detected mobility context; <strong>D</strong>: non-ARG biological evidence only; <strong>E</strong>: no retained evidence.</p>
-<h2>Highest-priority records (up to 100)</h2><table><thead><tr><th>Sequence</th><th>Prediction</th><th>Tier</th><th>ARG ORFs</th><th>ARG genes</th><th>Mobility</th><th>VF hits</th><th>MGE hits</th></tr></thead><tbody>{table_rows}</tbody></table>
+<h2>Highest-priority records (up to 100)</h2><div class="table-wrap"><table><thead><tr><th>Sequence</th><th>Prediction</th><th>Tier</th><th>ARG ORFs</th><th>ARG genes</th><th>All gene symbols</th><th>Gene families</th><th>Functional classes</th><th>Mobility</th><th>VF hits</th><th>MGE hits</th></tr></thead><tbody>{table_rows}</tbody></table></div>
 <footer>Generated deterministically by MobiOrigin. See <code>annotation_provenance.json</code>, <code>biological_evidence.tsv</code>, and <code>SHA256SUMS.txt</code> for methods and identities.</footer></body></html>"""
     path.write_text(document, encoding="utf-8")
 

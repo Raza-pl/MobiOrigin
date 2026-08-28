@@ -948,7 +948,7 @@ def annotate(
 
         evidence_counts = Counter(hit.source for hit in all_hits)
         provenance = {
-            "schema_version": "mobiorigin-biological-annotation-v3",
+            "schema_version": "mobiorigin-biological-annotation-v4",
             "mobiorigin_version": __version__,
             "input_fasta": _database_identity(input_fasta),
             "records": len(records),
@@ -985,6 +985,12 @@ def annotate(
             },
             "consensus_priority": list(AMR_SOURCES),
             "all_database_evidence_retained": True,
+            "normalized_gene_vocabulary": {
+                "schema_version": "mobiorigin-normalized-gene-v1",
+                "source_specific_fields_retained": True,
+                "changes_evidence_calls": False,
+                "changes_origin_prediction": False,
+            },
             "evidence_counts": {source: evidence_counts[source] for source in AMR_SOURCES},
             "consensus_arg_orfs": len(consensus),
             "comprehensive_evidence_counts": dict(sorted(comprehensive_counts.items())),

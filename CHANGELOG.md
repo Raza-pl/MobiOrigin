@@ -4,6 +4,16 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+### Added
+
+- Added a source-preserving normalized gene vocabulary across ARG, virulence,
+  MGE, stress, and plasmid-mobility evidence. Detailed evidence now includes
+  canonical gene symbol, gene name, family, functional class, subclass, and
+  mechanism fields.
+- Added deterministic per-contig summaries of normalized genes, families,
+  classes, subclasses, mechanisms, and contributing annotation sources to the
+  integrated TSV and HTML report.
+
 ### Changed
 
 - Put the complete guided Conda or Mamba installation before the managed PyPI
@@ -22,6 +32,8 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 - No model, feature, normalization, ensemble weight, decision threshold,
   annotation threshold, database content, or prediction semantic changed.
+- Gene normalization is additive. Source-specific names remain retained and no
+  unsupported alias, family, class, mechanism, phenotype, or risk is inferred.
 
 ## 0.1.4 — 2026-08-27
 

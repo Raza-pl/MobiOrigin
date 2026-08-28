@@ -82,6 +82,11 @@ installation again at any time with:
 mobiorigin doctor
 ```
 
+The comprehensive annotation report uses consistent columns for gene symbol,
+gene name, gene family, functional class, functional subclass, and mechanism.
+Database-specific terminology and accessions remain available in the detailed
+evidence table, and no annotation changes an origin prediction.
+
 Normal setup and doctor outputs are concise. Add `--verbose` to either
 `bash install.sh`, `mobiorigin setup-databases`, or `mobiorigin doctor` when the
 complete per-file checksum inventory is required for an audit.
