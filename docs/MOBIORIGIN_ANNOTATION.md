@@ -218,9 +218,11 @@ Both profiles write:
 The comprehensive profile also writes:
 
 - `biological_evidence.tsv`: normalized, coordinate-aware evidence from every
-  source while retaining disagreements;
+  source while retaining disagreements and every database-specific field;
 - `mobiorigin_annotated_results.tsv`: one publication-facing row per input
-  sequence, with unchanged MobiOrigin values when supplied;
+  sequence, with unchanged MobiOrigin values when supplied and deterministic
+  summaries of gene symbols, names, families, classes, subclasses, mechanisms,
+  and evidence sources;
 - `publication_summary.json`: machine-readable aggregate accounting;
 - `mobiorigin_report.html`: a self-contained report and the first 100 records
   in deterministic priority order;
@@ -228,6 +230,35 @@ The comprehensive profile also writes:
 
 Empty numeric cells mean that the official source did not report that value;
 they do not mean zero.
+
+## Normalized gene vocabulary
+
+The comprehensive evidence table uses one additive canonical vocabulary across
+CARD, AMRFinderPlus, SARG, VFDB, mobileOG-db, BacMet, MOB-suite, and the optional
+legacy ISfinder route:
+
+| Column | Meaning |
+|---|---|
+| `gene_symbol` | Database-supported gene or marker symbol. Capitalization is preserved. |
+| `gene_name` | Human-readable gene, protein, or factor name. |
+| `gene_family` | Source-supported gene, protein, or marker family. |
+| `functional_class` | Broad biological function, resistance group, virulence category, MGE category, stress class, or mobility class. |
+| `functional_subclass` | More specific drug, compound, MGE, marker, or source-defined subclass. |
+| `mechanism` | Mechanism reported by the source, or `unknown` when the source does not supply one. |
+
+The earlier `feature_type`, `feature_name`, `category`, and `description`
+columns remain unchanged. They preserve source terminology and allow a complete
+audit of the normalized values. MobiOrigin normalizes missing-value tokens and
+whitespace but does not silently merge biological aliases or infer a family,
+class, or mechanism that a source did not report.
+
+The integrated per-contig table adds `annotated_gene_symbols`,
+`annotated_gene_names`, `annotated_gene_families`,
+`annotated_functional_classes`, `annotated_functional_subclasses`,
+`annotated_mechanisms`, and `annotation_sources`. Values are deterministic,
+case-preserving, de-duplicated semicolon lists. These summaries do not alter
+origin predictions, retained evidence hits, consensus ARG calls, or A to E
+priority tiers.
 
 ## Evidence-priority tiers and risk boundary
 
