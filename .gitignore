@@ -37,6 +37,7 @@ docs/presentation/
 gtdb_genomes_reps_r220/
 mobiorigin_mob_databases/
 mobiorigin_results/
+/mobiorigin_demo/
 /mobiorigin_assembly_example_*/
 /mobiorigin_installation_test_*/
 *_Improvement_Plan.md
@@ -55,9 +56,9 @@ email_*.md
 !src/mobiorigin/data/examples/*.fasta
 !src/mobiorigin/data/models/
 !src/mobiorigin/data/models/dev1/
-!src/mobiorigin/data/models/dev1/*.pt
-!src/mobiorigin/data/models/dev1/*.npy
 !src/mobiorigin/data/models/dev1/model_manifest.json
+src/mobiorigin/data/models/dev1/*.pt
+src/mobiorigin/data/models/dev1/*.npy
 
 # Editors and operating systems
 .DS_Store

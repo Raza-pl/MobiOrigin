@@ -555,7 +555,9 @@ def test_guided_installer_is_non_errexit_and_runs_demo() -> None:
     assert "mobiorigin demo" in installer
     assert "--comprehensive" in installer
     assert "--annotation-database-dir" in installer
+    assert "--skip-annotation-databases" in installer
     assert "--software-only" in installer
+    assert "${HOME}/mobiorigin_demo" in installer
     assert not any(line.lstrip().startswith("rm ") for line in installer.splitlines())
 
 
@@ -597,10 +599,40 @@ def test_doctor_reports_software_and_database_state(
     monkeypatch.setattr(
         "mobiorigin.workflow.check_models", lambda path: {"status": "PASS", "path": str(path)}
     )
-    result = doctor(database_dir=tmp_path / "db")
+    monkeypatch.setattr(
+        "mobiorigin.workflow.check_annotation_databases",
+        lambda path, **kwargs: {"status": "PASS", "path": str(path), **kwargs},
+    )
+    result = doctor(
+        database_dir=tmp_path / "db",
+        annotation_database_dir=tmp_path / "annotation",
+    )
     assert result["status"] == "PASS"
     assert result["database"]["status"] == "PASS"
+    assert result["annotation_database"]["status"] == "PASS"
     assert doctor(software_only=True)["status"] == "PASS"
+
+
+def test_compact_cli_output_omits_large_provenance_inventories() -> None:
+    result = {
+        "status": "PASS",
+        "resources_verified": 174,
+        "database_sha256": {"large/file": "digest"},
+        "mobileog_compatibility": {
+            "status": "PASS_WITH_EXCLUSIONS",
+            "headers_excluded": 3,
+            "unsupported_examples": ["long header"],
+        },
+    }
+    compact = cli._compact_result(result)
+    assert compact == {
+        "status": "PASS",
+        "resources_verified": 174,
+        "mobileog_compatibility": {
+            "status": "PASS_WITH_EXCLUSIONS",
+            "headers_excluded": 3,
+        },
+    }
 
 
 def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

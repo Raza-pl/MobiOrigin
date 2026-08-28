@@ -20,6 +20,21 @@ from mobiorigin.visualize import visualize
 from mobiorigin.workflow import demo, doctor, resolve_database_dir, run_analysis
 
 
+def _compact_result(value: object) -> object:
+    """Remove per-file inventories from normal terminal output."""
+    if isinstance(value, list):
+        return [_compact_result(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    omitted = {"artifacts", "database_sha256", "third_party_terms", "unsupported_examples"}
+    return {key: _compact_result(item) for key, item in value.items() if key not in omitted}
+
+
+def _print_result(result: dict[str, object], *, verbose: bool) -> None:
+    """Print a concise result unless the full provenance inventory was requested."""
+    print(json.dumps(result if verbose else _compact_result(result), indent=2))
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(
         prog="mobiorigin",
@@ -104,6 +119,11 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional offline copy of the exact frozen model archive",
     )
+    setup_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print complete per-file checksums and provenance inventories",
+    )
     annotate_parser = subparsers.add_parser(
         "annotate", help="annotate biological evidence without changing MobiOrigin predictions"
     )
@@ -185,8 +205,19 @@ def parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="check installation and databases")
     doctor_parser.add_argument("--database-dir", type=Path)
     doctor_parser.add_argument("--model-dir", type=Path)
+    doctor_parser.add_argument("--annotation-database-dir", type=Path)
+    doctor_parser.add_argument(
+        "--skip-annotation-databases",
+        action="store_true",
+        help="verify prediction dependencies without requiring annotation databases",
+    )
     doctor_parser.add_argument(
         "--software-only", action="store_true", help="check installed commands without databases"
+    )
+    doctor_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print complete per-file checksums and provenance inventories",
     )
     demo_parser = subparsers.add_parser(
         "demo", help="run a bundled synthetic installation test and create example outputs"
@@ -233,17 +264,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         if args.component == "models":
             if args.check:
-                print(json.dumps(check_models(output_dir), indent=2))
+                _print_result(check_models(output_dir), verbose=args.verbose)
             else:
-                print(
-                    json.dumps(
-                        setup_models(
-                            output_dir,
-                            archive=args.model_archive,
-                            cache_dir=args.cache_dir,
-                        ),
-                        indent=2,
-                    )
+                _print_result(
+                    setup_models(
+                        output_dir,
+                        archive=args.model_archive,
+                        cache_dir=args.cache_dir,
+                    ),
+                    verbose=args.verbose,
                 )
         elif args.component == "annotation":
             if args.check:
@@ -265,9 +294,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     profile=args.profile,
                     accept_third_party_terms=args.accept_third_party_terms,
                 )
-            print(json.dumps(result, indent=2))
+            _print_result(result, verbose=args.verbose)
         elif args.check:
-            print(json.dumps(check_databases(output_dir, diamond=args.diamond), indent=2))
+            _print_result(check_databases(output_dir, diamond=args.diamond), verbose=args.verbose)
         else:
             if args.source_dir is None:
                 argument_parser.error(
@@ -316,9 +345,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         result = doctor(
             database_dir=args.database_dir,
             model_dir=args.model_dir,
+            annotation_database_dir=args.annotation_database_dir,
+            skip_annotation_databases=args.skip_annotation_databases,
             software_only=args.software_only,
         )
-        print(json.dumps(result, indent=2))
+        _print_result(result, verbose=args.verbose)
         if result["status"] != "PASS":
             raise SystemExit(1)
     elif args.command == "demo":

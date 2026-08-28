@@ -10,6 +10,11 @@ export PYTHONNOUSERSITE=1
 unset PYTHONPATH
 unset PYTHONHOME
 
+VERBOSE_ARGS=()
+if [ "${MOBIORIGIN_VERBOSE:-0}" = 1 ]; then
+  VERBOSE_ARGS=(--verbose)
+fi
+
 if command -v mamba >/dev/null 2>&1; then
   ENV_MANAGER="mamba"
 elif command -v conda >/dev/null 2>&1; then
@@ -45,12 +50,14 @@ if [ -d "$MODEL_DIR" ]; then
   "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
     --component models \
     --check \
-    --output-dir "$MODEL_DIR"
+    --output-dir "$MODEL_DIR" \
+    "${VERBOSE_ARGS[@]}"
 else
   echo "Retrieving and verifying the exact frozen MobiOrigin model artifacts..."
   "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
     --component models \
-    --output-dir "$MODEL_DIR"
+    --output-dir "$MODEL_DIR" \
+    "${VERBOSE_ARGS[@]}"
 fi
 model_rc=$?
 if [ "$model_rc" -ne 0 ]; then
@@ -63,7 +70,8 @@ if [ -d "$OUTPUT_DIR" ]; then
   echo "The output directory already exists; verifying it without overwriting."
   "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
     --check \
-    --output-dir "$OUTPUT_DIR"
+    --output-dir "$OUTPUT_DIR" \
+    "${VERBOSE_ARGS[@]}"
   check_rc=$?
   if [ "$check_rc" -ne 0 ]; then
     echo "STOP: Existing database directory failed verification: $OUTPUT_DIR" >&2
@@ -207,7 +215,8 @@ fi
 echo "Copying and cryptographically verifying the three required databases..."
 "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
   --source-dir "$BUILD_DIR/frozen" \
-  --output-dir "$OUTPUT_DIR"
+  --output-dir "$OUTPUT_DIR" \
+  "${VERBOSE_ARGS[@]}"
 copy_rc=$?
 if [ "$copy_rc" -ne 0 ]; then
   echo "STOP: MobiOrigin rejected the retrieved database identities." >&2
@@ -217,7 +226,8 @@ fi
 
 "$ENV_MANAGER" run -n mobiorigin mobiorigin setup-databases \
   --check \
-  --output-dir "$OUTPUT_DIR"
+  --output-dir "$OUTPUT_DIR" \
+  "${VERBOSE_ARGS[@]}"
 check_rc=$?
 if [ "$check_rc" -ne 0 ]; then
   echo "STOP: Final MobiOrigin database verification failed." >&2
