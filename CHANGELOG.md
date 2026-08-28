@@ -4,6 +4,13 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+No changes yet.
+
+## 0.1.5 — 2026-08-28
+
+Installation usability and normalized annotation-reporting update for the
+unchanged frozen `mobiorigin-dev1-mob-selective-v1` classifier.
+
 ### Added
 
 - Added a source-preserving normalized gene vocabulary across ARG, virulence,
@@ -27,6 +34,11 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
   checkpoint payload. New source checkouts no longer contain a second copy.
 - Clarified that Apple Silicon prediction remains native arm64 while isolated
   MOB-suite database helpers run under Rosetta.
+- Preferred DIAMOND, AMRFinderPlus, and database-update executables installed
+  beside MobiOrigin's active Python over unrelated same-named tools earlier on
+  the host `PATH`. Explicit executable paths remain authoritative.
+- Passed the frozen marker builder the absolute DIAMOND 2.0.15 path from its
+  isolated helper environment, preventing `~/bin/diamond` from shadowing it.
 
 ### Scientific boundaries
 

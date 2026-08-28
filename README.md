@@ -8,7 +8,7 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Status
 
-- Package version: `0.1.4` (release candidate with verified external model transport).
+- Package version: `0.1.5` (verified external model transport and normalized gene reporting).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.
@@ -41,6 +41,11 @@ The installer uses Mamba when available and otherwise Conda. It never enables
 shell `errexit`, never deletes an existing database or result directory, and
 prints a resume command if a stage fails. Windows users should run it inside
 Ubuntu on WSL2. The runtime is CPU-only and does not install CUDA.
+
+MobiOrigin resolves DIAMOND, AMRFinderPlus, and database helpers from the
+active Python environment before consulting the wider host `PATH`. This keeps
+older tools in locations such as `~/bin` from overriding the versions installed
+by Conda or Mamba. An explicitly supplied executable path is always honored.
 
 On Apple Silicon, prediction and annotation run in the native arm64
 `mobiorigin` environment. Only the temporary MOB-suite database helpers use
@@ -102,7 +107,7 @@ If DIAMOND, AMRFinderPlus, and the required databases are already managed
 locally, install the Python package from PyPI and retrieve the frozen models:
 
 ```bash
-python -m pip install mobiorigin==0.1.4
+python -m pip install mobiorigin==0.1.5
 mobiorigin setup-databases --component models
 ```
 
@@ -119,7 +124,8 @@ required or downloaded; authorized users can add it as an optional legacy
 evidence layer. Every installed file is hashed and recorded in a manifest.
 
 MobiOrigin is published on [PyPI](https://pypi.org/project/mobiorigin/) through
-token-free Trusted Publishing. The Bioconda recipe is being updated for 0.1.4.
+token-free Trusted Publishing. A Bioconda recipe is under external review and
+must not be treated as available until Bioconda accepts and publishes it.
 
 ## Prepare models and marker databases
 

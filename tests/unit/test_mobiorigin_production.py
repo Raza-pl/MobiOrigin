@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from mobiorigin import cli, model_setup
+from mobiorigin import cli, model_setup, runtime
 from mobiorigin.annotate import (
     ArgHit,
     Orf,
@@ -57,6 +57,7 @@ from mobiorigin.database_setup import (
 from mobiorigin.fasta import FastaRecord, read_fasta
 from mobiorigin.marker_database_builder import (
     DIAMOND_VERSION,
+    _resolve_diamond,
     build_rep_proteins,
     translate,
 )
@@ -774,7 +775,8 @@ def test_database_helper_is_guided_non_destructive_and_non_errexit() -> None:
     assert "run -n mobiorigin-marker-build python" in payload
     assert "PYTHONNOUSERSITE=1" in payload
     assert "unset PYTHONPATH" in payload
-    assert "--diamond diamond" in payload
+    assert '--diamond "$MARKER_DIAMOND"' in payload
+    assert 'Path(sys.prefix) / "bin" / "diamond"' in payload
     assert "run -n mobiorigin mobiorigin setup-databases" in payload
     assert "--platform osx-64" in payload
     assert "Rosetta" in payload
@@ -1101,7 +1103,10 @@ def test_database_check_verifies_diamond_and_frozen_databases(
     database_dir = tmp_path / "db"
     database_dir.mkdir()
     write(database_dir / MANIFEST_NAME, "{}\n")
-    monkeypatch.setattr("mobiorigin.database_setup.shutil.which", lambda value: "/bin/diamond")
+    monkeypatch.setattr(
+        "mobiorigin.database_setup.resolve_executable",
+        lambda *args, **kwargs: Path("/bin/diamond"),
+    )
     monkeypatch.setattr(
         "mobiorigin.database_setup.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(
@@ -1116,6 +1121,56 @@ def test_database_check_verifies_diamond_and_frozen_databases(
     assert result["status"] == "PASS"
     assert result["databases_verified"] == 3
     assert result["diamond_version"] == "diamond version 2.1.9"
+
+
+def test_resolve_executable_prefers_active_python_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = tmp_path / "environment"
+    environment_bin = environment / "bin"
+    host_bin = tmp_path / "host-bin"
+    environment_bin.mkdir(parents=True)
+    host_bin.mkdir()
+    environment_diamond = environment_bin / "diamond"
+    host_diamond = host_bin / "diamond"
+    environment_diamond.write_text("#!/bin/sh\necho environment\n", encoding="utf-8")
+    host_diamond.write_text("#!/bin/sh\necho host\n", encoding="utf-8")
+    environment_diamond.chmod(0o755)
+    host_diamond.chmod(0o755)
+    monkeypatch.setattr(runtime.sys, "prefix", str(environment))
+    monkeypatch.setenv("PATH", str(host_bin))
+
+    assert runtime.resolve_executable("diamond") == environment_diamond.resolve()
+
+
+def test_resolve_executable_honors_an_explicit_tool_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    explicit = tmp_path / "tools" / "diamond"
+    explicit.parent.mkdir()
+    explicit.write_text("#!/bin/sh\necho explicit\n", encoding="utf-8")
+    explicit.chmod(0o755)
+    monkeypatch.setattr(runtime.sys, "prefix", str(tmp_path / "environment"))
+
+    assert runtime.resolve_executable(explicit) == explicit.resolve()
+
+
+def test_marker_builder_prefers_its_isolated_environment_diamond(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment = tmp_path / "marker-build"
+    environment_diamond = environment / "bin" / "diamond"
+    host_diamond = tmp_path / "host-bin" / "diamond"
+    environment_diamond.parent.mkdir(parents=True)
+    host_diamond.parent.mkdir(parents=True)
+    environment_diamond.write_text("#!/bin/sh\necho 2.0.15\n", encoding="utf-8")
+    host_diamond.write_text("#!/bin/sh\necho 2.1.11\n", encoding="utf-8")
+    environment_diamond.chmod(0o755)
+    host_diamond.chmod(0o755)
+    monkeypatch.setattr("mobiorigin.marker_database_builder.sys.prefix", str(environment))
+    monkeypatch.setenv("PATH", str(host_diamond.parent))
+
+    assert _resolve_diamond(Path("diamond")) == environment_diamond.resolve()
 
 
 def test_cli_dispatches_database_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -14,6 +14,7 @@ from typing import Final
 
 from mobiorigin.mobileog import audit_mobileog_fasta
 from mobiorigin.provenance import sha256_file
+from mobiorigin.runtime import resolve_executable
 
 CARD_URL: Final = "https://card.mcmaster.ca/latest/data"
 SARG_URL: Final = (
@@ -120,13 +121,9 @@ def _archive_member(archive: Path, suffix: str, destination: Path) -> None:
 
 
 def _diamond_executable(diamond: Path) -> Path:
-    resolved = shutil.which(str(diamond))
-    if resolved is None:
-        candidate = diamond.expanduser()
-        if not candidate.is_file() or not os.access(candidate, os.X_OK):
-            raise FileNotFoundError(f"DIAMOND executable not found: {diamond}")
-        resolved = str(candidate.resolve())
-    return Path(resolved)
+    resolved = resolve_executable(diamond, label="DIAMOND executable")
+    assert resolved is not None
+    return resolved
 
 
 def _build_diamond(diamond: Path, fasta: Path, destination: Path) -> None:
@@ -252,9 +249,12 @@ def prepare_official_annotation_sources(
             _copy(marker_source, destination / "mob_suite" / filename)
 
     if amrfinder_database is None:
-        updater = shutil.which(str(amrfinder_update))
-        if updater is None:
-            raise FileNotFoundError(f"AMRFinderPlus updater is not available: {amrfinder_update}")
+        resolved_updater = resolve_executable(
+            amrfinder_update,
+            label="AMRFinderPlus updater",
+        )
+        assert resolved_updater is not None
+        updater = str(resolved_updater)
         update_root = destination / ".amrfinder-update"
         completed = subprocess.run(
             [updater, "--database", str(update_root), "--quiet"],
