@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 from collections import Counter
@@ -22,6 +21,7 @@ from mobiorigin.annotation_database_setup import (
 from mobiorigin.database_setup import check_databases
 from mobiorigin.model_setup import check_models, resolve_model_dir
 from mobiorigin.predict import predict
+from mobiorigin.runtime import resolve_executable
 from mobiorigin.visualize import visualize
 
 
@@ -40,16 +40,16 @@ def resolve_database_dir(database_dir: Path | None) -> Path:
 
 
 def _command_version(command: str, arguments: list[str]) -> dict[str, Any]:
-    executable = shutil.which(command)
+    executable = resolve_executable(command, required=False)
     if executable is None:
         return {"status": "MISSING", "executable": None, "version": None}
     completed = subprocess.run(
-        [executable, *arguments], text=True, capture_output=True, check=False
+        [str(executable), *arguments], text=True, capture_output=True, check=False
     )
     output = (completed.stdout or completed.stderr).strip()
     return {
         "status": "PASS" if completed.returncode == 0 else "FAIL",
-        "executable": executable,
+        "executable": str(executable),
         "version": output.splitlines()[0] if output else "unknown",
     }
 

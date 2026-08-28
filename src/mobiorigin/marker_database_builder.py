@@ -7,6 +7,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Iterator
 from functools import lru_cache
 from itertools import product
@@ -24,6 +25,25 @@ DATABASE_SHA256 = {
     "mpf_proteins.dmnd": "da7a65ac9fdb8edc80b5fdebf5b0878d97cbeebcf2ede0a7332c2af605192e37",
 }
 DIAMOND_VERSION = "2.0.15"
+
+
+def _resolve_diamond(value: Path) -> Path:
+    """Prefer the executable installed beside the builder's Python."""
+    requested = value.expanduser()
+    explicit = requested.is_absolute() or requested.parent != Path(".")
+    if explicit:
+        if requested.is_file() and os.access(requested, os.X_OK):
+            return requested.resolve()
+        raise FileNotFoundError(f"DIAMOND executable not found: {value}")
+    for directory in (Path(sys.prefix) / "bin", Path(sys.prefix) / "Scripts"):
+        candidate = directory / requested.name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate.resolve()
+    resolved = shutil.which(str(value))
+    if resolved is None:
+        raise FileNotFoundError(f"DIAMOND executable not found: {value}")
+    return Path(resolved).resolve()
+
 
 CODON_TABLE = {
     codon: amino_acid
@@ -179,9 +199,7 @@ def build_marker_databases(raw_dir: Path, output_dir: Path, diamond: Path) -> di
     """Build and fail-closed verify all three frozen database files."""
     if output_dir.exists():
         raise FileExistsError(f"Build output already exists: {output_dir}")
-    executable = Path(shutil.which(str(diamond)) or str(diamond)).expanduser().resolve()
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise FileNotFoundError(f"DIAMOND executable not found: {diamond}")
+    executable = _resolve_diamond(diamond)
     version = _diamond_version(executable)
     for filename, expected in RAW_SHA256.items():
         _require_identity(raw_dir / filename, expected, f"MOB-suite {filename}")

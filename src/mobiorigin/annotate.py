@@ -18,7 +18,7 @@ from pathlib import Path
 from mobiorigin import __version__
 from mobiorigin.fasta import IUPAC_DNA, FastaRecord, read_fasta
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
-from mobiorigin.runtime import validate_threads
+from mobiorigin.runtime import resolve_executable, validate_threads
 
 MIN_IDENTITY = 80.0
 MIN_QUERY_COVERAGE = 80.0
@@ -70,10 +70,9 @@ def _required_file(path: Path, label: str) -> Path:
 
 
 def _executable(value: Path, label: str) -> Path:
-    resolved = shutil.which(str(value))
-    if resolved is None:
-        raise FileNotFoundError(f"Required {label} executable is not available: {value}")
-    return Path(resolved).resolve()
+    resolved = resolve_executable(value, label=f"{label} executable")
+    assert resolved is not None
+    return resolved
 
 
 def predict_annotation_orfs(records: Sequence[FastaRecord], output: Path) -> dict[str, Orf]:

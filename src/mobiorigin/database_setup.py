@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from mobiorigin.marker_features import DATABASE_SHA256, load_database_manifest
+from mobiorigin.runtime import resolve_executable
 
 DATABASE_FILENAMES = {
     "rep": "rep_proteins.dmnd",
@@ -109,12 +110,9 @@ def check_databases(database_dir: Path, *, diamond: Path = Path("diamond")) -> d
             f"MobiOrigin database manifest not found: {manifest_path}. "
             "Run scripts/setup_mobiorigin_databases.sh from the source checkout first."
         )
-    executable = shutil.which(str(diamond))
-    if executable is None:
-        candidate = diamond.expanduser()
-        if not candidate.is_file() or not os.access(candidate, os.X_OK):
-            raise FileNotFoundError(f"DIAMOND executable not found: {diamond}")
-        executable = str(candidate.resolve())
+    resolved = resolve_executable(diamond, label="DIAMOND executable")
+    assert resolved is not None
+    executable = str(resolved)
     completed = subprocess.run([executable, "version"], text=True, capture_output=True, check=False)
     if completed.returncode:
         raise RuntimeError(f"DIAMOND version check failed: {completed.stderr.strip()}")

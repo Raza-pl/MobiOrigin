@@ -128,14 +128,6 @@ if [ "$marker_build_environment_exists" -eq 0 ]; then
     echo "  $ENV_MANAGER env remove -n mobiorigin-marker-build" >&2
     exit 1
   fi
-  "$ENV_MANAGER" run -n mobiorigin-marker-build diamond version | grep -q 'diamond version 2.0.15'
-  marker_version_rc=$?
-  if [ "$marker_version_rc" -ne 0 ]; then
-    echo "STOP: Existing marker-build helper does not contain DIAMOND 2.0.15." >&2
-    echo "Remove only that small helper environment, then rerun:" >&2
-    echo "  $ENV_MANAGER env remove -n mobiorigin-marker-build" >&2
-    exit 1
-  fi
   echo "Reusing the isolated DIAMOND 2.0.15 marker-build environment."
 else
   "$ENV_MANAGER" env create \
@@ -146,6 +138,24 @@ else
     echo "STOP: The isolated DIAMOND marker-build environment could not be created." >&2
     exit "$marker_environment_rc"
   fi
+fi
+
+MARKER_DIAMOND="$(
+  "$ENV_MANAGER" run -n mobiorigin-marker-build python -c \
+    'from pathlib import Path; import sys; print(Path(sys.prefix) / "bin" / "diamond")'
+)"
+marker_path_rc=$?
+if [ "$marker_path_rc" -ne 0 ] || [ ! -x "$MARKER_DIAMOND" ]; then
+  echo "STOP: Could not locate DIAMOND inside the marker-build helper environment." >&2
+  exit 1
+fi
+"$MARKER_DIAMOND" version | grep -q 'diamond version 2.0.15'
+marker_version_rc=$?
+if [ "$marker_version_rc" -ne 0 ]; then
+  echo "STOP: The marker-build helper does not contain DIAMOND 2.0.15." >&2
+  echo "Remove only that small helper environment, then rerun:" >&2
+  echo "  $ENV_MANAGER env remove -n mobiorigin-marker-build" >&2
+  exit 1
 fi
 
 "$ENV_MANAGER" run -n mobiorigin-db python -c 'import numpy, pandas, mob_suite; print("Database environment imports: PASS")'
@@ -204,7 +214,7 @@ echo "Reconstructing the three frozen marker databases with DIAMOND 2.0.15..."
   "$PROJECT_DIR/src/mobiorigin/marker_database_builder.py" \
   --raw-dir "$MOB_DATA_DIR" \
   --output-dir "$BUILD_DIR/frozen" \
-  --diamond diamond
+  --diamond "$MARKER_DIAMOND"
 build_rc=$?
 if [ "$build_rc" -ne 0 ]; then
   echo "STOP: Frozen marker database reconstruction failed." >&2

@@ -73,7 +73,7 @@ Use this route only when a compatible DIAMOND executable is already available. M
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install mobiorigin==0.1.4
+python -m pip install mobiorigin==0.1.5
 mobiorigin setup-databases --component models
 mobiorigin --help
 ```
@@ -358,10 +358,10 @@ Prediction is CPU-oriented. Start with eight DIAMOND threads, maintain sufficien
 ## 10. Packaging status
 
 - Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
-- PyPI: version 0.1.3 is public. Version 0.1.4 uses the same token-free Trusted
-  Publishing, CI, Twine, size, content, and clean-install gates.
-- Bioconda: the recipe pull request is held as a draft until version 0.1.4 is
-  public and its Linux runtime verification passes.
+- PyPI: version 0.1.5 uses token-free Trusted Publishing with CI, Twine,
+  per-file size, package-content, and clean-install gates.
+- Bioconda: a recipe pull request remains under external review and must be
+  updated to the accepted public release before publication.
 
 Do not claim Bioconda availability before its external recipe and installation
 tests pass.
