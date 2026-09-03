@@ -63,7 +63,14 @@ bash install.sh --demo-dir "$HOME/mobiorigin_installation_test"
 
 ### Windows
 
-Use Ubuntu under WSL2 and run the Linux commands above inside the WSL terminal. Do not mix Windows Python, Windows Conda, and WSL executables in one environment. A repository cloned under the Linux home directory generally performs better than one under `/mnt/c/`.
+Use Ubuntu under WSL2 and run the Linux commands above inside the WSL terminal.
+Do not mix Windows Python, Windows Conda, and WSL executables in one
+environment. A repository and temporary workspace under the Linux home
+directory generally perform better than locations under `/mnt/c/`, `/mnt/d/`,
+or another Windows-mounted drive. MobiOrigin automatically gives external tools
+a Linux-native temporary directory and ignores inherited WSL temporary paths on
+`/mnt/*`. To select another Linux-native location, set
+`MOBIORIGIN_TMPDIR="$HOME/mobiorigin_tmp"`.
 
 ### Python virtual environment
 
@@ -84,9 +91,19 @@ installation, use the guided Conda or Mamba route. Advanced virtual-environment
 users can obtain the source release and follow the manual marker-database route
 in section 2.
 
-MobiOrigin is available from [PyPI](https://pypi.org/project/mobiorigin/).
-Bioconda publication remains pending, so `mamba install -c bioconda mobiorigin`
-is not yet a valid route.
+MobiOrigin is available from [PyPI](https://pypi.org/project/mobiorigin/) and
+[Bioconda](https://bioconda.github.io/recipes/mobiorigin/README.html). A
+Bioconda software installation is:
+
+```bash
+mamba create -n mobiorigin -c conda-forge -c bioconda mobiorigin=0.1.5
+conda activate mobiorigin
+mobiorigin doctor --software-only
+```
+
+This installs the program and external executables. Use the guided source
+installer or the manual setup commands in section 2 to prepare the separately
+verified models and biological databases.
 
 ## 2. Prepare and verify models and marker databases
 
@@ -192,6 +209,22 @@ Input records must have unique FASTA identifiers. Supported sequence lengths are
 Start with these files:
 
 - `mobiorigin_results/visualization/mobiorigin_dashboard.html`: integrated dashboard.
+- `mobiorigin_results/visualization/mobiorigin_annotation_summary.svg`: editable
+  evidence-tier and annotation-class plots.
+- `mobiorigin_results/visualization/mobiorigin_priority_candidates.svg`: editable
+  Tier A to C and conjugative-candidate summary.
+- `mobiorigin_results/visualization/mobiorigin_arg_classes.svg`: ARG classes by
+  predicted origin.
+- `mobiorigin_results/visualization/mobiorigin_mge_classes.svg`: MGE classes by
+  predicted origin.
+- `mobiorigin_results/visualization/mobiorigin_virulence_classes.svg`:
+  virulence-factor classes by predicted origin.
+- `mobiorigin_results/visualization/mobiorigin_bacmet_categories.svg`: BacMet
+  resistance categories by predicted origin.
+- `mobiorigin_results/visualization/annotation_class_summary.tsv`: class counts
+  for ARG, virulence, MGE, stress, and mobility evidence.
+- `mobiorigin_results/visualization/priority_candidates.tsv`: focused candidate
+  table for downstream review.
 - `mobiorigin_results/predictions/predictions.tsv`: per-contig probabilities and labels.
 - `mobiorigin_results/annotation/mobiorigin_report.html`: biological-evidence report.
 - `mobiorigin_results/annotation/mobiorigin_annotated_results.tsv`: integrated contig table.
@@ -202,6 +235,10 @@ Start with these files:
 The standard marker and annotation database locations are discovered
 automatically. Use `--database-dir` or `--annotation-database-dir` only for a
 custom installation.
+
+The terminal shows each major stage and names the active feature or database
+search. Long searches therefore continue to provide visible activity without
+changing the deterministic output files.
 
 If a late annotation stage fails after prediction, MobiOrigin retains the
 incomplete workspace as `mobiorigin_results.failed` and writes
@@ -343,6 +380,33 @@ The repository environment pins `pytorch=2.5.1=cpu*`. If a solver still proposes
 
 That text is a terminal bracketed-paste control sequence, not part of the command. Press `Ctrl+C`, paste one command again into the WSL terminal, and do not include the prompt character or surrounding quotation marks.
 
+### AMRFinderPlus cannot create a temporary directory or worker thread
+
+Current MobiOrigin runs each external tool with a private writable temporary
+directory. On WSL it avoids Windows-mounted `/mnt/*` temporary paths and retries
+AMRFinderPlus resource failures with fewer workers. Run `mobiorigin doctor` to
+see the selected location and available space. If a custom location is needed,
+create it on the Linux filesystem and set it explicitly:
+
+```bash
+mkdir -p "$HOME/mobiorigin_tmp"
+export MOBIORIGIN_TMPDIR="$HOME/mobiorigin_tmp"
+mobiorigin doctor
+```
+
+Do not delete that directory while an analysis is running. If the process is
+still killed at one worker, check the server memory limit and ask the
+administrator whether process or thread creation is restricted.
+
+### Input FASTA was not found
+
+Use the exact filename shown by `ls` or pass an absolute path. For example,
+`final.contigs.fa` and `final.contigs.fasta` are different names, and a file in
+`contigs/` is not in the current directory. MobiOrigin now reports the resolved
+requested path, the current directory, and nearby FASTA files when possible.
+Gzip-compressed FASTA files ending in `.fa.gz`, `.fasta.gz`, `.fna.gz`, or
+`.fas.gz` can be supplied directly and do not need to be decompressed first.
+
 ### Database hash mismatch
 
 Do not bypass the check. Keep the rejected directory for diagnosis and rerun the database helper with a fresh output directory. A different upstream release or DIAMOND build may not reproduce the frozen byte identities.
@@ -353,15 +417,19 @@ MobiOrigin never silently overwrites results. Choose a fresh name, such as `pred
 
 ### Large assemblies
 
-Prediction is CPU-oriented. Start with eight DIAMOND threads, maintain sufficient temporary disk space, and retain the final provenance and checksums with the result.
+Prediction is CPU-oriented. Start with eight external-search threads, maintain
+sufficient Linux-native temporary disk space, and retain the final provenance
+and checksums with the result. The current predictor materializes the complete
+feature matrix in memory. Very large assemblies, such as inputs containing
+hundreds of thousands of contigs, can exceed a container or scheduler memory
+limit. Use a documented representative subset only for operational testing;
+do not present subset results as a complete biological analysis. Native
+bounded-memory batching is planned for a later release.
 
 ## 10. Packaging status
 
 - Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
 - PyPI: version 0.1.5 uses token-free Trusted Publishing with CI, Twine,
   per-file size, package-content, and clean-install gates.
-- Bioconda: a recipe pull request remains under external review and must be
-  updated to the accepted public release before publication.
-
-Do not claim Bioconda availability before its external recipe and installation
-tests pass.
+- Bioconda: version 0.1.5 has passed external review, merged, and produced the
+  official `quay.io/biocontainers/mobiorigin:0.1.5--pyhdfd78af_0` image.

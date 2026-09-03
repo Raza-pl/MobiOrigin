@@ -79,6 +79,29 @@ PREDICTION_FIELDS = (
 
 UNKNOWN_ANNOTATION_VALUES = {"", "-", "na", "n/a", "none", "null", "unknown"}
 
+TIER_DETAILS = {
+    "A": {
+        "label": "ARG-bearing conjugative candidate",
+        "description": "ARG evidence with both relaxase and mating-pair-formation markers.",
+    },
+    "B": {
+        "label": "ARG-bearing mobile-context candidate",
+        "description": "ARG evidence with partial mobility, replication, or MGE context.",
+    },
+    "C": {
+        "label": "ARG-bearing candidate without detected mobility",
+        "description": "ARG evidence without retained mobility or MGE context.",
+    },
+    "D": {
+        "label": "Non-ARG biological-evidence candidate",
+        "description": "Virulence, MGE, stress, or mobility evidence without a retained ARG.",
+    },
+    "E": {
+        "label": "No retained annotation evidence",
+        "description": "No biological evidence passed the configured annotation thresholds.",
+    },
+}
+
 
 def _annotation_value(value: object) -> str:
     """Normalize missing values and whitespace without changing biological names."""
@@ -95,6 +118,16 @@ def _annotation_terms(hits: Sequence[EvidenceHit], field: str) -> str:
             if cleaned != "unknown":
                 values.add(cleaned)
     return ";".join(sorted(values, key=lambda value: (value.casefold(), value)))
+
+
+def _group_terms(hits: Sequence[EvidenceHit], group: str, field: str) -> str:
+    """Return canonical terms for one evidence group."""
+    return _annotation_terms([hit for hit in hits if hit.evidence_group == group], field)
+
+
+def _source_terms(hits: Sequence[EvidenceHit], source: str, field: str) -> str:
+    """Return canonical terms for one evidence source."""
+    return _annotation_terms([hit for hit in hits if hit.source == source], field)
 
 
 def run_evidence_diamond(
@@ -664,8 +697,27 @@ def write_integrated_results(
         *PREDICTION_FIELDS,
         "consensus_arg_orfs",
         "arg_genes",
+        "arg_gene_names",
+        "arg_gene_families",
         "arg_drug_classes",
+        "arg_mechanisms",
         "arg_evidence_sources",
+        "virulence_genes",
+        "virulence_gene_families",
+        "virulence_classes",
+        "mge_genes",
+        "mge_gene_families",
+        "mge_classes",
+        "stress_genes",
+        "stress_gene_families",
+        "stress_classes",
+        "stress_mechanisms",
+        "bacmet_genes",
+        "bacmet_gene_families",
+        "bacmet_classes",
+        "mobility_genes",
+        "mobility_gene_families",
+        "mobility_marker_types",
         "annotated_gene_symbols",
         "annotated_gene_names",
         "annotated_gene_families",
@@ -680,7 +732,9 @@ def write_integrated_results(
         "stress_biocide_metal_hits",
         "mobility_marker_hits",
         "mobility_class",
+        "conjugative_candidate",
         "evidence_priority_tier",
+        "evidence_priority_label",
         "priority_rationale",
         "virulence_colocalized_with_arg",
     )
@@ -697,6 +751,7 @@ def write_integrated_results(
             stress = [hit for hit in selected if hit.evidence_group == "STRESS"]
             mobility = [hit for hit in selected if hit.evidence_group == "MOBILITY"]
             tier, rationale, mobility_class = _priority(selected)
+            tier_detail = TIER_DETAILS[tier]
             prediction = predictions.get(record.identifier, {})
             row: dict[str, object] = {
                 "sequence_id": record.identifier,
@@ -704,6 +759,8 @@ def write_integrated_results(
                 **{field: prediction.get(field, "") for field in PREDICTION_FIELDS},
                 "consensus_arg_orfs": len({hit.orf_id for hit in consensus_args}),
                 "arg_genes": ";".join(sorted({hit.feature_name for hit in consensus_args})),
+                "arg_gene_names": _annotation_terms(consensus_args, "gene_name"),
+                "arg_gene_families": _annotation_terms(consensus_args, "gene_family"),
                 "arg_drug_classes": ";".join(
                     sorted(
                         {
@@ -714,7 +771,28 @@ def write_integrated_results(
                         }
                     )
                 ),
+                "arg_mechanisms": _annotation_terms(consensus_args, "mechanism"),
                 "arg_evidence_sources": ";".join(sorted({hit.source for hit in arg_hits})),
+                "virulence_genes": _group_terms(selected, "VIRULENCE", "gene_symbol"),
+                "virulence_gene_families": _group_terms(selected, "VIRULENCE", "gene_family"),
+                "virulence_classes": _group_terms(selected, "VIRULENCE", "functional_class"),
+                "mge_genes": _group_terms(selected, "MGE", "gene_symbol"),
+                "mge_gene_families": _group_terms(selected, "MGE", "gene_family"),
+                "mge_classes": _group_terms(selected, "MGE", "functional_class"),
+                "stress_genes": _group_terms(selected, "STRESS", "gene_symbol"),
+                "stress_gene_families": _group_terms(selected, "STRESS", "gene_family"),
+                "stress_classes": _group_terms(selected, "STRESS", "functional_class"),
+                "stress_mechanisms": _group_terms(selected, "STRESS", "mechanism"),
+                "bacmet_genes": _source_terms(selected, "BACMET2_EXPERIMENTAL", "gene_symbol"),
+                "bacmet_gene_families": _source_terms(
+                    selected, "BACMET2_EXPERIMENTAL", "gene_family"
+                ),
+                "bacmet_classes": _source_terms(
+                    selected, "BACMET2_EXPERIMENTAL", "functional_subclass"
+                ),
+                "mobility_genes": _group_terms(selected, "MOBILITY", "gene_symbol"),
+                "mobility_gene_families": _group_terms(selected, "MOBILITY", "gene_family"),
+                "mobility_marker_types": _group_terms(selected, "MOBILITY", "functional_subclass"),
                 "annotated_gene_symbols": _annotation_terms(selected, "gene_symbol"),
                 "annotated_gene_names": _annotation_terms(selected, "gene_name"),
                 "annotated_gene_families": _annotation_terms(selected, "gene_family"),
@@ -731,7 +809,9 @@ def write_integrated_results(
                 "stress_biocide_metal_hits": len(stress),
                 "mobility_marker_hits": len(mobility),
                 "mobility_class": mobility_class,
+                "conjugative_candidate": str(mobility_class == "conjugative").lower(),
                 "evidence_priority_tier": tier,
+                "evidence_priority_label": tier_detail["label"],
                 "priority_rationale": rationale,
                 "virulence_colocalized_with_arg": str(bool(arg_hits and virulence)).lower(),
             }
@@ -748,7 +828,7 @@ def write_publication_summary(
     group_counts = Counter(hit.evidence_group for hit in evidence)
     source_counts = Counter(hit.source for hit in evidence)
     summary = {
-        "schema_version": "mobiorigin-publication-summary-v2",
+        "schema_version": "mobiorigin-publication-summary-v3",
         "records": len(rows),
         "prediction_counts": dict(sorted(prediction_counts.items())),
         "evidence_priority_tier_counts": dict(sorted(tier_counts.items())),
@@ -760,6 +840,8 @@ def write_publication_summary(
         "records_with_arg_and_virulence": sum(
             row["virulence_colocalized_with_arg"] == "true" for row in rows
         ),
+        "conjugative_candidates": sum(row["conjugative_candidate"] == "true" for row in rows),
+        "tier_definitions": TIER_DETAILS,
         "interpretation": {
             "priority_is_clinical_risk_score": False,
             "homology_proves_phenotype": False,
@@ -795,12 +877,15 @@ def write_html_report(path: Path, rows: Sequence[Mapping[str, object]], summary_
                 "evidence_priority_tier",
                 "consensus_arg_orfs",
                 "arg_genes",
-                "annotated_gene_symbols",
-                "annotated_gene_families",
-                "annotated_functional_classes",
+                "arg_gene_families",
+                "arg_drug_classes",
+                "arg_mechanisms",
                 "mobility_class",
-                "virulence_hits",
-                "mge_hits",
+                "mobility_marker_types",
+                "virulence_classes",
+                "mge_classes",
+                "bacmet_gene_families",
+                "bacmet_classes",
             )
         )
         + "</tr>"
@@ -815,6 +900,13 @@ def write_html_report(path: Path, rows: Sequence[Mapping[str, object]], summary_
             ("MGE-positive", summary["records_with_mge"]),
         )
     )
+    tier_counts = summary["evidence_priority_tier_counts"]
+    tier_cards = "".join(
+        f"<div class='tier tier-{tier.lower()}'><strong>Tier {tier}</strong>"
+        f"<span>{int(tier_counts.get(tier, 0)):,}</span>"
+        f"<small>{html.escape(TIER_DETAILS[tier]['label'])}</small></div>"
+        for tier in ("A", "B", "C", "D", "E")
+    )
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>MobiOrigin biological-evidence report</title><style>
@@ -825,12 +917,16 @@ h1,h2{{color:#123b57}} .notice{{background:#fff4d6;border-left:5px solid #d99b00
 .card span{{font-size:1.7rem;color:#096b72}} table{{border-collapse:collapse;width:100%;background:white;font-size:.82rem}}
 th,td{{border:1px solid #dce3ea;padding:.45rem;text-align:left;vertical-align:top}} th{{background:#e9f2f5}}
 .table-wrap{{overflow-x:auto}}
+.tiers{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.8rem;margin:1rem 0 1.5rem}}
+.tier{{background:white;border:1px solid #dce3ea;border-top:6px solid #64748b;border-radius:8px;padding:.8rem;display:flex;flex-direction:column}}
+.tier span{{font-size:1.6rem;font-weight:750}} .tier small{{color:#52606d;margin-top:.35rem}} .tier-a{{border-top-color:#b42318}} .tier-b{{border-top-color:#d97706}} .tier-c{{border-top-color:#ca8a04}} .tier-d{{border-top-color:#2563eb}}
 code{{background:#edf1f4;padding:.1rem .25rem}} footer{{margin-top:2rem;color:#52606d}}
 </style></head><body><h1>MobiOrigin biological-evidence report</h1>
 <p class="notice"><strong>Interpretation boundary:</strong> evidence tiers prioritize records for review. They are not clinical risk scores, do not prove phenotype or plasmid origin, and never alter MobiOrigin predictions.</p>
 <div class="cards">{cards}</div><h2>Priority logic</h2>
 <p><strong>A</strong>: ARG plus relaxase and mating-pair-formation evidence; <strong>B</strong>: ARG plus partial mobility, replication, or MGE evidence; <strong>C</strong>: ARG without detected mobility context; <strong>D</strong>: non-ARG biological evidence only; <strong>E</strong>: no retained evidence.</p>
-<h2>Highest-priority records (up to 100)</h2><div class="table-wrap"><table><thead><tr><th>Sequence</th><th>Prediction</th><th>Tier</th><th>ARG ORFs</th><th>ARG genes</th><th>All gene symbols</th><th>Gene families</th><th>Functional classes</th><th>Mobility</th><th>VF hits</th><th>MGE hits</th></tr></thead><tbody>{table_rows}</tbody></table></div>
+<div class="tiers">{tier_cards}</div>
+<h2>Highest-priority records (up to 100)</h2><div class="table-wrap"><table><thead><tr><th>Sequence</th><th>Prediction</th><th>Tier</th><th>ARG ORFs</th><th>ARG genes</th><th>ARG families</th><th>ARG classes</th><th>ARG mechanisms</th><th>Mobility</th><th>Marker types</th><th>Virulence classes</th><th>MGE classes</th><th>BacMet families</th><th>BacMet classes</th></tr></thead><tbody>{table_rows}</tbody></table></div>
 <footer>Generated deterministically by MobiOrigin. See <code>annotation_provenance.json</code>, <code>biological_evidence.tsv</code>, and <code>SHA256SUMS.txt</code> for methods and identities.</footer></body></html>"""
     path.write_text(document, encoding="utf-8")
 

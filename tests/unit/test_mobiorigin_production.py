@@ -26,6 +26,7 @@ from mobiorigin.annotate import (
     parse_card_hits,
     parse_sarg_hits,
     predict_annotation_orfs,
+    run_amrfinderplus,
 )
 from mobiorigin.annotation_database_retrieval import (
     download,
@@ -54,7 +55,7 @@ from mobiorigin.database_setup import (
     check_databases,
     setup_databases,
 )
-from mobiorigin.fasta import FastaRecord, read_fasta
+from mobiorigin.fasta import FastaRecord, read_fasta, resolve_fasta_input
 from mobiorigin.marker_database_builder import (
     DIAMOND_VERSION,
     _resolve_diamond,
@@ -93,7 +94,13 @@ from mobiorigin.predict import (
     selective_labels,
 )
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
-from mobiorigin.runtime import MAX_THREADS, validate_threads
+from mobiorigin.runtime import (
+    MAX_THREADS,
+    external_tool_environment,
+    is_wsl_windows_mount,
+    temporary_storage_report,
+    validate_threads,
+)
 from mobiorigin.sequence_features import (
     FEATURE_DIM,
     extract_sequence_features,
@@ -134,6 +141,56 @@ def test_fasta_preserves_order_and_iupac(tmp_path: Path) -> None:
     records = read_fasta(path)
     assert [record.identifier for record in records] == ["first", "second"]
     assert records[1].sequence == "ACGT"
+
+
+def test_gzip_compressed_fasta_is_read_directly(tmp_path: Path) -> None:
+    path = tmp_path / "assembly.fasta.gz"
+    with gzip.open(path, "wt", encoding="ascii") as handle:
+        handle.write(">compressed\n" + "ACGT" * 250 + "\n")
+    records = read_fasta(path)
+    assert records == [FastaRecord("compressed", "ACGT" * 250)]
+    assert records[0].supported
+
+
+def test_missing_fasta_reports_working_directory_and_nearby_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    write(tmp_path / "final.contigs.fasta", ">seq\nACGT\n")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError) as captured:
+        resolve_fasta_input(Path("final.contigs.fa"))
+    message = str(captured.value)
+    assert "final.contigs.fa" in message
+    assert "final.contigs.fasta" in message
+    assert f"Current directory: {tmp_path}" in message
+    assert "absolute path" in message
+
+
+def test_external_tool_environment_replaces_stale_temporary_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "native-temp"
+    monkeypatch.setenv("MOBIORIGIN_TMPDIR", str(root))
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "deleted"))
+    with external_tool_environment("test") as (environment, temporary):
+        assert temporary.parent == root
+        assert temporary.is_dir()
+        assert all(environment[name] == str(temporary) for name in ("TMPDIR", "TEMP", "TMP"))
+    assert not temporary.exists()
+    report = temporary_storage_report()
+    assert report["status"] == "PASS"
+    assert report["directory"] == str(root.resolve())
+
+
+def test_wsl_windows_temporary_override_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "is_wsl", lambda: True)
+    assert is_wsl_windows_mount(Path("/mnt/g/mobiorigin_tmp"))
+    monkeypatch.setenv("MOBIORIGIN_TMPDIR", "/mnt/g/mobiorigin_tmp")
+    report = temporary_storage_report()
+    assert report["status"] == "FAIL"
+    assert "Linux-native" in report["error"]
 
 
 @pytest.mark.parametrize(
@@ -611,6 +668,7 @@ def test_doctor_reports_software_and_database_state(
     assert result["status"] == "PASS"
     assert result["database"]["status"] == "PASS"
     assert result["annotation_database"]["status"] == "PASS"
+    assert result["temporary_storage"]["status"] == "PASS"
     assert doctor(software_only=True)["status"] == "PASS"
 
 
@@ -636,7 +694,12 @@ def test_compact_cli_output_omits_large_provenance_inventories() -> None:
     }
 
 
-def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_atomic_run_and_demo_orchestration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    input_fasta = write(tmp_path / "input.fasta", ">demo\n" + "A" * 1200 + "\n")
     predictions_text = (
         "sequence_id\tlength_bp\tprediction\tp_chromosome\tp_plasmid\tp_phage\t"
         "plasmid_score\tabstention_reason\n"
@@ -665,10 +728,16 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr("mobiorigin.workflow.annotate", fake_annotate)
     output = tmp_path / "analysis"
     run_analysis(
-        input_fasta=tmp_path / "input.fasta",
+        input_fasta=input_fasta,
         output_dir=output,
         database_dir=tmp_path / "db",
     )
+    progress = capsys.readouterr().err
+    assert "[MobiOrigin 1/5] Preflight" in progress
+    assert "[MobiOrigin 2/5] Prediction" in progress
+    assert "[MobiOrigin 3/5] Annotation" in progress
+    assert "[MobiOrigin 4/5] Visualization" in progress
+    assert "[MobiOrigin 5/5] Finalization" in progress
     assert (output / "README_RESULTS.txt").is_file()
     assert (output / "annotation" / "mobiorigin_report.html").is_file()
     assert (output / "visualization" / "mobiorigin_dashboard.html").is_file()
@@ -680,7 +749,7 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     with pytest.raises(FileExistsError):
         run_analysis(
-            input_fasta=tmp_path / "input.fasta",
+            input_fasta=input_fasta,
             output_dir=output,
             database_dir=tmp_path / "db",
         )
@@ -708,7 +777,7 @@ def test_atomic_run_and_demo_orchestration(monkeypatch: pytest.MonkeyPatch, tmp_
     failed_output = tmp_path / "failed-analysis"
     with pytest.raises(RuntimeError, match="incomplete state was retained"):
         run_analysis(
-            input_fasta=tmp_path / "input.fasta",
+            input_fasta=input_fasta,
             output_dir=failed_output,
             database_dir=tmp_path / "db",
         )
@@ -1198,11 +1267,22 @@ def test_visualization_outputs_tables_svg_and_html(tmp_path: Path) -> None:
     annotated = write(
         tmp_path / "annotated.tsv",
         "sequence_id\tprediction\tconsensus_arg_orfs\tmge_hits\tmobility_marker_hits\t"
-        "evidence_priority_tier\n"
-        "a\tplasmid\t1\t1\t0\tB\n"
-        "b\tchromosome\t0\t0\t0\tE\n"
-        "c\tphage\t0\t0\t1\tD\n"
-        "d\tunclassified\t0\t0\t0\tE\n",
+        "evidence_priority_tier\tlength_bp\targ_genes\targ_gene_families\t"
+        "arg_drug_classes\targ_mechanisms\tvirulence_classes\tmge_classes\t"
+        "stress_classes\tbacmet_gene_families\tbacmet_classes\tmobility_class\t"
+        "mobility_marker_types\t"
+        "evidence_priority_label\trecommended_follow_up\n"
+        "a\tplasmid\t1\t1\t2\tA\t1500\tblaX\tclass A beta-lactamase\t"
+        "beta-lactam\tantibiotic inactivation\ttoxin\tintegration_excision\t\t"
+        "efflux pump\tTriclosan\tconjugative\trelaxase;mating_pair_formation\t"
+        "ARG-bearing conjugative "
+        "candidate\tConfirm transferability\n"
+        "b\tchromosome\t0\t0\t0\tE\t3000\t\t\t\t\t\t\t\t\t\t"
+        "not_applicable\t\tNo retained annotation evidence\tReview absence\n"
+        "c\tphage\t0\t0\t1\tD\t8000\t\t\t\t\ttoxin\t\t\t\t\t"
+        "not_applicable\treplicon\tNon-ARG biological-evidence candidate\tReview hit\n"
+        "d\tunclassified\t0\t0\t0\tE\t60000\t\t\t\t\t\t\t\t\t\t"
+        "not_applicable\t\tNo retained annotation evidence\tReview absence\n",
     )
     output = tmp_path / "visualization"
     visualize(
@@ -1215,14 +1295,31 @@ def test_visualization_outputs_tables_svg_and_html(tmp_path: Path) -> None:
         "prediction_by_length_bin.tsv",
         "visualization_summary.json",
         "mobiorigin_summary.svg",
+        "mobiorigin_annotation_summary.svg",
+        "mobiorigin_priority_candidates.svg",
+        "mobiorigin_arg_classes.svg",
+        "mobiorigin_mge_classes.svg",
+        "mobiorigin_virulence_classes.svg",
+        "mobiorigin_bacmet_categories.svg",
+        "annotation_class_summary.tsv",
+        "evidence_tier_summary.tsv",
+        "priority_candidates.tsv",
         "mobiorigin_dashboard.html",
         "SHA256SUMS.txt",
     } == {path.name for path in output.iterdir()}
     summary = json.loads((output / "visualization_summary.json").read_text())
     assert summary["records"] == 4
-    assert summary["evidence_priority_tier_counts"]["B"] == 1
+    assert summary["evidence_priority_tier_counts"]["A"] == 1
+    assert summary["conjugative_candidates"] == 1
     assert summary["accuracy_metrics_calculated"] is False
-    assert "Interpretation boundary" in (output / "mobiorigin_dashboard.html").read_text()
+    dashboard = (output / "mobiorigin_dashboard.html").read_text()
+    assert "Interpretation boundary" in dashboard
+    assert "Annotation class summary" in dashboard
+    assert "Annotation results" in dashboard
+    assert "BacMet resistance categories by predicted origin" in dashboard
+    assert "Download class summary" not in dashboard
+    assert "Recommended review" not in dashboard
+    assert "beta-lactam" in dashboard
 
 
 def test_cli_dispatches_visualize(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1280,7 +1377,7 @@ def test_arg_parsers_preserve_independent_evidence_and_filter_non_amr(tmp_path: 
         "Protein id\tElement symbol\tElement name\tType\tClass\tSubclass\tMethod\t"
         "% Coverage of reference\t% Identity to reference\tClosest reference accession\t"
         "Hierarchy node\n"
-        "seq__orf_1\tblaX\tbeta-lactamase\tAMR\tBETA-LACTAM\tCEPHALOSPORIN\t"
+        "seq__orf_1\tblaX\tbeta-lactamase\tAMR\tBETA-LACTAM\tBETA-LACTAM\t"
         "BLASTP\t98\t99\tWP_1.1\tblaX_fam\n"
         "seq__orf_1\tstxA\tShiga toxin\tVIRULENCE\tSTX2\tstxA\tEXACTP\t100\t100\t"
         "WP_2.1\tstxA\n",
@@ -1289,6 +1386,7 @@ def test_arg_parsers_preserve_independent_evidence_and_filter_non_amr(tmp_path: 
     assert len(official_hits) == 1
     assert official_hits[0].source == "AMRFINDERPLUS"
     assert official_hits[0].gene_symbol == "blaX"
+    assert official_hits[0].drug_class == "beta-lactam"
 
 
 def test_annotation_orf_coordinates_and_amrprot_hierarchy(tmp_path: Path) -> None:
@@ -1401,6 +1499,70 @@ def test_arg_annotation_integration_is_atomic_and_prediction_independent(
         )
 
 
+def test_amrfinderplus_retries_resource_failures_with_fewer_threads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MOBIORIGIN_TMPDIR", str(tmp_path / "temporary"))
+    proteins = write(tmp_path / "proteins.faa", ">protein\nMAAA\n")
+    output = tmp_path / "amrfinder.tsv"
+    attempted_threads: list[int] = []
+    temporary_directories: list[str] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        attempted = int(command[command.index("--threads") + 1])
+        attempted_threads.append(attempted)
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        temporary_directories.append(str(environment["TMPDIR"]))
+        if attempted > 2:
+            return SimpleNamespace(
+                returncode=139,
+                stderr="CThread::Run() -- error creating thread\nSegmentation fault",
+                stdout="",
+            )
+        Path(command[command.index("--output") + 1]).write_text(
+            "Protein id\tElement symbol\tElement name\tType\tClass\tMethod\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr("mobiorigin.annotate.subprocess.run", fake_run)
+    run_amrfinderplus(
+        executable=Path("amrfinder"),
+        proteins=proteins,
+        database=tmp_path / "database",
+        output=output,
+        threads=8,
+    )
+    assert attempted_threads == [8, 4, 2]
+    assert len(set(temporary_directories)) == 3
+    assert output.is_file()
+
+
+def test_amrfinderplus_does_not_retry_nonresource_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MOBIORIGIN_TMPDIR", str(tmp_path / "temporary"))
+    proteins = write(tmp_path / "proteins.faa", ">protein\nMAAA\n")
+    calls = 0
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(returncode=1, stderr="database schema is unsupported", stdout="")
+
+    monkeypatch.setattr("mobiorigin.annotate.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="database schema is unsupported"):
+        run_amrfinderplus(
+            executable=Path("amrfinder"),
+            proteins=proteins,
+            database=tmp_path / "database",
+            output=tmp_path / "output.tsv",
+            threads=16,
+        )
+    assert calls == 1
+
+
 def test_cli_dispatches_annotate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     observed: dict[str, object] = {}
     monkeypatch.setattr(cli, "annotate", lambda **kwargs: observed.update(kwargs))
@@ -1423,6 +1585,30 @@ def test_cli_dispatches_annotate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert observed["amrfinder_mode"] == "official"
     assert observed["profile"] == "arg"
     assert observed["predictions_tsv"] is None
+
+
+def test_cli_reports_expected_failure_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(**kwargs: object) -> None:
+        raise FileNotFoundError("Input FASTA was not found: /missing/input.fasta")
+
+    monkeypatch.setattr(cli, "predict", fail)
+    with pytest.raises(SystemExit) as caught:
+        cli.main(
+            [
+                "predict",
+                "--input-fasta",
+                "/missing/input.fasta",
+                "--output-dir",
+                "/missing/output",
+            ]
+        )
+    assert caught.value.code == 1
+    captured = capsys.readouterr()
+    assert "STOP: Input FASTA was not found" in captured.err
+    assert "Traceback" not in captured.err
+    assert "MOBIORIGIN_DEBUG=1" in captured.err
 
 
 def test_cli_annotate_uses_default_annotation_database(
@@ -1744,7 +1930,23 @@ def test_comprehensive_annotation_publishes_integrated_report(
         assert (output / name).is_file()
     integrated = (output / "mobiorigin_annotated_results.tsv").read_text()
     assert "\tplasmid\t" in integrated
-    assert "\tA\tARG plus relaxase and mating-pair-formation evidence\t" in integrated
+    with (output / "mobiorigin_annotated_results.tsv").open(encoding="utf-8", newline="") as handle:
+        integrated_row = next(csv.DictReader(handle, delimiter="\t"))
+    assert integrated_row["evidence_priority_tier"] == "A"
+    assert integrated_row["evidence_priority_label"] == "ARG-bearing conjugative candidate"
+    assert integrated_row["priority_rationale"] == (
+        "ARG plus relaxase and mating-pair-formation evidence"
+    )
+    assert integrated_row["conjugative_candidate"] == "true"
+    assert integrated_row["arg_gene_families"] == "class A"
+    assert integrated_row["arg_drug_classes"] == "beta-lactam"
+    assert integrated_row["arg_mechanisms"] == "antibiotic inactivation"
+    assert integrated_row["virulence_classes"]
+    assert integrated_row["mge_classes"] == ""
+    assert integrated_row["bacmet_gene_families"] == "Bio"
+    assert integrated_row["bacmet_classes"] == "Triclosan"
+    assert "recommended_follow_up" not in integrated_row
+    assert integrated_row["mobility_marker_types"] == ("mating_pair_formation;relaxase;replication")
     assert "annotated_gene_symbols" in integrated.splitlines()[0]
     assert "annotated_gene_families" in integrated.splitlines()[0]
     assert "annotated_functional_classes" in integrated.splitlines()[0]
@@ -1761,7 +1963,7 @@ def test_comprehensive_annotation_publishes_integrated_report(
     assert provenance["annotation_profile"] == "comprehensive"
     assert provenance["predictions_integrated"] is True
     assert provenance["classification_labels_or_probabilities_changed"] is False
-    assert provenance["schema_version"] == "mobiorigin-biological-annotation-v4"
+    assert provenance["schema_version"] == "mobiorigin-biological-annotation-v5"
     assert provenance["normalized_gene_vocabulary"]["schema_version"] == (
         "mobiorigin-normalized-gene-v1"
     )

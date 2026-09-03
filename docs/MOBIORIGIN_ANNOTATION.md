@@ -222,7 +222,9 @@ The comprehensive profile also writes:
 - `mobiorigin_annotated_results.tsv`: one publication-facing row per input
   sequence, with unchanged MobiOrigin values when supplied and deterministic
   summaries of gene symbols, names, families, classes, subclasses, mechanisms,
-  and evidence sources;
+  and evidence sources. Separate fields report ARG drug classes and mechanisms,
+  virulence classes, MGE classes, stress classes and mechanisms, and plasmid
+  mobility marker types;
 - `publication_summary.json`: machine-readable aggregate accounting;
 - `mobiorigin_report.html`: a self-contained report and the first 100 records
   in deterministic priority order;
@@ -260,6 +262,15 @@ case-preserving, de-duplicated semicolon lists. These summaries do not alter
 origin predictions, retained evidence hits, consensus ARG calls, or A to E
 priority tiers.
 
+For direct biological review, the table also separates `arg_gene_names`,
+`arg_gene_families`, `arg_drug_classes`, `arg_mechanisms`,
+`virulence_gene_families`, `virulence_classes`, `mge_gene_families`,
+`mge_classes`, `stress_gene_families`, `stress_classes`, `stress_mechanisms`,
+and `mobility_marker_types`. Only explicitly source-supported values are
+reported. BacMet evidence is also separated into `bacmet_genes`,
+`bacmet_gene_families`, and `bacmet_classes`. Blank values mean that no retained
+source supplied that field.
+
 ## Evidence-priority tiers and risk boundary
 
 MobiOrigin deliberately does not emit an unvalidated clinical 0–10 score.
@@ -267,11 +278,11 @@ Instead, it emits an auditable research-priority tier:
 
 | Tier | Frozen rule | Interpretation |
 |---|---|---|
-| A | ARG plus relaxase and mating-pair-formation evidence | Highest dissemination-review priority |
-| B | ARG plus partial mobility, replication, or MGE evidence | Elevated dissemination-review priority |
-| C | ARG without detected mobility context | Resistance evidence requiring contextual review |
-| D | Non-ARG biological evidence only | Biological context, not ARG risk |
-| E | No retained evidence | No evidence under the frozen searches |
+| A | ARG plus relaxase and mating-pair-formation evidence | ARG-bearing conjugative candidate; highest transferability-review priority |
+| B | ARG plus partial mobility, replication, or MGE evidence | ARG-bearing mobile-context candidate requiring contextual review |
+| C | ARG without detected mobility context | ARG-bearing candidate without detected mobility evidence |
+| D | Non-ARG biological evidence only | Biological-evidence candidate, not an ARG-risk category |
+| E | No retained evidence | No evidence under the configured searches and thresholds |
 
 Virulence co-localization, source context, host taxonomy, and antibiotic class
 remain separate columns; they do not silently add points. ARG health-risk

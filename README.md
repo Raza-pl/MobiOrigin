@@ -10,6 +10,8 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 - Package version: `0.1.5` (verified external model transport and normalized gene reporting).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
+- Input files: uncompressed FASTA or gzip-compressed FASTA (`.fa.gz`,
+  `.fasta.gz`, `.fna.gz`, or `.fas.gz`).
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
 - Network access during prediction: none.
 - Models: three unchanged frozen checkpoints retrieved once during setup from a versioned GitHub release asset. The archive and every extracted artifact are SHA-256 verified before atomic installation.
@@ -67,10 +69,19 @@ When installation succeeds, the final check creates:
 │   ├── provenance.json
 │   └── SHA256SUMS.txt
 └── visualization/
+    ├── annotation_class_summary.tsv
+    ├── evidence_tier_summary.tsv
     ├── mobiorigin_dashboard.html
+    ├── mobiorigin_annotation_summary.svg
+    ├── mobiorigin_arg_classes.svg
+    ├── mobiorigin_bacmet_categories.svg
+    ├── mobiorigin_mge_classes.svg
+    ├── mobiorigin_priority_candidates.svg
     ├── mobiorigin_summary.svg
+    ├── mobiorigin_virulence_classes.svg
     ├── prediction_summary.tsv
     ├── prediction_by_length_bin.tsv
+    ├── priority_candidates.tsv
     ├── visualization_summary.json
     └── SHA256SUMS.txt
 ```
@@ -89,6 +100,9 @@ mobiorigin doctor
 
 The comprehensive annotation report uses consistent columns for gene symbol,
 gene name, gene family, functional class, functional subclass, and mechanism.
+The integrated contig table also provides separate ARG, virulence, MGE, stress,
+and mobility columns, so a database-supported class or family is not hidden in
+a mixed summary field.
 Database-specific terminology and accessions remain available in the detailed
 evidence table, and no annotation changes an origin prediction.
 
@@ -115,6 +129,27 @@ The PyPI wheel does not redistribute third-party MOB-suite database records or
 replace the external DIAMOND and AMRFinderPlus executables. Use the guided route
 above for a new complete installation.
 
+### Bioconda and BioContainer routes
+
+MobiOrigin 0.1.5 is available from Bioconda. This installs MobiOrigin,
+DIAMOND, and AMRFinderPlus. Models and biological databases remain separate
+verified resources, so the guided source installer above is still the easiest
+route for a first complete setup.
+
+```bash
+mamba create -n mobiorigin -c conda-forge -c bioconda mobiorigin=0.1.5
+conda activate mobiorigin
+mobiorigin doctor --software-only
+```
+
+The official BioContainer is
+`quay.io/biocontainers/mobiorigin:0.1.5--pyhdfd78af_0`. Its immutable image
+digest is
+`sha256:ca23f56fcd64fbe321619d909b8a1699e82b779e2b65a6def6f4795fc3e1b268`.
+Mount the separately prepared MobiOrigin data directory at `/data/mobiorigin`
+and set the documented database and model environment variables when running
+the container.
+
 The installer includes the official AMRFinderPlus software and its BLAST/HMMER
 runtime dependencies. `mobiorigin setup-databases --component annotation`
 downloads permitted resources from their official sources, builds the DIAMOND
@@ -124,8 +159,9 @@ required or downloaded; authorized users can add it as an optional legacy
 evidence layer. Every installed file is hashed and recorded in a manifest.
 
 MobiOrigin is published on [PyPI](https://pypi.org/project/mobiorigin/) through
-token-free Trusted Publishing. A Bioconda recipe is under external review and
-must not be treated as available until Bioconda accepts and publishes it.
+token-free Trusted Publishing and on
+[Bioconda](https://bioconda.github.io/recipes/mobiorigin/README.html). The
+corresponding BioContainer is built from the accepted Bioconda recipe.
 
 ## Prepare models and marker databases
 
@@ -239,7 +275,10 @@ directories:
   standalone biological-evidence report.
 - `visualization/`: the integrated HTML dashboard, editable SVG figure, and
   summary tables. When annotation is enabled, the dashboard includes A to E
-  evidence-tier counts.
+  evidence-tier explanations and a clean searchable annotation table. Separate
+  editable SVGs summarize ARG classes, MGE classes, virulence-factor classes,
+  and BacMet resistance categories by chromosome, plasmid, phage, and
+  unclassified output.
 
 The prediction directory contains:
 
@@ -260,6 +299,11 @@ mobiorigin visualize \
 ```
 
 Open `mobiorigin_visualization/mobiorigin_dashboard.html`. The dashboard reports contig- and base-pair-weighted prediction proportions and length-stratified plasmid calls. It is descriptive and does not calculate accuracy.
+
+During `mobiorigin run`, the terminal reports preflight, prediction, annotation,
+visualization, and finalization activity. Database searches are named as they
+start. These progress messages report workflow activity only; they do not alter
+the deterministic result files.
 
 ## Independent biological annotation
 

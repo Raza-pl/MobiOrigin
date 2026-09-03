@@ -57,6 +57,45 @@ columns summarize the normalized gene annotations on that contig:
 Multiple values use deterministic semicolon separation. The complete
 source-specific evidence remains in `biological_evidence.tsv`.
 
+The same table includes group-specific fields so that unlike evidence types do
+not have to be reconstructed from the aggregate columns:
+
+| Evidence group | Integrated columns |
+|---|---|
+| ARG | `arg_gene_names`, `arg_gene_families`, `arg_drug_classes`, `arg_mechanisms` |
+| Virulence | `virulence_genes`, `virulence_gene_families`, `virulence_classes` |
+| MGE | `mge_genes`, `mge_gene_families`, `mge_classes` |
+| Stress or biocide | `stress_genes`, `stress_gene_families`, `stress_classes`, `stress_mechanisms` |
+| Plasmid mobility | `mobility_genes`, `mobility_gene_families`, `mobility_marker_types` |
+
+`conjugative_candidate` is `true` only when the existing Tier A rule is met:
+an ARG call co-occurs on the contig with relaxase and mating-pair-formation
+evidence. It is a sequence-evidence review label, not proof of transfer.
+`evidence_priority_label` provides a readable description of the tier.
+
+## Visualization outputs
+
+When an integrated annotation table is supplied, `visualization/` additionally
+contains:
+
+| File | Meaning |
+|---|---|
+| `evidence_tier_summary.tsv` | Counts, fractions, bases, and conjugative candidates by Tier A to E. |
+| `annotation_class_summary.tsv` | Contig counts for each displayed class or family, including counts split by predicted origin. |
+| `priority_candidates.tsv` | Review-focused Tier A to C and conjugative-candidate records. |
+| `mobiorigin_annotation_summary.svg` | Editable tier and annotation-class bar plots. |
+| `mobiorigin_priority_candidates.svg` | Editable summary of Tier A to C and conjugative candidates. |
+| `mobiorigin_arg_classes.svg` | ARG drug classes split by predicted origin. |
+| `mobiorigin_mge_classes.svg` | MGE classes split by predicted origin. |
+| `mobiorigin_virulence_classes.svg` | Virulence-factor classes split by predicted origin. |
+| `mobiorigin_bacmet_categories.svg` | BacMet resistance categories split by predicted origin. |
+| `mobiorigin_dashboard.html` | Self-contained interactive overview with filters and full interpretation boundaries. |
+
+Counts represent contigs containing at least one retained annotation of that
+class or family. The origin-specific columns use the unchanged MobiOrigin
+prediction. They are not numbers of genes, prevalence estimates, or accuracy
+measurements.
+
 ## Interpretation boundary
 
 An `unclassified` result is an explicit abstention, not a chromosome call. Coverage therefore differs from one minus the technical failure rate. Downstream analyses should retain abstentions in recall and accuracy denominators while excluding them from predicted-class precision denominators, matching the frozen evaluation policy.
