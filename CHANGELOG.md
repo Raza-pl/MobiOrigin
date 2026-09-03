@@ -4,7 +4,14 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
-No changes yet.
+### Changed
+
+- Removed an unused internal instruction file from the public repository.
+- Generalized the local build-artifact exclusion and operational script root so
+  public files no longer expose development-environment names or a private
+  checkout path.
+- Limited duplicate push-triggered CI runs to maintained branches. Pull-request
+  checks against `main` remain unchanged.
 
 ## 0.1.6 — 2026-09-03
 

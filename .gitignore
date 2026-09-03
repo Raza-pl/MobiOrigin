@@ -24,7 +24,7 @@ env/
 # Runtime databases and generated outputs
 data/
 results/
-.codex_build/
+.*_build/
 evaluation/
 docs/manuscript/
 scripts/dev/
