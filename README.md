@@ -8,7 +8,7 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 
 ## Status
 
-- Package version: `0.1.5` (verified external model transport and normalized gene reporting).
+- Package version: `0.1.6` (runtime diagnostics and expanded annotation visualization).
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Input files: uncompressed FASTA or gzip-compressed FASTA (`.fa.gz`,
   `.fasta.gz`, `.fna.gz`, or `.fas.gz`).
@@ -121,7 +121,7 @@ If DIAMOND, AMRFinderPlus, and the required databases are already managed
 locally, install the Python package from PyPI and retrieve the frozen models:
 
 ```bash
-python -m pip install mobiorigin==0.1.5
+python -m pip install mobiorigin==0.1.6
 mobiorigin setup-databases --component models
 ```
 
