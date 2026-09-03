@@ -6,7 +6,9 @@ import csv
 import json
 import os
 import subprocess
+import sys
 import tempfile
+import time
 from collections import Counter
 from importlib import resources
 from pathlib import Path
@@ -19,9 +21,10 @@ from mobiorigin.annotation_database_setup import (
     default_annotation_database_dir,
 )
 from mobiorigin.database_setup import check_databases
+from mobiorigin.fasta import resolve_fasta_input
 from mobiorigin.model_setup import check_models, resolve_model_dir
 from mobiorigin.predict import predict
-from mobiorigin.runtime import resolve_executable
+from mobiorigin.runtime import resolve_executable, temporary_storage_report
 from mobiorigin.visualize import visualize
 
 
@@ -80,6 +83,7 @@ def doctor(
     )
     annotation_result: dict[str, Any] | None = None
     annotation_error: str | None = None
+    temporary_storage = temporary_storage_report()
     if not software_only:
         try:
             database_result = check_databases(database)
@@ -96,18 +100,23 @@ def doctor(
                 )
             except (FileNotFoundError, RuntimeError, ValueError) as error:
                 annotation_error = str(error)
-    passed = all(item["status"] == "PASS" for item in tools.values()) and (
-        software_only
-        or (
-            database_result is not None
-            and model_result is not None
-            and (skip_annotation_databases or annotation_result is not None)
+    passed = (
+        all(item["status"] == "PASS" for item in tools.values())
+        and temporary_storage["status"] == "PASS"
+        and (
+            software_only
+            or (
+                database_result is not None
+                and model_result is not None
+                and (skip_annotation_databases or annotation_result is not None)
+            )
         )
     )
     return {
         "status": "PASS" if passed else "FAIL",
         "mobiorigin_version": mobiorigin.__version__,
         "software": tools,
+        "temporary_storage": temporary_storage,
         "database_dir": str(database),
         "database": database_result,
         "database_error": database_error,
@@ -135,8 +144,19 @@ def run_analysis(
     annotation_profile: str = "comprehensive",
     skip_annotation: bool = False,
     threads: int = 1,
-) -> None:
+) -> dict[str, Any]:
     """Run one analysis and retain an explicitly failed workspace on error."""
+    started = time.monotonic()
+
+    def stage(number: int, title: str, message: str) -> None:
+        print(
+            f"[MobiOrigin {number}/5] {title}: {message}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    stage(1, "Preflight", "checking the input path and output location")
+    input_fasta = resolve_fasta_input(input_fasta)
     if output_dir.exists():
         raise FileExistsError("Analysis output directory already exists")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -146,13 +166,16 @@ def run_analysis(
         predictions = temporary / "predictions"
         annotation = temporary / "annotation"
         figures = temporary / "visualization"
+        stage(2, "Prediction", "starting sequence and mobility-marker classification")
         predict(
             input_fasta=input_fasta,
             output_dir=predictions,
             database_dir=resolve_database_dir(database_dir),
             threads=threads,
+            progress=lambda message: stage(2, "Prediction", message),
         )
         completed_stages.append("prediction")
+        stage(2, "Prediction", "complete")
         annotated_results: Path | None = None
         if not skip_annotation:
             annotation_databases = (
@@ -160,6 +183,7 @@ def run_analysis(
                 if annotation_database_dir is not None
                 else default_annotation_database_dir()
             )
+            stage(3, "Annotation", "starting comprehensive biological annotation")
             annotate(
                 input_fasta=input_fasta,
                 output_dir=annotation,
@@ -171,15 +195,21 @@ def run_analysis(
                 amrfinder_database=annotation_databases / "amrfinderplus",
                 profile=annotation_profile,
                 predictions_tsv=predictions / "predictions.tsv",
+                progress=lambda message: stage(3, "Annotation", message),
             )
             annotated_results = annotation / "mobiorigin_annotated_results.tsv"
             completed_stages.append("annotation")
+            stage(3, "Annotation", "complete")
+        else:
+            stage(3, "Annotation", "skipped by request")
+        stage(4, "Visualization", "building tables, figures, and the HTML dashboard")
         visualize(
             predictions_tsv=predictions / "predictions.tsv",
             output_dir=figures,
             annotated_results_tsv=annotated_results,
         )
         completed_stages.append("visualization")
+        stage(4, "Visualization", "complete")
         visualization_summary = json.loads(
             (figures / "visualization_summary.json").read_text(encoding="utf-8")
         )
@@ -196,6 +226,11 @@ def run_analysis(
                 "  annotation/mobiorigin_annotated_results.tsv  integrated contig table\n"
                 "  annotation/biological_evidence.tsv     retained evidence hits\n"
                 "  annotation/annotation_warnings.tsv     excluded external-header rows\n\n"
+                "Annotation visual summaries:\n"
+                "  visualization/mobiorigin_annotation_summary.svg  tier and class plots\n"
+                "  visualization/mobiorigin_priority_candidates.svg focused candidates\n"
+                "  visualization/annotation_class_summary.tsv       class counts\n"
+                "  visualization/priority_candidates.tsv             review table\n\n"
                 if annotated_results is not None
                 else "Annotation was skipped explicitly.\n\n"
             )
@@ -204,7 +239,27 @@ def run_analysis(
             "These are predictions, not experimental proof or clinical risk scores.\n",
             encoding="utf-8",
         )
+        result: dict[str, Any] = {
+            "status": "PASS",
+            "input_fasta": str(input_fasta.resolve()),
+            "output_dir": str(output_dir.resolve()),
+            "prediction_table": str((output_dir / "predictions" / "predictions.tsv").resolve()),
+            "annotation_table": (
+                str((output_dir / "annotation" / "mobiorigin_annotated_results.tsv").resolve())
+                if annotated_results is not None
+                else None
+            ),
+            "dashboard": str(
+                (output_dir / "visualization" / "mobiorigin_dashboard.html").resolve()
+            ),
+            "records": visualization_summary["records"],
+            "bases": visualization_summary["bases"],
+        }
+        stage(5, "Finalization", "publishing the completed atomic result directory")
         os.replace(temporary, output_dir)
+        result["elapsed_seconds"] = round(time.monotonic() - started, 1)
+        stage(5, "Finalization", f"complete in {result['elapsed_seconds']} seconds")
+        return result
     except BaseException as error:
         failed_output = output_dir.with_name(f"{output_dir.name}.failed")
         suffix = 1
@@ -225,6 +280,7 @@ def run_analysis(
                 else None
             ),
             "scientific_status": "incomplete_not_for_interpretation",
+            "recovery_guidance": _recovery_guidance(error),
         }
         (temporary / "ANALYSIS_FAILED.json").write_text(
             json.dumps(failure, indent=2, sort_keys=True) + "\n",
@@ -234,9 +290,28 @@ def run_analysis(
         if isinstance(error, Exception):
             raise RuntimeError(
                 f"MobiOrigin analysis failed after {', '.join(completed_stages) or 'initialization'}; "
-                f"incomplete state was retained at {failed_output}"
+                f"incomplete state was retained at {failed_output}. Root cause: {error}"
             ) from error
         raise
+
+
+def _recovery_guidance(error: BaseException) -> list[str]:
+    """Return concise recovery guidance for common user-facing failures."""
+    message = str(error).lower()
+    guidance = ["Keep the retained .failed directory until the cause has been reviewed."]
+    if isinstance(error, FileNotFoundError) or "not found" in message:
+        guidance.append("Check the exact input filename and use an absolute FASTA path.")
+    if "temporary" in message or "tmpdir" in message:
+        guidance.append(
+            "Set MOBIORIGIN_TMPDIR to a writable Linux-native directory under your home folder."
+        )
+    if "thread" in message or "allocate memory" in message or "segmentation fault" in message:
+        guidance.append(
+            "Retry with fewer threads after checking available memory; AMRFinderPlus automatically "
+            "reduces its thread count in current development versions."
+        )
+    guidance.append("Use a new output directory name when retrying.")
+    return guidance
 
 
 def demo(

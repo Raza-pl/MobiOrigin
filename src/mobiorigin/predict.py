@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -158,17 +158,22 @@ def predict(
     database_dir: Path,
     threads: int,
     model_dir: Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> None:
     """Run one complete atomic MobiOrigin prediction."""
+    notify = progress or (lambda message: None)
     validate_threads(threads)
     if output_dir.exists():
         raise FileExistsError("Output directory already exists")
     configure_runtime()
+    notify("Reading and validating the input FASTA")
     records = read_fasta(input_fasta)
     supported_indices = [index for index, record in enumerate(records) if record.supported]
     supported = [records[index] for index in supported_indices]
     models_root = resolve_model_dir(model_dir)
+    notify("Verifying and loading the frozen model ensemble")
     models, normalization = load_artifacts(models_root)
+    notify("Verifying the frozen marker databases")
     databases = load_database_manifest(database_dir)
     parent = output_dir.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +185,9 @@ def predict(
         labels = ["unclassified"] * len(records)
         scores = np.zeros(len(records), dtype=np.float32)
         if supported:
+            notify(f"Calculating sequence features for {len(supported):,} supported contigs")
             sequence = extract_sequence_features([record.sequence for record in supported])
+            notify("Searching MOB-suite marker proteins with DIAMOND")
             marker = extract_marker_features(
                 supported,
                 databases=databases,
@@ -188,6 +195,7 @@ def predict(
                 threads=threads,
                 work_dir=temporary / "marker_work",
             )
+            notify("Running the three-network ensemble and selective decision rule")
             supported_probabilities = ensemble_probabilities(
                 models, fuse_features(sequence, marker, normalization)
             )
@@ -196,6 +204,7 @@ def predict(
                 probabilities[global_index] = supported_probabilities[local]
                 labels[global_index] = supported_labels[local]
                 scores[global_index] = supported_scores[local]
+        notify("Writing predictions, provenance, and checksums")
         predictions = temporary / "predictions.tsv"
         _write_predictions(predictions, records, probabilities, labels, scores)
         provenance: dict[str, Any] = {

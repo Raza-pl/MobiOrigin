@@ -4,7 +4,45 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- Added an input-path preflight that reports the resolved missing path, current
+  working directory, and nearby FASTA files instead of producing a traceback.
+- Added direct reading of gzip-compressed `.fa.gz`, `.fasta.gz`, `.fna.gz`, and
+  `.fas.gz` inputs, removing the manual decompression step.
+- Added a writable temporary-storage check to `mobiorigin doctor`, including
+  the selected location, available space, WSL status, and ignored unsafe
+  environment settings.
+- Added concise success summaries for prediction, annotation, visualization,
+  and integrated runs.
+- Added live, flushed progress messages for preflight, feature generation,
+  marker searches, individual annotation resources, visualization, and atomic
+  result publication.
+- Added evidence-group-specific gene, family, class, subclass, and mechanism
+  summaries to the integrated per-contig table.
+- Added annotation-class and evidence-tier summary tables plus dedicated ARG,
+  MGE, virulence-factor, and BacMet SVGs split by predicted origin. The clean
+  HTML dashboard provides tier filtering and annotation search without download
+  controls.
+
+### Changed
+
+- External tools now receive a private temporary directory chosen by
+  MobiOrigin. On WSL, Linux-native storage is preferred automatically and stale
+  `TMPDIR`, `TEMP`, or `TMP` values on `/mnt/*` are ignored.
+- AMRFinderPlus now retries resource-related thread failures with progressively
+  fewer workers, down to one, while preserving immediate failure for database,
+  input, and other non-resource errors.
+- Expected command-line failures now end with a short actionable message.
+  Developer tracebacks remain available by setting `MOBIORIGIN_DEBUG=1`.
+- A to E tiers now carry stable descriptive labels in reports while retaining
+  the existing frozen tier rules.
+
+### Scientific boundaries
+
+- These are reporting, visualization, runtime, and diagnostic changes only. No model, feature,
+  normalization, ensemble weight, threshold, annotation rule, database
+  content, or prediction semantic changed.
 
 ## 0.1.5 — 2026-08-28
 

@@ -11,14 +11,14 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from mobiorigin import __version__
 from mobiorigin.fasta import IUPAC_DNA, FastaRecord, read_fasta
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
-from mobiorigin.runtime import resolve_executable, validate_threads
+from mobiorigin.runtime import external_tool_environment, resolve_executable, validate_threads
 
 MIN_IDENTITY = 80.0
 MIN_QUERY_COVERAGE = 80.0
@@ -420,24 +420,66 @@ def parse_amrprot_hits(
 def run_amrfinderplus(
     *, executable: Path, proteins: Path, database: Path | None, output: Path, threads: int
 ) -> None:
-    command = [
-        str(executable),
-        "--protein",
-        str(proteins),
-        "--plus",
-        "--print_node",
-        "--threads",
-        str(threads),
-        "--output",
-        str(output),
-    ]
-    if database is not None:
-        command.extend(["--database", str(database)])
-    completed = subprocess.run(command, text=True, capture_output=True, check=False)
-    if completed.returncode:
-        raise RuntimeError(f"AMRFinderPlus failed: {completed.stderr.strip()}")
-    if not output.is_file():
-        raise RuntimeError("AMRFinderPlus completed without producing its report")
+    validate_threads(threads)
+    attempts = [threads]
+    while attempts[-1] > 1:
+        reduced = max(1, attempts[-1] // 2)
+        if reduced == attempts[-1]:
+            break
+        attempts.append(reduced)
+
+    resource_markers = (
+        "error creating thread",
+        "cannot create thread",
+        "resource temporarily unavailable",
+        "cannot allocate memory",
+        "std::bad_alloc",
+        "segmentation fault",
+    )
+    failures: list[tuple[int, str]] = []
+    for attempted_threads in attempts:
+        output.unlink(missing_ok=True)
+        command = [
+            str(executable),
+            "--protein",
+            str(proteins),
+            "--plus",
+            "--print_node",
+            "--threads",
+            str(attempted_threads),
+            "--output",
+            str(output),
+        ]
+        if database is not None:
+            command.extend(["--database", str(database)])
+        with external_tool_environment("amrfinder") as (environment, _):
+            completed = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=environment,
+            )
+        if completed.returncode == 0:
+            if not output.is_file():
+                raise RuntimeError("AMRFinderPlus completed without producing its report")
+            return
+        detail = (completed.stderr or completed.stdout).strip()
+        failures.append((attempted_threads, detail))
+        resource_failure = any(marker in detail.lower() for marker in resource_markers)
+        if not resource_failure:
+            break
+
+    attempted = ", ".join(str(value) for value, _ in failures)
+    last_detail = failures[-1][1] if failures else "no diagnostic output"
+    if len(failures) > 1:
+        raise RuntimeError(
+            "AMRFinderPlus could not start its BLAST workers after automatic retries "
+            f"with {attempted} thread(s). Check available memory and WSL limits, or set "
+            "MOBIORIGIN_TMPDIR to a writable Linux-native directory. "
+            f"Last AMRFinderPlus error: {last_detail}"
+        )
+    raise RuntimeError(f"AMRFinderPlus failed: {last_detail}")
 
 
 def parse_amrfinderplus_hits(path: Path, orfs: Mapping[str, Orf]) -> list[ArgHit]:
@@ -460,6 +502,17 @@ def parse_amrfinderplus_hits(path: Path, orfs: Mapping[str, Orf]) -> list[ArgHit
                 value = current_row.get(name, "").strip()
                 return None if not value or value.upper() == "NA" else float(value)
 
+            drug_classes = tuple(
+                dict.fromkeys(
+                    value.lower()
+                    for value in (
+                        row.get("Class", "").strip(),
+                        row.get("Subclass", "").strip(),
+                    )
+                    if value
+                )
+            )
+
             hits.append(
                 ArgHit(
                     sequence_id=orf.sequence_id,
@@ -472,12 +525,7 @@ def parse_amrfinderplus_hits(path: Path, orfs: Mapping[str, Orf]) -> list[ArgHit
                     gene_name=row["Element name"].strip() or "unknown",
                     accession=row.get("Closest reference accession", "").strip() or "unknown",
                     amr_family=row.get("Hierarchy node", "").strip() or "unknown",
-                    drug_class="; ".join(
-                        value
-                        for value in (row.get("Class", "").strip(), row.get("Subclass", "").strip())
-                        if value
-                    ).lower()
-                    or "unknown",
+                    drug_class="; ".join(drug_classes) or "unknown",
                     resistance_mechanism="unknown",
                     method=row["Method"].strip() or "AMRFINDERPLUS",
                     identity=number("% Identity to reference"),
@@ -611,8 +659,10 @@ def annotate(
     amrfinder_database: Path | None = None,
     profile: str = "arg",
     predictions_tsv: Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> None:
     """Run independent ARG or comprehensive annotation and publish atomically."""
+    notify = progress or (lambda message: None)
     validate_threads(threads)
     if amrfinder_mode not in {"official", "amrprot"}:
         raise ValueError("AMRFinder mode must be 'official' or 'amrprot'")
@@ -622,6 +672,7 @@ def annotate(
         raise ValueError("--predictions-tsv requires --profile comprehensive")
     if output_dir.exists():
         raise FileExistsError(f"Output directory already exists: {output_dir}")
+    notify("Reading the input FASTA and checking annotation resources")
     records = read_fasta(input_fasta)
     diamond_executable = _executable(diamond, "DIAMOND")
     card_db = _required_file(database_dir / "card" / "card.dmnd", "CARD database")
@@ -678,10 +729,12 @@ def annotate(
         raw = temporary / "raw_evidence"
         raw.mkdir()
         proteins = temporary / "predicted_proteins.faa"
+        notify(f"Predicting protein-coding regions in {len(records):,} contigs")
         orfs = predict_annotation_orfs(records, proteins)
         card_raw = raw / "card_diamond.tsv"
         sarg_raw = raw / "sarg_diamond.tsv"
         if orfs:
+            notify(f"Searching CARD across {len(orfs):,} predicted proteins")
             run_arg_diamond(
                 diamond=diamond_executable,
                 proteins=proteins,
@@ -689,6 +742,7 @@ def annotate(
                 output=card_raw,
                 threads=threads,
             )
+            notify("Searching SARG for independent ARG evidence")
             run_arg_diamond(
                 diamond=diamond_executable,
                 proteins=proteins,
@@ -705,6 +759,7 @@ def annotate(
         if amrfinder_mode == "official":
             official_raw = raw / "amrfinderplus.tsv"
             if orfs:
+                notify("Running official AMRFinderPlus annotation")
                 assert official_executable is not None
                 run_amrfinderplus(
                     executable=official_executable,
@@ -831,6 +886,16 @@ def annotate(
                 )
             extended_raw: dict[str, Path] = {}
             for route, (database, identity, coverage) in search_routes.items():
+                display_name = {
+                    "vfdb": "VFDB virulence factors",
+                    "mobileog": "mobileOG mobile-genetic-element proteins",
+                    "bacmet": "BacMet biocide and metal resistance",
+                    "mob_rep": "MOB-suite replicon markers",
+                    "mob_relaxase": "MOB-suite relaxase markers",
+                    "mob_mpf": "MOB-suite mating-pair-formation markers",
+                    "legacy_isfinder": "authorized legacy ISfinder evidence",
+                }[route]
+                notify(f"Searching {display_name}")
                 route_path = raw / f"{route}_diamond.tsv"
                 if orfs:
                     run_evidence_diamond(
@@ -899,6 +964,7 @@ def annotate(
             mobileog_warning_count = len(mobileog_warnings)
             write_evidence(evidence_path, extended_hits)
             predictions = load_predictions(predictions_tsv, records) if predictions_tsv else {}
+            notify("Building the integrated contig-level annotation table")
             integrated_rows = write_integrated_results(
                 integrated_path,
                 records,
@@ -907,6 +973,7 @@ def annotate(
                 consensus_arg_hits=arg_evidence(consensus),
             )
             write_publication_summary(publication_path, integrated_rows, extended_hits)
+            notify("Writing the biological-evidence HTML report")
             write_html_report(report_path, integrated_rows, publication_path)
             comprehensive_outputs = [
                 evidence_path,
@@ -947,7 +1014,7 @@ def annotate(
 
         evidence_counts = Counter(hit.source for hit in all_hits)
         provenance = {
-            "schema_version": "mobiorigin-biological-annotation-v4",
+            "schema_version": "mobiorigin-biological-annotation-v5",
             "mobiorigin_version": __version__,
             "input_fasta": _database_identity(input_fasta),
             "records": len(records),
@@ -1039,6 +1106,7 @@ def annotate(
             f"{sha256_file(path)}  {path.relative_to(temporary).as_posix()}\n" for path in files
         )
         atomic_text(temporary / "SHA256SUMS.txt", sums)
+        notify("Publishing annotation outputs and checksum inventory")
         os.replace(temporary, output_dir)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)

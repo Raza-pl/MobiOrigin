@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -33,6 +35,11 @@ def _compact_result(value: object) -> object:
 def _print_result(result: dict[str, object], *, verbose: bool) -> None:
     """Print a concise result unless the full provenance inventory was requested."""
     print(json.dumps(result if verbose else _compact_result(result), indent=2))
+
+
+def _print_progress(section: str, message: str) -> None:
+    """Print one immediately visible, human-readable progress line."""
+    print(f"[{section}] {message}", file=sys.stderr, flush=True)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -240,7 +247,7 @@ def parser() -> argparse.ArgumentParser:
     return value
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def _dispatch(argv: Sequence[str] | None = None) -> None:
     argument_parser = parser()
     args = argument_parser.parse_args(argv)
     if args.command == "predict":
@@ -249,6 +256,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             output_dir=args.output_dir,
             database_dir=resolve_database_dir(args.database_dir),
             threads=args.threads,
+            progress=lambda message: _print_progress("Prediction", message),
+        )
+        _print_result(
+            {
+                "status": "PASS",
+                "output_dir": str(args.output_dir.resolve()),
+                "prediction_table": str((args.output_dir / "predictions.tsv").resolve()),
+            },
+            verbose=False,
         )
     elif args.command == "setup-databases":
         output_dir = args.output_dir
@@ -324,22 +340,52 @@ def main(argv: Sequence[str] | None = None) -> None:
             ),
             profile=args.profile,
             predictions_tsv=args.predictions_tsv,
+            progress=lambda message: _print_progress("Annotation", message),
         )
+        result = {
+            "status": "PASS",
+            "output_dir": str(args.output_dir.resolve()),
+        }
+        published_outputs = {
+            "arg_consensus": args.output_dir / "arg_consensus.tsv",
+            "annotation_table": args.output_dir / "mobiorigin_annotated_results.tsv",
+            "evidence_table": args.output_dir / "biological_evidence.tsv",
+            "report": args.output_dir / "mobiorigin_report.html",
+        }
+        result.update(
+            {
+                label: str(path.resolve())
+                for label, path in published_outputs.items()
+                if path.is_file()
+            }
+        )
+        _print_result(result, verbose=False)
     elif args.command == "visualize":
         visualize(
             predictions_tsv=args.predictions_tsv,
             output_dir=args.output_dir,
             annotated_results_tsv=args.annotated_results_tsv,
         )
+        _print_result(
+            {
+                "status": "PASS",
+                "output_dir": str(args.output_dir.resolve()),
+                "dashboard": str((args.output_dir / "mobiorigin_dashboard.html").resolve()),
+            },
+            verbose=False,
+        )
     elif args.command == "run":
-        run_analysis(
-            input_fasta=args.input_fasta,
-            output_dir=args.output_dir,
-            database_dir=args.database_dir,
-            annotation_database_dir=args.annotation_database_dir,
-            annotation_profile=args.annotation_profile,
-            skip_annotation=args.skip_annotation,
-            threads=args.threads,
+        _print_result(
+            run_analysis(
+                input_fasta=args.input_fasta,
+                output_dir=args.output_dir,
+                database_dir=args.database_dir,
+                annotation_database_dir=args.annotation_database_dir,
+                annotation_profile=args.annotation_profile,
+                skip_annotation=args.skip_annotation,
+                threads=args.threads,
+            ),
+            verbose=False,
         )
     elif args.command == "doctor":
         result = doctor(
@@ -365,3 +411,20 @@ def main(argv: Sequence[str] | None = None) -> None:
                 indent=2,
             )
         )
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run the CLI with concise diagnostics unless debug tracebacks were requested."""
+    try:
+        _dispatch(argv)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as error:
+        if os.environ.get("MOBIORIGIN_DEBUG") == "1":
+            raise
+        print(f"STOP: {error}", file=sys.stderr)
+        print(
+            "For a developer traceback, rerun with MOBIORIGIN_DEBUG=1.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None

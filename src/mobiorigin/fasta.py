@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import gzip
 from dataclasses import dataclass
 from pathlib import Path
 
 IUPAC_DNA = frozenset("ACGTRYSWKMBDHVN")
 MINIMUM_SUPPORTED_BP = 1_000
 MAXIMUM_SUPPORTED_BP = 500_000
+FASTA_SUFFIXES = (".fa", ".fasta", ".fna", ".fas")
 
 
 @dataclass(frozen=True)
@@ -22,8 +24,34 @@ class FastaRecord:
         return MINIMUM_SUPPORTED_BP <= len(self.sequence) <= MAXIMUM_SUPPORTED_BP
 
 
+def resolve_fasta_input(path: Path) -> Path:
+    """Resolve one FASTA path or raise an actionable path error."""
+    expanded = path.expanduser()
+    if expanded.is_file():
+        return expanded
+    absolute = expanded if expanded.is_absolute() else Path.cwd() / expanded
+    parent = absolute.parent
+    nearby: list[str] = []
+    if parent.is_dir():
+        nearby = sorted(
+            item.name
+            for item in parent.iterdir()
+            if item.is_file()
+            and (
+                item.suffix.lower() in FASTA_SUFFIXES
+                or any(item.name.lower().endswith(f"{suffix}.gz") for suffix in FASTA_SUFFIXES)
+            )
+        )[:10]
+    message = f"Input FASTA was not found: {absolute}. " f"Current directory: {Path.cwd()}."
+    if nearby:
+        message += f" FASTA files in {parent}: {', '.join(nearby)}."
+    message += " Use the exact filename or an absolute path."
+    raise FileNotFoundError(message)
+
+
 def read_fasta(path: Path) -> list[FastaRecord]:
     """Read a non-empty FASTA with unique first-token identifiers."""
+    path = resolve_fasta_input(path)
     records: list[FastaRecord] = []
     identifier: str | None = None
     sequence: list[str] = []
@@ -41,7 +69,11 @@ def read_fasta(path: Path) -> list[FastaRecord]:
             )
         records.append(FastaRecord(identifier, value))
 
-    with path.open("r", encoding="ascii") as handle:
+    if path.name.lower().endswith(".gz"):
+        handle_context = gzip.open(path, "rt", encoding="ascii")
+    else:
+        handle_context = path.open("r", encoding="ascii")
+    with handle_context as handle:
         for raw in handle:
             line = raw.strip()
             if not line:
