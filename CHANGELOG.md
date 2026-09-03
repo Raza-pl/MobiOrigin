@@ -4,6 +4,10 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+No changes yet.
+
+## 0.1.6 — 2026-09-03
+
 ### Added
 
 - Added an input-path preflight that reports the resolved missing path, current
@@ -40,9 +44,9 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ### Scientific boundaries
 
-- These are reporting, visualization, runtime, and diagnostic changes only. No model, feature,
-  normalization, ensemble weight, threshold, annotation rule, database
-  content, or prediction semantic changed.
+- These are reporting, visualization, runtime, and diagnostic changes only. No
+  model, feature, normalization, ensemble weight, threshold, annotation rule,
+  database content, or prediction semantic changed.
 
 ## 0.1.5 — 2026-08-28
 

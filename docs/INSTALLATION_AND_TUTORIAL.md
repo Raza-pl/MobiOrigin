@@ -80,7 +80,7 @@ Use this route only when a compatible DIAMOND executable is already available. M
 python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install mobiorigin==0.1.5
+python -m pip install mobiorigin==0.1.6
 mobiorigin setup-databases --component models
 mobiorigin --help
 ```
@@ -429,7 +429,7 @@ bounded-memory batching is planned for a later release.
 ## 10. Packaging status
 
 - Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
-- PyPI: version 0.1.5 uses token-free Trusted Publishing with CI, Twine,
+- PyPI: version 0.1.6 uses token-free Trusted Publishing with CI, Twine,
   per-file size, package-content, and clean-install gates.
 - Bioconda: version 0.1.5 has passed external review, merged, and produced the
   official `quay.io/biocontainers/mobiorigin:0.1.5--pyhdfd78af_0` image.
