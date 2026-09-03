@@ -8,7 +8,7 @@
 set +e
 unsetopt ERR_EXIT 2>/dev/null || true
 
-ROOT="/Users/shahbazraza/Documents/Claude/Projects/Plasflow"
+ROOT="${MOBIORIGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 PY="/Users/shahbazraza/miniconda3/envs/plasflow2/bin/python"
 PLASCLASS_ENV="/Users/shahbazraza/miniconda3/envs/plasclass_nar"
 RUNNER_ROOT="/private/tmp/mobiorigin-secondary-comparator-runners"
