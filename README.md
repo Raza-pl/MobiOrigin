@@ -9,7 +9,8 @@ MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacter
 ## Status
 
 - Release candidate: `0.1.7` (orientation-invariant inference and ambiguity-safe reporting).
-- Latest public PyPI/Bioconda release: `0.1.6` until the v0.1.7 release workflow completes.
+- Latest public PyPI release: `0.1.7`.
+- Latest public Bioconda/BioContainer release: `0.1.6` while the v0.1.7 recipe is under review.
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Supported prediction alphabet: A, C, G and T. A record containing any other
   IUPAC symbol is retained in the output but reported as `unclassified` with
