@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import gzip
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
 IUPAC_DNA = frozenset("ACGTRYSWKMBDHVN")
+UNAMBIGUOUS_DNA = frozenset("ACGT")
+STRONG_AMBIGUITY_WARNING_FRACTION = 0.001
 MINIMUM_SUPPORTED_BP = 1_000
 MAXIMUM_SUPPORTED_BP = 500_000
 FASTA_SUFFIXES = (".fa", ".fasta", ".fna", ".fas")
@@ -22,6 +25,75 @@ class FastaRecord:
     @property
     def supported(self) -> bool:
         return MINIMUM_SUPPORTED_BP <= len(self.sequence) <= MAXIMUM_SUPPORTED_BP
+
+
+@dataclass(frozen=True)
+class SequenceQuality:
+    """Transparent input-quality measurements reported with each prediction."""
+
+    non_acgt_bases: int
+    non_acgt_fraction: float
+    n_bases: int
+    n_fraction: float
+    normalized_4mer_entropy: float
+    warnings: tuple[str, ...]
+
+
+def normalized_kmer_entropy(sequence: str, k: int = 4) -> float:
+    """Return normalized Shannon entropy for unambiguous DNA k-mers.
+
+    Windows containing an IUPAC ambiguity code are excluded. The result ranges
+    from 0 to 1 and is descriptive; MobiOrigin does not use it to change or
+    reject a prediction.
+    """
+    if len(sequence) < k:
+        return 0.0
+    counts = [0] * (4**k)
+    total = 0
+    code = 0
+    valid_run = 0
+    mask = (4**k) - 1
+    values = {"A": 0, "C": 1, "G": 2, "T": 3}
+    for base in sequence:
+        value = values.get(base)
+        if value is None:
+            code = 0
+            valid_run = 0
+            continue
+        code = ((code << 2) | value) & mask
+        valid_run += 1
+        if valid_run >= k:
+            counts[code] += 1
+            total += 1
+    if total == 0:
+        return 0.0
+    entropy = 0.0
+    for count in counts:
+        if count:
+            probability = count / total
+            entropy -= probability * math.log(probability)
+    return entropy / math.log(4**k)
+
+
+def sequence_quality(sequence: str) -> SequenceQuality:
+    """Measure ambiguity and complexity without modifying the input record."""
+    length = len(sequence)
+    non_acgt = sum(base not in UNAMBIGUOUS_DNA for base in sequence)
+    n_bases = sequence.count("N")
+    non_acgt_fraction = non_acgt / length
+    warnings: list[str] = []
+    if non_acgt:
+        warnings.append("non_acgt_present")
+    if non_acgt_fraction >= STRONG_AMBIGUITY_WARNING_FRACTION:
+        warnings.append("non_acgt_fraction_ge_0.001")
+    return SequenceQuality(
+        non_acgt_bases=non_acgt,
+        non_acgt_fraction=non_acgt_fraction,
+        n_bases=n_bases,
+        n_fraction=n_bases / length,
+        normalized_4mer_entropy=normalized_kmer_entropy(sequence),
+        warnings=tuple(warnings),
+    )
 
 
 def resolve_fasta_input(path: Path) -> Path:

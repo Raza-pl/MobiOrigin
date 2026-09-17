@@ -4,6 +4,28 @@ All notable MobiOrigin changes are documented here. The project uses semantic ve
 
 ## Unreleased
 
+## 0.1.7 — 2026-09-17
+
+### Added
+
+- Added non-ACGT base counts and fractions, N counts and fractions, normalized
+  four-mer entropy, and explicit input-quality warning codes to every prediction
+  row.
+- Added run-level quality-control counts to prediction provenance and live
+  progress output. Any non-ACGT content is visible, with a stronger descriptive
+  warning at 0.10% or more ambiguous sequence.
+
+### Fixed
+
+- Made origin probabilities invariant to FASTA strand orientation by averaging
+  the frozen ensemble response across the two analytical orientations of the
+  orientation-dependent coding feature.
+- Stopped treating IUPAC ambiguity symbols as adenine in sequence-signature
+  extraction. K-mer windows spanning a non-ACGT symbol are excluded, and the
+  production workflow now fails closed by reporting every ambiguity-containing
+  record as `unclassified` with an explicit `ambiguous_bases` reason. ACGT-only
+  sequences retain the frozen feature representation exactly.
+
 ### Changed
 
 - Made all DIAMOND annotation-result readers tolerate isolated legacy bytes in

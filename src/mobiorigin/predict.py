@@ -15,7 +15,13 @@ import torch
 from numpy.typing import NDArray
 
 from mobiorigin import __version__
-from mobiorigin.fasta import FastaRecord, read_fasta
+from mobiorigin.fasta import (
+    STRONG_AMBIGUITY_WARNING_FRACTION,
+    FastaRecord,
+    SequenceQuality,
+    read_fasta,
+    sequence_quality,
+)
 from mobiorigin.marker_features import extract_marker_features, load_database_manifest
 from mobiorigin.model import INPUT_DIM, MobiOriginMLP, load_model
 from mobiorigin.model_setup import resolve_model_dir
@@ -96,6 +102,45 @@ def ensemble_probabilities(
     return probabilities
 
 
+def reverse_orientation_marker_features(
+    marker: NDArray[np.float32],
+) -> NDArray[np.float32]:
+    """Return the analytical reverse-orientation form of frozen marker features.
+
+    Sixteen of the seventeen coding-and-mobility features are orientation
+    invariant. The forward-ORF fraction becomes one minus its original value
+    when at least one retained ORF is present. This transformation avoids a
+    second gene prediction and database search while making the final ensemble
+    probability exactly invariant to input strand orientation.
+    """
+    if marker.ndim != 2 or marker.shape[1] != 17:
+        raise ValueError("Marker feature matrix has the wrong width")
+    reverse = marker.copy()
+    has_orf = marker[:, 1] > 0
+    reverse[:, 4] = np.where(has_orf, 1.0 - marker[:, 4], 0.0)
+    return reverse
+
+
+def orientation_invariant_probabilities(
+    models: Sequence[MobiOriginMLP],
+    sequence: NDArray[np.float32],
+    marker: NDArray[np.float32],
+    normalization: NDArray[np.float32],
+) -> NDArray[np.float32]:
+    """Average probabilities from both analytical sequence orientations."""
+    forward = ensemble_probabilities(models, fuse_features(sequence, marker, normalization))
+    reverse = ensemble_probabilities(
+        models,
+        fuse_features(sequence, reverse_orientation_marker_features(marker), normalization),
+    )
+    probabilities = ((forward.astype(np.float64) + reverse.astype(np.float64)) / 2).astype(
+        np.float32
+    )
+    if not np.allclose(probabilities.sum(axis=1), 1.0, atol=1e-6):
+        raise ValueError("Orientation-averaged probabilities are invalid")
+    return probabilities
+
+
 def selective_labels(probabilities: NDArray[np.float32]) -> tuple[list[str], NDArray[np.float32]]:
     if probabilities.ndim != 2 or probabilities.shape[1] != 3:
         raise ValueError("Probability matrix must have three columns")
@@ -117,7 +162,15 @@ def _write_predictions(
     probabilities: NDArray[np.float32],
     labels: Sequence[str],
     scores: NDArray[np.float32],
+    qualities: Sequence[SequenceQuality] | None = None,
 ) -> None:
+    measured = (
+        list(qualities)
+        if qualities is not None
+        else [sequence_quality(record.sequence) for record in records]
+    )
+    if len(measured) != len(records):
+        raise ValueError("Sequence-quality measurements do not match FASTA records")
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(
@@ -130,11 +183,21 @@ def _write_predictions(
                 "p_phage",
                 "plasmid_score",
                 "abstention_reason",
+                "non_acgt_bases",
+                "non_acgt_fraction",
+                "n_bases",
+                "n_fraction",
+                "normalized_4mer_entropy",
+                "input_quality_warnings",
             ]
         )
-        for record, row, label, score in zip(records, probabilities, labels, scores, strict=True):
+        for record, row, label, score, quality in zip(
+            records, probabilities, labels, scores, measured, strict=True
+        ):
             if not record.supported:
                 reason = "unsupported_length"
+            elif quality.non_acgt_bases:
+                reason = "ambiguous_bases"
             elif label == "unclassified":
                 reason = "low_plasmid_score"
             else:
@@ -147,6 +210,12 @@ def _write_predictions(
                     *(f"{float(value):.9g}" for value in row),
                     f"{float(score):.9g}",
                     reason,
+                    quality.non_acgt_bases,
+                    f"{quality.non_acgt_fraction:.9g}",
+                    quality.n_bases,
+                    f"{quality.n_fraction:.9g}",
+                    f"{quality.normalized_4mer_entropy:.9g}",
+                    ";".join(quality.warnings),
                 ]
             )
 
@@ -168,7 +237,21 @@ def predict(
     configure_runtime()
     notify("Reading and validating the input FASTA")
     records = read_fasta(input_fasta)
-    supported_indices = [index for index, record in enumerate(records) if record.supported]
+    qualities = [sequence_quality(record.sequence) for record in records]
+    ambiguous_records = sum(quality.non_acgt_bases > 0 for quality in qualities)
+    strong_ambiguity_warnings = sum(
+        quality.non_acgt_fraction >= STRONG_AMBIGUITY_WARNING_FRACTION for quality in qualities
+    )
+    notify(
+        "Input quality: "
+        f"{ambiguous_records:,}/{len(records):,} records contain non-ACGT bases; "
+        f"{strong_ambiguity_warnings:,} meet the >=0.10% ambiguity warning"
+    )
+    supported_indices = [
+        index
+        for index, (record, quality) in enumerate(zip(records, qualities, strict=True))
+        if record.supported and quality.non_acgt_bases == 0
+    ]
     supported = [records[index] for index in supported_indices]
     models_root = resolve_model_dir(model_dir)
     notify("Verifying and loading the frozen model ensemble")
@@ -196,8 +279,8 @@ def predict(
                 work_dir=temporary / "marker_work",
             )
             notify("Running the three-network ensemble and selective decision rule")
-            supported_probabilities = ensemble_probabilities(
-                models, fuse_features(sequence, marker, normalization)
+            supported_probabilities = orientation_invariant_probabilities(
+                models, sequence, marker, normalization
             )
             supported_labels, supported_scores = selective_labels(supported_probabilities)
             for local, global_index in enumerate(supported_indices):
@@ -206,15 +289,35 @@ def predict(
                 scores[global_index] = supported_scores[local]
         notify("Writing predictions, provenance, and checksums")
         predictions = temporary / "predictions.tsv"
-        _write_predictions(predictions, records, probabilities, labels, scores)
+        _write_predictions(predictions, records, probabilities, labels, scores, qualities)
         provenance: dict[str, Any] = {
-            "schema_version": "mobiorigin-prediction-provenance-v1",
+            "schema_version": "mobiorigin-prediction-provenance-v2",
             "tool": "MobiOrigin",
             "version": __version__,
             "input_fasta_sha256": sha256_file(input_fasta),
             "input_records": len(records),
             "supported_records": len(supported),
-            "unsupported_length_records": len(records) - len(supported),
+            "unsupported_length_records": sum(not record.supported for record in records),
+            "ambiguous_base_abstentions": ambiguous_records,
+            "input_quality_control": {
+                "records_with_non_acgt_bases": ambiguous_records,
+                "records_with_non_acgt_fraction_ge_0.001": strong_ambiguity_warnings,
+                "non_acgt_warning_policy": "warn on any non-ACGT content",
+                "strong_ambiguity_warning_fraction": STRONG_AMBIGUITY_WARNING_FRACTION,
+                "complexity_metric": (
+                    "normalized Shannon entropy of observed unambiguous 4-mers; "
+                    "descriptive only and not used to alter predictions"
+                ),
+                "ambiguity_policy": (
+                    "records containing an accepted non-ACGT IUPAC symbol are reported as unclassified "
+                    "with abstention_reason=ambiguous_bases and are not passed to the model"
+                ),
+                "prediction_semantics_changed": True,
+            },
+            "orientation_policy": (
+                "ensemble probabilities are averaged across analytical forward and "
+                "reverse-orientation coding features"
+            ),
             "model_sha256": MODEL_SHA256,
             "marker_normalization_sha256": NORMALIZATION_SHA256,
             "database_sha256": {

@@ -6,10 +6,22 @@ authors:
   - family-names: Raza
     given-names: Shahbaz
     email: shahbaz.invincible3182@gmail.com
+  - family-names: Heo
+    given-names: Seongbong
+  - family-names: Kim
+    given-names: Seojung
+  - family-names: Park
+    given-names: Hyeongju
+  - family-names: Song
+    given-names: Hokyung
+  - family-names: Unno
+    given-names: Tatsuya
+  - family-names: Kim
+    given-names: Young Mo
 repository-code: "https://github.com/Raza-pl/MobiOrigin"
 url: "https://github.com/Raza-pl/MobiOrigin"
-version: 0.1.6
-date-released: 2026-09-03
+version: 0.1.7
+date-released: 2026-09-17
 license: GPL-3.0-only
 keywords:
   - bioinformatics
@@ -20,8 +32,8 @@ keywords:
   - machine learning
 abstract: >-
   MobiOrigin is a CPU-oriented sequence-and-marker classifier that assigns
-  bacterial DNA fragments to chromosome, plasmid, phage, or an explicit
-  unclassified state. Version 0.1.6 retains the exact frozen three-seed dev1
-  model and scientific decision rules while adding compressed FASTA input,
-  actionable runtime diagnostics, live workflow progress, expanded normalized
-  annotation reporting, and origin-stratified evidence visualizations.
+  bacterial DNA fragments to plasmid, chromosome, phage, or an explicit
+  unclassified state. Version 0.1.7 retains the frozen three-seed dev1 model
+  while making inference invariant to FASTA strand orientation. Records with
+  non-ACGT symbols fail closed as unclassified with an explicit reason rather
+  than receiving a potentially unstable biological-origin label.
