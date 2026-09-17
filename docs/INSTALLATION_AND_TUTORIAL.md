@@ -96,7 +96,7 @@ MobiOrigin is available from [PyPI](https://pypi.org/project/mobiorigin/) and
 Bioconda software installation is:
 
 ```bash
-mamba create -n mobiorigin -c conda-forge -c bioconda mobiorigin=0.1.5
+mamba create -n mobiorigin -c conda-forge -c bioconda mobiorigin=0.1.6
 conda activate mobiorigin
 mobiorigin doctor --software-only
 ```
@@ -431,5 +431,6 @@ bounded-memory batching is planned for a later release.
 - Source installation, CPU runtime environment, isolated database environment, guided model transport, and database helper: available now.
 - PyPI: version 0.1.6 uses token-free Trusted Publishing with CI, Twine,
   per-file size, package-content, and clean-install gates.
-- Bioconda: version 0.1.5 has passed external review, merged, and produced the
-  official `quay.io/biocontainers/mobiorigin:0.1.5--pyhdfd78af_0` image.
+- Bioconda: version 0.1.6 has passed external review and merged. Its
+  corresponding BioContainer is
+  `quay.io/biocontainers/mobiorigin:0.1.6--pyhdfd78af_0`.

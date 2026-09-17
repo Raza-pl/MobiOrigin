@@ -4,12 +4,19 @@
 [![PyPI version](https://img.shields.io/pypi/v/mobiorigin.svg)](https://pypi.org/project/mobiorigin/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacterial DNA fragments to chromosome, plasmid, phage, or an explicit unclassified state. The frozen dev1 candidate combines 9,557 sequence features with 17 MOB-suite-derived protein-marker features and an equal-weight ensemble of three independently trained neural networks.
+MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacterial DNA fragments to plasmid, chromosome, phage, or an explicit unclassified state. The frozen dev1 candidate combines 9,557 sequence features with 17 MOB-suite-derived protein-marker features and an equal-weight ensemble of three independently trained neural networks.
 
 ## Status
 
-- Package version: `0.1.6` (runtime diagnostics and expanded annotation visualization).
+- Release candidate: `0.1.7` (orientation-invariant inference and ambiguity-safe reporting).
+- Latest public PyPI/Bioconda release: `0.1.6` until the v0.1.7 release workflow completes.
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
+- Supported prediction alphabet: A, C, G and T. A record containing any other
+  IUPAC symbol is retained in the output but reported as `unclassified` with
+  `abstention_reason=ambiguous_bases`.
+- Strand policy: the frozen ensemble is evaluated in both analytical coding
+  orientations and the two probability vectors are averaged. Reverse-complement
+  input therefore produces the same probabilities and label.
 - Input files: uncompressed FASTA or gzip-compressed FASTA (`.fa.gz`,
   `.fasta.gz`, `.fna.gz`, or `.fas.gz`).
 - Runtime: deterministic CPU inference; 1–128 requested external-search threads.
@@ -131,24 +138,22 @@ above for a new complete installation.
 
 ### Bioconda and BioContainer routes
 
-MobiOrigin 0.1.5 is available from Bioconda. This installs MobiOrigin,
+MobiOrigin 0.1.6 is available from Bioconda. This installs MobiOrigin,
 DIAMOND, and AMRFinderPlus. Models and biological databases remain separate
 verified resources, so the guided source installer above is still the easiest
 route for a first complete setup.
 
 ```bash
-mamba create -n mobiorigin -c conda-forge -c bioconda mobiorigin=0.1.5
+mamba create -n mobiorigin -c conda-forge -c bioconda mobiorigin=0.1.6
 conda activate mobiorigin
 mobiorigin doctor --software-only
 ```
 
-The official BioContainer is
-`quay.io/biocontainers/mobiorigin:0.1.5--pyhdfd78af_0`. Its immutable image
-digest is
-`sha256:ca23f56fcd64fbe321619d909b8a1699e82b779e2b65a6def6f4795fc3e1b268`.
-Mount the separately prepared MobiOrigin data directory at `/data/mobiorigin`
-and set the documented database and model environment variables when running
-the container.
+The corresponding BioContainer is available from the Bioconda recipe as
+`quay.io/biocontainers/mobiorigin:0.1.6--pyhdfd78af_0`. Resolve and record its
+immutable digest when a container is used for a published analysis. Mount the
+separately prepared MobiOrigin data directory at `/data/mobiorigin` and set the
+documented database and model environment variables when running the container.
 
 The installer includes the official AMRFinderPlus software and its BLAST/HMMER
 runtime dependencies. `mobiorigin setup-databases --component annotation`

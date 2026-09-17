@@ -10,6 +10,24 @@ directory is not a completed analysis and must not be used as one.
 
 ## `predictions.tsv`
 
+Prediction rows include additive input-quality fields:
+
+- `non_acgt_bases` and `non_acgt_fraction`: total IUPAC ambiguity content;
+- `n_bases` and `n_fraction`: explicit `N` content;
+- `normalized_4mer_entropy`: normalized Shannon entropy of unambiguous four-mers;
+- `input_quality_warnings`: semicolon-separated warning codes.
+
+`non_acgt_present` is reported for any non-ACGT base.
+`non_acgt_fraction_ge_0.001` marks records with at least 0.10% non-ACGT content.
+K-mer windows spanning non-ACGT symbols are never interpreted as adenine. The
+production workflow fails closed: a record containing an accepted non-ACGT
+IUPAC symbol is
+reported as `unclassified` with `abstention_reason=ambiguous_bases` and is not
+passed to the origin model. Four-mer entropy remains descriptive and has no
+accuracy cutoff. Final origin probabilities for ACGT-only records are averaged
+across the two analytical sequence orientations; downstream annotation remains
+independent of this decision.
+
 | Column | Meaning |
 |---|---|
 | `sequence_id` | Unique first-token FASTA identifier, in input order. |
@@ -19,7 +37,7 @@ directory is not a completed analysis and must not be used as one.
 | `p_plasmid` | Ensemble plasmid probability. |
 | `p_phage` | Ensemble phage probability. |
 | `plasmid_score` | `p_plasmid - max(p_chromosome, p_phage)`. |
-| `abstention_reason` | Empty for classified records; otherwise `low_plasmid_score` or `unsupported_length`. |
+| `abstention_reason` | Empty for classified records; otherwise `low_plasmid_score`, `unsupported_length`, or `ambiguous_bases`. |
 
 The three probabilities remain unchanged by the selective policy and sum to one. If the native argmax is plasmid but `plasmid_score` is below the frozen threshold `0.19835489988327026`, the emitted label is `unclassified`. Native chromosome and phage calls are not changed. Records outside 1,000–500,000 bp are explicitly unclassified with neutral probabilities.
 

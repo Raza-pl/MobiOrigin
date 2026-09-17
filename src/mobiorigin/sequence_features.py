@@ -11,6 +11,7 @@ K7_CANON_SIZE = K7_VOCAB_SIZE // 2
 FEATURE_DIM = sum(4**k for k in KMER_SIZES) + K7_CANON_SIZE + 1
 
 _ASCII_TO_BASE: NDArray[np.uint8] = np.zeros(256, dtype=np.uint8)
+_ASCII_IS_ACGT: NDArray[np.bool_] = np.zeros(256, dtype=np.bool_)
 for _character, _value in (
     ("A", 0),
     ("C", 1),
@@ -22,6 +23,7 @@ for _character, _value in (
     ("t", 3),
 ):
     _ASCII_TO_BASE[ord(_character)] = _value
+    _ASCII_IS_ACGT[ord(_character)] = True
 
 _POWERS: dict[int, NDArray[np.int64]] = {
     k: 4 ** np.arange(k - 1, -1, -1, dtype=np.int64) for k in (*KMER_SIZES, 7)
@@ -52,9 +54,9 @@ def _build_k7_canonical_map() -> NDArray[np.int16]:
 _K7_CANONICAL_MAP = _build_k7_canonical_map()
 
 
-def _encode(sequence: str) -> NDArray[np.uint8]:
+def _encode(sequence: str) -> tuple[NDArray[np.uint8], NDArray[np.bool_]]:
     raw = np.frombuffer(sequence.encode("ascii"), dtype=np.uint8)
-    return _ASCII_TO_BASE[raw]
+    return _ASCII_TO_BASE[raw], _ASCII_IS_ACGT[raw]
 
 
 def kmer_vector(sequence: str, k: int) -> NDArray[np.float32]:
@@ -64,13 +66,17 @@ def kmer_vector(sequence: str, k: int) -> NDArray[np.float32]:
     sequence = sequence.upper()
     if len(sequence) < k:
         return np.zeros(4**k, dtype=np.float32)
-    encoded = _encode(sequence)
+    encoded, valid = _encode(sequence)
     reverse_complement = (3 - encoded.astype(np.int16)).astype(np.uint8)[::-1]
+    reverse_valid = valid[::-1]
     counts = np.zeros(4**k, dtype=np.float32)
-    for strand in (encoded, reverse_complement):
+    for strand, strand_valid in ((encoded, valid), (reverse_complement, reverse_valid)):
         windows = np.lib.stride_tricks.sliding_window_view(strand, k).astype(np.int64)
+        valid_windows = np.lib.stride_tricks.sliding_window_view(strand_valid, k).all(axis=1)
+        if not np.any(valid_windows):
+            continue
         identifiers = windows @ _POWERS[k]
-        counts += np.bincount(identifiers, minlength=4**k).astype(np.float32)
+        counts += np.bincount(identifiers[valid_windows], minlength=4**k).astype(np.float32)
     norm = float(np.linalg.norm(counts))
     if norm:
         counts /= norm
@@ -82,9 +88,13 @@ def k7_canonical_vector(sequence: str) -> NDArray[np.float32]:
     sequence = sequence.upper()
     if len(sequence) < 7:
         return np.zeros(K7_CANON_SIZE, dtype=np.float32)
-    windows = np.lib.stride_tricks.sliding_window_view(_encode(sequence), 7).astype(np.int64)
+    encoded, valid = _encode(sequence)
+    windows = np.lib.stride_tricks.sliding_window_view(encoded, 7).astype(np.int64)
+    valid_windows = np.lib.stride_tricks.sliding_window_view(valid, 7).all(axis=1)
+    if not np.any(valid_windows):
+        return np.zeros(K7_CANON_SIZE, dtype=np.float32)
     raw_identifiers = windows @ _POWERS[7]
-    canonical = _K7_CANONICAL_MAP[raw_identifiers]
+    canonical = _K7_CANONICAL_MAP[raw_identifiers[valid_windows]]
     counts = np.bincount(canonical.astype(np.int64), minlength=K7_CANON_SIZE).astype(np.float32)
     norm = float(np.linalg.norm(counts))
     if norm:
@@ -93,7 +103,12 @@ def k7_canonical_vector(sequence: str) -> NDArray[np.float32]:
 
 
 def extract_sequence_features(sequences: list[str]) -> NDArray[np.float32]:
-    """Extract frozen features, preserving the training-time ambiguity policy."""
+    """Extract frozen features while excluding ambiguity-spanning windows.
+
+    The behavior is byte-identical to the frozen representation for ACGT-only
+    sequences. Windows containing an IUPAC ambiguity symbol contribute no
+    k-mer count instead of being silently interpreted as adenine.
+    """
     matrix = np.zeros((len(sequences), FEATURE_DIM), dtype=np.float32)
     offset = 0
     for k in KMER_SIZES:

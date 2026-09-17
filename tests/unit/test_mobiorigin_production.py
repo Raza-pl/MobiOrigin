@@ -59,7 +59,13 @@ from mobiorigin.database_setup import (
     check_databases,
     setup_databases,
 )
-from mobiorigin.fasta import FastaRecord, read_fasta, resolve_fasta_input
+from mobiorigin.fasta import (
+    FastaRecord,
+    normalized_kmer_entropy,
+    read_fasta,
+    resolve_fasta_input,
+    sequence_quality,
+)
 from mobiorigin.marker_database_builder import (
     DIAMOND_VERSION,
     _resolve_diamond,
@@ -94,7 +100,9 @@ from mobiorigin.predict import (
     configure_runtime,
     ensemble_probabilities,
     fuse_features,
+    orientation_invariant_probabilities,
     predict,
+    reverse_orientation_marker_features,
     selective_labels,
 )
 from mobiorigin.provenance import atomic_json, atomic_text, sha256_file
@@ -949,6 +957,31 @@ def test_fusion_and_selective_policy() -> None:
         selective_labels(np.zeros((2, 4), dtype=np.float32))
 
 
+def test_reverse_orientation_marker_features_and_probability_invariance() -> None:
+    marker = np.zeros((2, 17), dtype=np.float32)
+    marker[0, 1] = 2.0
+    marker[0, 4] = 0.25
+    reversed_marker = reverse_orientation_marker_features(marker)
+    assert reversed_marker[0, 4] == pytest.approx(0.75)
+    assert reversed_marker[1, 4] == pytest.approx(0.0)
+    assert np.array_equal(reversed_marker[:, :4], marker[:, :4])
+    assert np.array_equal(reversed_marker[:, 5:], marker[:, 5:])
+
+    class OrientationModel(torch.nn.Module):
+        def forward(self, values: torch.Tensor) -> torch.Tensor:
+            return torch.stack((values[:, -13], values[:, -13] * -1, values[:, -13] * 0), dim=1)
+
+    sequence = np.zeros((2, 9_557), dtype=np.float32)
+    normalization = np.vstack((np.zeros(17, dtype=np.float32), np.ones(17, dtype=np.float32)))
+    probabilities = orientation_invariant_probabilities(
+        [OrientationModel()], sequence, marker, normalization
+    )
+    probabilities_after_reverse = orientation_invariant_probabilities(
+        [OrientationModel()], sequence, reversed_marker, normalization
+    )
+    assert np.array_equal(probabilities, probabilities_after_reverse)
+
+
 class ConstantModel(torch.nn.Module):
     def __init__(self, logits: tuple[float, float, float]) -> None:
         super().__init__()
@@ -1001,19 +1034,47 @@ def test_diamond_transport_success_and_failure(
 
 def test_prediction_table_schema_and_abstention(tmp_path: Path) -> None:
     path = tmp_path / "predictions.tsv"
-    records = [FastaRecord("a", "A" * 1_000), FastaRecord("b", "A" * 999)]
-    probabilities = np.asarray([[0.1, 0.8, 0.1], [1 / 3, 1 / 3, 1 / 3]], dtype=np.float32)
+    records = [
+        FastaRecord("a", "ACGT" * 250),
+        FastaRecord("b", "A" * 999),
+        FastaRecord("c", "N" + "ACGT" * 249 + "ACG"),
+    ]
+    probabilities = np.asarray(
+        [[0.1, 0.8, 0.1], [1 / 3, 1 / 3, 1 / 3], [1 / 3, 1 / 3, 1 / 3]],
+        dtype=np.float32,
+    )
     _write_predictions(
         path,
         records,
         probabilities,
-        ["plasmid", "unclassified"],
-        np.asarray([0.7, 0], dtype=np.float32),
+        ["plasmid", "unclassified", "unclassified"],
+        np.asarray([0.7, 0, 0], dtype=np.float32),
     )
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    assert [row["sequence_id"] for row in rows] == ["a", "b"]
+    assert [row["sequence_id"] for row in rows] == ["a", "b", "c"]
     assert rows[1]["abstention_reason"] == "unsupported_length"
+    assert rows[0]["input_quality_warnings"] == ""
+    assert rows[0]["normalized_4mer_entropy"] != ""
+    assert rows[2]["non_acgt_bases"] == "1"
+    assert rows[2]["n_bases"] == "1"
+    assert rows[2]["abstention_reason"] == "ambiguous_bases"
+    assert rows[2]["input_quality_warnings"] == ("non_acgt_present;non_acgt_fraction_ge_0.001")
+
+
+def test_sequence_quality_is_descriptive_and_transparent() -> None:
+    high_complexity = sequence_quality("ACGT" * 250)
+    ambiguous = sequence_quality("N" + "ACGT" * 249 + "ACG")
+    assert high_complexity.non_acgt_bases == 0
+    assert high_complexity.warnings == ()
+    assert ambiguous.non_acgt_bases == 1
+    assert ambiguous.n_fraction == pytest.approx(0.001)
+    assert ambiguous.warnings == (
+        "non_acgt_present",
+        "non_acgt_fraction_ge_0.001",
+    )
+    assert normalized_kmer_entropy("A" * 1_000) == pytest.approx(0.0)
+    assert normalized_kmer_entropy("ACGT" * 250) > 0.0
 
 
 def test_atomic_helpers_and_hash(tmp_path: Path) -> None:
@@ -1057,7 +1118,11 @@ def test_predict_synthetic_integration(tmp_path: Path, monkeypatch: pytest.Monke
     assert rows[0]["prediction"] == "plasmid"
     assert rows[1]["prediction"] == "unclassified"
     assert rows[1]["abstention_reason"] == "unsupported_length"
-    assert json.loads((output / "provenance.json").read_text())["unsupported_length_records"] == 1
+    provenance = json.loads((output / "provenance.json").read_text())
+    assert provenance["unsupported_length_records"] == 1
+    assert provenance["schema_version"] == "mobiorigin-prediction-provenance-v2"
+    assert provenance["input_quality_control"]["records_with_non_acgt_bases"] == 0
+    assert provenance["input_quality_control"]["prediction_semantics_changed"] is True
     with pytest.raises(FileExistsError):
         predict(
             input_fasta=fasta,
