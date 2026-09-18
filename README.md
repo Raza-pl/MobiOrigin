@@ -3,14 +3,15 @@
 [![Python 3.10–3.11](https://img.shields.io/badge/python-3.10%E2%80%933.11-blue.svg)](https://www.python.org/)
 [![PyPI version](https://img.shields.io/pypi/v/mobiorigin.svg)](https://pypi.org/project/mobiorigin/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Software DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22822150.svg)](https://doi.org/10.5281/zenodo.22822150)
 
-MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacterial DNA fragments to plasmid, chromosome, phage, or an explicit unclassified state. The frozen dev1 candidate combines 9,557 sequence features with 17 MOB-suite-derived protein-marker features and an equal-weight ensemble of three independently trained neural networks.
+MobiOrigin is a CPU-oriented sequence-and-marker classifier for assigning bacterial DNA fragments to plasmid, chromosome, phage, or an explicit unclassified state. The frozen dev1 model combines 9,557 sequence features with five coding-structure features and 12 MOB-suite-derived protein-marker features in an equal-weight ensemble of three independently trained neural networks.
 
 ## Status
 
-- Release candidate: `0.1.7` (orientation-invariant inference and ambiguity-safe reporting).
+- Latest signed GitHub release: `0.1.7` (orientation-invariant inference and ambiguity-safe reporting).
 - Latest public PyPI release: `0.1.7`.
-- Latest public Bioconda/BioContainer release: `0.1.6` while the v0.1.7 recipe is under review.
+- Latest public Bioconda/BioContainer release: `0.1.6` while the v0.1.7 recipe and container updates are pending.
 - Supported input length: 1,000–500,000 bp. Records outside this range remain explicitly unclassified.
 - Supported prediction alphabet: A, C, G and T. A record containing any other
   IUPAC symbol is retained in the output but reported as `unclassified` with
@@ -129,7 +130,7 @@ If DIAMOND, AMRFinderPlus, and the required databases are already managed
 locally, install the Python package from PyPI and retrieve the frozen models:
 
 ```bash
-python -m pip install mobiorigin==0.1.6
+python -m pip install mobiorigin==0.1.7
 mobiorigin setup-databases --component models
 ```
 
@@ -456,6 +457,6 @@ Tables, an editable SVG figure, methods, and mandatory claim boundaries are avai
 
 ## Licensing and citation
 
-MobiOrigin source code is distributed under GPL-3.0. Third-party MOB-suite-derived database records are not bundled and retain their own provenance and licensing conditions. The official MOB-suite repository is Apache-2.0 licensed, but this project does not assume that license establishes redistribution rights for every record in its separately hosted database archive.
+MobiOrigin source code is distributed under GPL-3.0-only. Third-party MOB-suite-derived database records are not bundled and retain their own provenance and licensing conditions. The official MOB-suite repository is Apache-2.0 licensed, but this project does not assume that license establishes redistribution rights for every record in its separately hosted database archive.
 
-Use the versioned metadata in [`CITATION.cff`](CITATION.cff) when citing the software. An archival DOI can be added after the tagged release is deposited; until then, include the repository URL, version, and commit used for analysis. Release changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+Use the versioned metadata in [`CITATION.cff`](CITATION.cff) when citing the software. The exact v0.1.7 software archive is available at [doi:10.5281/zenodo.22822150](https://doi.org/10.5281/zenodo.22822150). Evaluation data, statistical results and figure source tables are available at [doi:10.5281/zenodo.22822790](https://doi.org/10.5281/zenodo.22822790). Release changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).

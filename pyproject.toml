@@ -3,7 +3,7 @@ name = "mobiorigin"
 version = "0.1.7"
 description = "MobiOrigin: sequence-and-marker classification of bacterial replicons"
 authors = ["Shahbaz Raza <shahbaz.invincible3182@gmail.com>"]
-license = "GPL-3.0"
+license = "GPL-3.0-only"
 readme = "README.md"
 include = [
     { path = "src/mobiorigin/data/models/dev1/model_manifest.json", format = ["sdist", "wheel"] },

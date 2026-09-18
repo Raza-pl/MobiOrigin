@@ -20,6 +20,7 @@ authors:
     given-names: Young Mo
 repository-code: "https://github.com/Raza-pl/MobiOrigin"
 url: "https://github.com/Raza-pl/MobiOrigin"
+doi: "10.5281/zenodo.22822150"
 version: 0.1.7
 date-released: 2026-09-17
 license: GPL-3.0-only
